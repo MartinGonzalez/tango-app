@@ -153,8 +153,8 @@ function init(): void {
   panelLayout = new PanelLayout(panelsContainer, [
     { id: "workspaces", minWidth: 200, defaultWidth: 0, hidden: true },
     { id: "chat", minWidth: 280, defaultWidth: 30 },
-    { id: "diff", minWidth: 300, defaultWidth: 60 },
-    { id: "files", minWidth: 140, defaultWidth: 10 },
+    { id: "diff", minWidth: 300, defaultWidth: 50 },
+    { id: "files", minWidth: 140, defaultWidth: 20 },
   ]);
 
   const wsPanel = panelLayout.getPanel("workspaces")!;

@@ -152,7 +152,6 @@ export class DiffView {
       table.appendChild(
         h("tr", { class: "diff-hunk-header" }, [
           h("td", { class: "line-no" }),
-          h("td", { class: "line-no" }),
           h("td", { class: "line-content hunk-label" }, [hunk.header]),
         ])
       );
@@ -160,14 +159,16 @@ export class DiffView {
       for (const line of hunk.lines) {
         const lineClass = `diff-line diff-${line.type}`;
         const prefix = { add: "+", delete: "-", context: " " }[line.type];
+        const lineNo = line.type === "add"
+          ? line.newLineNo
+          : line.type === "delete"
+          ? line.oldLineNo
+          : (line.newLineNo ?? line.oldLineNo);
 
         table.appendChild(
           h("tr", { class: lineClass }, [
             h("td", { class: "line-no" }, [
-              line.oldLineNo !== null ? String(line.oldLineNo) : "",
-            ]),
-            h("td", { class: "line-no" }, [
-              line.newLineNo !== null ? String(line.newLineNo) : "",
+              lineNo != null ? String(lineNo) : "",
             ]),
             h("td", { class: "line-content" }, [prefix + line.content]),
           ])
@@ -194,19 +195,21 @@ export class DiffView {
       const pairs = pairLines(hunk.lines);
 
       for (const [left, right] of pairs) {
+        const leftLineClass = left ? ` diff-${left.type}` : "";
+        const rightLineClass = right ? ` diff-${right.type}` : "";
         table.appendChild(
           h("tr", { class: "diff-line" }, [
-            h("td", { class: "line-no" }, [
+            h("td", { class: `line-no${leftLineClass}` }, [
               left?.oldLineNo != null ? String(left.oldLineNo) : "",
             ]),
             h("td", {
-              class: `line-content${left ? ` diff-${left.type}` : ""}`,
+              class: `line-content${leftLineClass}`,
             }, [left ? left.content : ""]),
-            h("td", { class: "line-no" }, [
+            h("td", { class: `line-no${rightLineClass}` }, [
               right?.newLineNo != null ? String(right.newLineNo) : "",
             ]),
             h("td", {
-              class: `line-content${right ? ` diff-${right.type}` : ""}`,
+              class: `line-content${rightLineClass}`,
             }, [right ? right.content : ""]),
           ])
         );

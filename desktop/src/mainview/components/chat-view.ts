@@ -233,7 +233,10 @@ export class ChatView {
       if (hasToolUse) {
         this.#showStatus("Running tool...");
       } else {
-        this.#showStatus("Claude is thinking...");
+        // Plain assistant text means this turn is ready for user follow-up.
+        this.#hideStatus();
+        this.#isWaiting = false;
+        this.#hideStopButton();
       }
 
       this.#scrollToBottom();
@@ -245,8 +248,10 @@ export class ChatView {
       const content = ev.message?.content;
       if (!content || !Array.isArray(content)) return;
 
+      let hasToolResult = false;
       for (const block of content) {
         if (block.type === "tool_result") {
+          hasToolResult = true;
           this.#hideStatus();
           const output = typeof block.content === "string"
             ? block.content
@@ -259,8 +264,11 @@ export class ChatView {
         }
       }
 
-      // After tool result, Claude will think again
-      this.#showStatus("Claude is thinking...");
+      // After tool result, Claude will think again.
+      // Ignore regular user content echoed in the stream.
+      if (hasToolResult) {
+        this.#showStatus("Claude is thinking...");
+      }
       this.#scrollToBottom();
       return;
     }

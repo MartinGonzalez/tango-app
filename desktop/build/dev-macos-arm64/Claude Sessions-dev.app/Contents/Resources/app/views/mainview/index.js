@@ -398,10 +398,12 @@ function clearChildren(el) {
 class PanelLayout {
   #el;
   #panels = new Map;
+  #order = [];
   #handles = [];
   #dragging = null;
   constructor(container, configs) {
     this.#el = h("div", { class: "panel-layout" });
+    this.#order = configs.map((cfg) => cfg.id);
     for (let i = 0;i < configs.length; i++) {
       const cfg = configs[i];
       const panel = h("div", {
@@ -439,6 +441,7 @@ class PanelLayout {
     document.addEventListener("mousemove", (e) => this.#onDrag(e));
     document.addEventListener("mouseup", () => this.#endDrag());
     container.appendChild(this.#el);
+    this.#rebalance();
   }
   getPanel(id) {
     return this.#panels.get(id)?.el ?? null;
@@ -447,9 +450,13 @@ class PanelLayout {
     const state = this.#panels.get(id);
     if (!state || !state.hidden)
       return;
+    this.#captureCurrentWidths();
     state.hidden = false;
     state.el.classList.remove("panel-hidden");
-    state.el.style.width = state.config.defaultWidth + "%";
+    if (state.currentWidth <= 0) {
+      state.currentWidth = this.#initialPercent(state.config);
+    }
+    state.el.style.width = "";
     state.el.style.minWidth = state.config.minWidth + "px";
     this.#rebalance();
   }
@@ -457,6 +464,7 @@ class PanelLayout {
     const state = this.#panels.get(id);
     if (!state || state.hidden)
       return;
+    this.#captureCurrentWidths();
     state.hidden = true;
     state.el.classList.add("panel-hidden");
     state.el.style.width = "0px";
@@ -520,13 +528,70 @@ class PanelLayout {
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     this.#el.classList.remove("dragging");
+    this.#captureCurrentWidths();
+    this.#rebalance();
   }
   #rebalance() {
-    for (const [_, state] of this.#panels) {
-      if (!state.hidden) {
-        state.el.style.flex = "";
+    const visible = this.#visiblePanels();
+    if (visible.length > 0) {
+      let total = visible.reduce((sum, state) => sum + Math.max(0, state.currentWidth), 0);
+      if (total <= 0) {
+        const even = 100 / visible.length;
+        for (const state of visible)
+          state.currentWidth = even;
+        total = 100;
+      }
+      for (const state of visible) {
+        const grow = Math.max(0.1, state.currentWidth / total * 100);
+        state.el.style.width = "";
+        state.el.style.flex = `${grow} 1 0px`;
+        state.el.style.minWidth = state.config.minWidth + "px";
       }
     }
+    for (const state of this.#panels.values()) {
+      if (!state.hidden)
+        continue;
+      state.el.style.flex = "0 0 0px";
+      state.el.style.width = "0px";
+      state.el.style.minWidth = "0px";
+    }
+    this.#updateHandleVisibility();
+  }
+  #captureCurrentWidths() {
+    const visible = this.#visiblePanels();
+    if (visible.length === 0)
+      return;
+    const totalWidth = visible.reduce((sum, state) => sum + state.el.offsetWidth, 0);
+    if (totalWidth <= 0)
+      return;
+    for (const state of visible) {
+      state.currentWidth = state.el.offsetWidth / totalWidth * 100;
+    }
+  }
+  #visiblePanels() {
+    const out = [];
+    for (const id of this.#order) {
+      const state = this.#panels.get(id);
+      if (!state || state.hidden)
+        continue;
+      out.push(state);
+    }
+    return out;
+  }
+  #updateHandleVisibility() {
+    for (let i = 0;i < this.#handles.length; i++) {
+      const left = this.#panels.get(this.#order[i]);
+      const right = this.#panels.get(this.#order[i + 1]);
+      const show = Boolean(left && right && !left.hidden && !right.hidden);
+      this.#handles[i].style.display = show ? "" : "none";
+    }
+  }
+  #initialPercent(config) {
+    if (config.defaultWidth > 0)
+      return config.defaultWidth;
+    const containerWidth = Math.max(this.#el.clientWidth, 1);
+    const minPercent = config.minWidth / containerWidth * 100;
+    return Math.min(40, Math.max(8, minPercent));
   }
   get element() {
     return this.#el;
@@ -945,7 +1010,9 @@ class ChatView {
       if (hasToolUse) {
         this.#showStatus("Running tool...");
       } else {
-        this.#showStatus("Claude is thinking...");
+        this.#hideStatus();
+        this.#isWaiting = false;
+        this.#hideStopButton();
       }
       this.#scrollToBottom();
       return;
@@ -954,14 +1021,18 @@ class ChatView {
       const content = ev.message?.content;
       if (!content || !Array.isArray(content))
         return;
+      let hasToolResult = false;
       for (const block of content) {
         if (block.type === "tool_result") {
+          hasToolResult = true;
           this.#hideStatus();
           const output = typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
           this.#appendToolResult(block.tool_use_id ?? "", output, block.is_error === true);
         }
       }
-      this.#showStatus("Claude is thinking...");
+      if (hasToolResult) {
+        this.#showStatus("Claude is thinking...");
+      }
       this.#scrollToBottom();
       return;
     }
@@ -1533,18 +1604,15 @@ class DiffView {
     for (const hunk of file.hunks) {
       table.appendChild(h("tr", { class: "diff-hunk-header" }, [
         h("td", { class: "line-no" }),
-        h("td", { class: "line-no" }),
         h("td", { class: "line-content hunk-label" }, [hunk.header])
       ]));
       for (const line of hunk.lines) {
         const lineClass = `diff-line diff-${line.type}`;
         const prefix = { add: "+", delete: "-", context: " " }[line.type];
+        const lineNo = line.type === "add" ? line.newLineNo : line.type === "delete" ? line.oldLineNo : line.newLineNo ?? line.oldLineNo;
         table.appendChild(h("tr", { class: lineClass }, [
           h("td", { class: "line-no" }, [
-            line.oldLineNo !== null ? String(line.oldLineNo) : ""
-          ]),
-          h("td", { class: "line-no" }, [
-            line.newLineNo !== null ? String(line.newLineNo) : ""
+            lineNo != null ? String(lineNo) : ""
           ]),
           h("td", { class: "line-content" }, [prefix + line.content])
         ]));
@@ -1563,18 +1631,20 @@ class DiffView {
       ]));
       const pairs = pairLines(hunk.lines);
       for (const [left, right] of pairs) {
+        const leftLineClass = left ? ` diff-${left.type}` : "";
+        const rightLineClass = right ? ` diff-${right.type}` : "";
         table.appendChild(h("tr", { class: "diff-line" }, [
-          h("td", { class: "line-no" }, [
+          h("td", { class: `line-no${leftLineClass}` }, [
             left?.oldLineNo != null ? String(left.oldLineNo) : ""
           ]),
           h("td", {
-            class: `line-content${left ? ` diff-${left.type}` : ""}`
+            class: `line-content${leftLineClass}`
           }, [left ? left.content : ""]),
-          h("td", { class: "line-no" }, [
+          h("td", { class: `line-no${rightLineClass}` }, [
             right?.newLineNo != null ? String(right.newLineNo) : ""
           ]),
           h("td", {
-            class: `line-content${right ? ` diff-${right.type}` : ""}`
+            class: `line-content${rightLineClass}`
           }, [right ? right.content : ""])
         ]));
       }
@@ -1854,8 +1924,8 @@ function init() {
   panelLayout = new PanelLayout(panelsContainer, [
     { id: "workspaces", minWidth: 200, defaultWidth: 0, hidden: true },
     { id: "chat", minWidth: 280, defaultWidth: 30 },
-    { id: "diff", minWidth: 300, defaultWidth: 60 },
-    { id: "files", minWidth: 140, defaultWidth: 10 }
+    { id: "diff", minWidth: 300, defaultWidth: 50 },
+    { id: "files", minWidth: 140, defaultWidth: 20 }
   ]);
   const wsPanel = panelLayout.getPanel("workspaces");
   const chatPanel = panelLayout.getPanel("chat");

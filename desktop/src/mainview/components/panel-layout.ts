@@ -14,11 +14,13 @@ export type PanelConfig = {
 export class PanelLayout {
   #el: HTMLElement;
   #panels: Map<string, PanelState> = new Map();
+  #order: string[] = [];
   #handles: HTMLElement[] = [];
   #dragging: { handleIndex: number; startX: number; leftId: string; rightId: string; leftStart: number; rightStart: number } | null = null;
 
   constructor(container: HTMLElement, configs: PanelConfig[]) {
     this.#el = h("div", { class: "panel-layout" });
+    this.#order = configs.map((cfg) => cfg.id);
 
     for (let i = 0; i < configs.length; i++) {
       const cfg = configs[i];
@@ -66,6 +68,7 @@ export class PanelLayout {
     document.addEventListener("mouseup", () => this.#endDrag());
 
     container.appendChild(this.#el);
+    this.#rebalance();
   }
 
   getPanel(id: string): HTMLElement | null {
@@ -76,9 +79,13 @@ export class PanelLayout {
     const state = this.#panels.get(id);
     if (!state || !state.hidden) return;
 
+    this.#captureCurrentWidths();
     state.hidden = false;
     state.el.classList.remove("panel-hidden");
-    state.el.style.width = state.config.defaultWidth + "%";
+    if (state.currentWidth <= 0) {
+      state.currentWidth = this.#initialPercent(state.config);
+    }
+    state.el.style.width = "";
     state.el.style.minWidth = state.config.minWidth + "px";
     this.#rebalance();
   }
@@ -87,6 +94,7 @@ export class PanelLayout {
     const state = this.#panels.get(id);
     if (!state || state.hidden) return;
 
+    this.#captureCurrentWidths();
     state.hidden = true;
     state.el.classList.add("panel-hidden");
     state.el.style.width = "0px";
@@ -159,15 +167,73 @@ export class PanelLayout {
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
     this.#el.classList.remove("dragging");
+    this.#captureCurrentWidths();
+    this.#rebalance();
   }
 
   #rebalance(): void {
-    // After showing/hiding, reset flex on visible panels
-    for (const [_, state] of this.#panels) {
-      if (!state.hidden) {
-        state.el.style.flex = "";
+    const visible = this.#visiblePanels();
+    if (visible.length > 0) {
+      let total = visible.reduce((sum, state) => sum + Math.max(0, state.currentWidth), 0);
+      if (total <= 0) {
+        const even = 100 / visible.length;
+        for (const state of visible) state.currentWidth = even;
+        total = 100;
+      }
+      for (const state of visible) {
+        const grow = Math.max(0.1, (state.currentWidth / total) * 100);
+        state.el.style.width = "";
+        state.el.style.flex = `${grow} 1 0px`;
+        state.el.style.minWidth = state.config.minWidth + "px";
       }
     }
+
+    for (const state of this.#panels.values()) {
+      if (!state.hidden) continue;
+      state.el.style.flex = "0 0 0px";
+      state.el.style.width = "0px";
+      state.el.style.minWidth = "0px";
+    }
+
+    this.#updateHandleVisibility();
+  }
+
+  #captureCurrentWidths(): void {
+    const visible = this.#visiblePanels();
+    if (visible.length === 0) return;
+
+    const totalWidth = visible.reduce((sum, state) => sum + state.el.offsetWidth, 0);
+    if (totalWidth <= 0) return;
+
+    for (const state of visible) {
+      state.currentWidth = (state.el.offsetWidth / totalWidth) * 100;
+    }
+  }
+
+  #visiblePanels(): PanelState[] {
+    const out: PanelState[] = [];
+    for (const id of this.#order) {
+      const state = this.#panels.get(id);
+      if (!state || state.hidden) continue;
+      out.push(state);
+    }
+    return out;
+  }
+
+  #updateHandleVisibility(): void {
+    for (let i = 0; i < this.#handles.length; i++) {
+      const left = this.#panels.get(this.#order[i]);
+      const right = this.#panels.get(this.#order[i + 1]);
+      const show = Boolean(left && right && !left.hidden && !right.hidden);
+      this.#handles[i].style.display = show ? "" : "none";
+    }
+  }
+
+  #initialPercent(config: PanelConfig): number {
+    if (config.defaultWidth > 0) return config.defaultWidth;
+    const containerWidth = Math.max(this.#el.clientWidth, 1);
+    const minPercent = (config.minWidth / containerWidth) * 100;
+    return Math.min(40, Math.max(8, minPercent));
   }
 
   get element(): HTMLElement {

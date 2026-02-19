@@ -386,11 +386,11 @@ button {
 }
 
 .dot-waiting {
-  color: var(--amber);
+  color: var(--text-secondary);
 }
 
 .dot-waiting-input {
-  color: var(--amber);
+  color: var(--text-secondary);
   animation: dotPulse 2s ease-in-out infinite;
 }
 
@@ -974,6 +974,10 @@ button {
   gap: 6px;
 }
 
+.chat-status[hidden] {
+  display: none !important;
+}
+
 .chat-status::before {
   content: "";
   width: 6px;
@@ -1485,6 +1489,24 @@ button {
 
 .diff-table.split .line-content {
   width: 50%;
+}
+
+.diff-table.split .line-content.diff-add {
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--green);
+}
+
+.diff-table.split .line-content.diff-delete {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--red);
+}
+
+.diff-table.split .line-no.diff-add {
+  background: rgba(16, 185, 129, 0.04);
+}
+
+.diff-table.split .line-no.diff-delete {
+  background: rgba(239, 68, 68, 0.04);
 }
 
 /* ── Files Changed Panel ─────────────────────────────────────── */
