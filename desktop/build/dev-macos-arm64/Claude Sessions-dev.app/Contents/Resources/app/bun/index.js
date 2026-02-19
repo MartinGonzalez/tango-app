@@ -5641,6 +5641,24 @@ var rpc = BrowserView.defineRPC({
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
       },
+      openInFinder: async ({ path }) => {
+        if (!path)
+          return;
+        try {
+          const proc = Bun.spawn(["open", path], {
+            stdout: "ignore",
+            stderr: "pipe"
+          });
+          const exitCode = await proc.exited;
+          if (exitCode !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            throw new Error(stderr || `Failed to open path in Finder (${exitCode})`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(msg);
+        }
+      },
       pickDirectory: async () => {
         try {
           const proc = Bun.spawn([

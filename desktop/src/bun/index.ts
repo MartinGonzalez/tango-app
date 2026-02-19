@@ -222,6 +222,24 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         await workspaces.remove(path);
       },
 
+      openInFinder: async ({ path }: { path: string }) => {
+        if (!path) return;
+        try {
+          const proc = Bun.spawn(["open", path], {
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          const exitCode = await proc.exited;
+          if (exitCode !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            throw new Error(stderr || `Failed to open path in Finder (${exitCode})`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(msg);
+        }
+      },
+
       pickDirectory: async () => {
         // Use osascript to open native directory picker on macOS
         try {

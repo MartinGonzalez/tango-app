@@ -270,6 +270,10 @@ export type AppRPC = {
         params: { path: string };
         response: void;
       };
+      openInFinder: {
+        params: { path: string };
+        response: void;
+      };
       pickDirectory: {
         params: {};
         response: string | null;

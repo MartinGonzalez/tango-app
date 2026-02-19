@@ -9,10 +9,16 @@ import type {
 export type ChatCallbacks = {
   onSendPrompt: (prompt: string, fullAccess: boolean) => void;
   onStopSession?: () => void;
+  onOpenInFinder?: (path: string) => void;
 };
 
 export class ChatView {
   #el: HTMLElement;
+  #headerEl: HTMLElement;
+  #headerTitleEl: HTMLElement;
+  #headerWorkspaceEl: HTMLElement;
+  #headerMenuEl: HTMLDetailsElement;
+  #headerOpenInFinderBtn: HTMLButtonElement;
   #messagesEl: HTMLElement;
   #inputEl: HTMLTextAreaElement;
   #sendBtn: HTMLElement;
@@ -25,9 +31,65 @@ export class ChatView {
   #fullAccess: boolean = true;
   #callbacks: ChatCallbacks;
   #isWaiting: boolean = false;
+  #workspacePath: string | null = null;
+  #onGlobalPointerDown: (event: PointerEvent) => void;
+  #onGlobalKeyDown: (event: KeyboardEvent) => void;
 
   constructor(container: HTMLElement, callbacks: ChatCallbacks) {
     this.#callbacks = callbacks;
+    this.#onGlobalPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (this.#headerMenuEl.open) {
+        if (!(target && this.#headerMenuEl.contains(target))) {
+          this.#headerMenuEl.open = false;
+        }
+      }
+      if (this.#permDetailsEl?.open) {
+        if (!(target && this.#permDetailsEl.contains(target))) {
+          this.#permDetailsEl.open = false;
+        }
+      }
+    };
+    this.#onGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (this.#headerMenuEl.open) this.#headerMenuEl.open = false;
+      if (this.#permDetailsEl?.open) this.#permDetailsEl.open = false;
+    };
+
+    this.#headerTitleEl = h("span", { class: "chat-header-title" }, ["New session"]);
+    this.#headerWorkspaceEl = h("span", {
+      class: "chat-header-workspace",
+      hidden: true,
+    });
+    this.#headerOpenInFinderBtn = h(
+      "button",
+      {
+        class: "chat-header-menu-item",
+        onclick: (e: Event) => {
+          e.preventDefault();
+          const path = this.#workspacePath;
+          if (!path) return;
+          this.#callbacks.onOpenInFinder?.(path);
+          this.#headerMenuEl.open = false;
+        },
+      },
+      ["Open in Finder"]
+    ) as HTMLButtonElement;
+
+    this.#headerMenuEl = h("details", { class: "chat-header-menu" }, [
+      h("summary", { class: "chat-header-menu-btn", title: "More" }, ["⋯"]),
+      h("div", { class: "chat-header-menu-popover" }, [
+        this.#headerOpenInFinderBtn,
+      ]),
+    ]) as HTMLDetailsElement;
+
+    this.#headerEl = h("div", { class: "chat-header" }, [
+      h("div", { class: "chat-header-meta" }, [
+        this.#headerTitleEl,
+        this.#headerWorkspaceEl,
+      ]),
+      this.#headerMenuEl,
+    ]);
 
     this.#messagesEl = h("div", { class: "chat-messages" });
 
@@ -104,14 +166,22 @@ export class ChatView {
       this.#sendBtn,
     ]);
 
-    this.#el = h("div", { class: "chat-view" }, [
-      this.#messagesEl,
+    const composerEl = h("div", { class: "chat-composer" }, [
       this.#statusEl,
-      toggleRow,
       inputRow,
+      toggleRow,
+    ]);
+
+    this.#el = h("div", { class: "chat-view" }, [
+      this.#headerEl,
+      this.#messagesEl,
+      composerEl,
     ]);
 
     container.appendChild(this.#el);
+    this.setHeader("New session", null);
+    document.addEventListener("pointerdown", this.#onGlobalPointerDown, true);
+    document.addEventListener("keydown", this.#onGlobalKeyDown, true);
   }
 
   renderTranscript(messages: TranscriptMessage[]): void {
@@ -235,6 +305,26 @@ export class ChatView {
     clearChildren(this.#messagesEl);
     this.#isWaiting = false;
     this.#hideStatus();
+  }
+
+  setHeader(sessionTitle: string, workspacePath: string | null): void {
+    const title = sessionTitle.trim() || "New session";
+    this.#headerTitleEl.textContent = title;
+
+    this.#workspacePath = workspacePath;
+    if (workspacePath) {
+      const name = basename(workspacePath);
+      this.#headerWorkspaceEl.textContent = name;
+      this.#headerWorkspaceEl.title = workspacePath;
+      this.#headerWorkspaceEl.hidden = false;
+      this.#headerOpenInFinderBtn.disabled = false;
+    } else {
+      this.#headerWorkspaceEl.textContent = "";
+      this.#headerWorkspaceEl.removeAttribute("title");
+      this.#headerWorkspaceEl.hidden = true;
+      this.#headerOpenInFinderBtn.disabled = true;
+      this.#headerMenuEl.open = false;
+    }
   }
 
   /**

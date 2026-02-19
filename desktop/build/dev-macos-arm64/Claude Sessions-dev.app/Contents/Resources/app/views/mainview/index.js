@@ -770,6 +770,11 @@ function timeAgo(dateStr) {
 // src/mainview/components/chat-view.ts
 class ChatView {
   #el;
+  #headerEl;
+  #headerTitleEl;
+  #headerWorkspaceEl;
+  #headerMenuEl;
+  #headerOpenInFinderBtn;
   #messagesEl;
   #inputEl;
   #sendBtn;
@@ -782,8 +787,61 @@ class ChatView {
   #fullAccess = true;
   #callbacks;
   #isWaiting = false;
+  #workspacePath = null;
+  #onGlobalPointerDown;
+  #onGlobalKeyDown;
   constructor(container, callbacks) {
     this.#callbacks = callbacks;
+    this.#onGlobalPointerDown = (event) => {
+      const target = event.target;
+      if (this.#headerMenuEl.open) {
+        if (!(target && this.#headerMenuEl.contains(target))) {
+          this.#headerMenuEl.open = false;
+        }
+      }
+      if (this.#permDetailsEl?.open) {
+        if (!(target && this.#permDetailsEl.contains(target))) {
+          this.#permDetailsEl.open = false;
+        }
+      }
+    };
+    this.#onGlobalKeyDown = (event) => {
+      if (event.key !== "Escape")
+        return;
+      if (this.#headerMenuEl.open)
+        this.#headerMenuEl.open = false;
+      if (this.#permDetailsEl?.open)
+        this.#permDetailsEl.open = false;
+    };
+    this.#headerTitleEl = h("span", { class: "chat-header-title" }, ["New session"]);
+    this.#headerWorkspaceEl = h("span", {
+      class: "chat-header-workspace",
+      hidden: true
+    });
+    this.#headerOpenInFinderBtn = h("button", {
+      class: "chat-header-menu-item",
+      onclick: (e) => {
+        e.preventDefault();
+        const path = this.#workspacePath;
+        if (!path)
+          return;
+        this.#callbacks.onOpenInFinder?.(path);
+        this.#headerMenuEl.open = false;
+      }
+    }, ["Open in Finder"]);
+    this.#headerMenuEl = h("details", { class: "chat-header-menu" }, [
+      h("summary", { class: "chat-header-menu-btn", title: "More" }, ["⋯"]),
+      h("div", { class: "chat-header-menu-popover" }, [
+        this.#headerOpenInFinderBtn
+      ])
+    ]);
+    this.#headerEl = h("div", { class: "chat-header" }, [
+      h("div", { class: "chat-header-meta" }, [
+        this.#headerTitleEl,
+        this.#headerWorkspaceEl
+      ]),
+      this.#headerMenuEl
+    ]);
     this.#messagesEl = h("div", { class: "chat-messages" });
     this.#statusEl = h("div", { class: "chat-status", hidden: true });
     this.#inputEl = document.createElement("textarea");
@@ -841,13 +899,20 @@ class ChatView {
       this.#stopBtn,
       this.#sendBtn
     ]);
-    this.#el = h("div", { class: "chat-view" }, [
-      this.#messagesEl,
+    const composerEl = h("div", { class: "chat-composer" }, [
       this.#statusEl,
-      toggleRow,
-      inputRow
+      inputRow,
+      toggleRow
+    ]);
+    this.#el = h("div", { class: "chat-view" }, [
+      this.#headerEl,
+      this.#messagesEl,
+      composerEl
     ]);
     container.appendChild(this.#el);
+    this.setHeader("New session", null);
+    document.addEventListener("pointerdown", this.#onGlobalPointerDown, true);
+    document.addEventListener("keydown", this.#onGlobalKeyDown, true);
   }
   renderTranscript(messages) {
     clearChildren(this.#messagesEl);
@@ -933,6 +998,24 @@ class ChatView {
     clearChildren(this.#messagesEl);
     this.#isWaiting = false;
     this.#hideStatus();
+  }
+  setHeader(sessionTitle, workspacePath) {
+    const title = sessionTitle.trim() || "New session";
+    this.#headerTitleEl.textContent = title;
+    this.#workspacePath = workspacePath;
+    if (workspacePath) {
+      const name = basename(workspacePath);
+      this.#headerWorkspaceEl.textContent = name;
+      this.#headerWorkspaceEl.title = workspacePath;
+      this.#headerWorkspaceEl.hidden = false;
+      this.#headerOpenInFinderBtn.disabled = false;
+    } else {
+      this.#headerWorkspaceEl.textContent = "";
+      this.#headerWorkspaceEl.removeAttribute("title");
+      this.#headerWorkspaceEl.hidden = true;
+      this.#headerOpenInFinderBtn.disabled = true;
+      this.#headerMenuEl.open = false;
+    }
   }
   showToolApproval(req, respond) {
     const summary = summarizeToolInput(req.toolName, req.toolInput);
@@ -1869,6 +1952,13 @@ function init() {
       } catch (err) {
         console.error("Failed to send prompt:", err);
       }
+    },
+    onOpenInFinder: async (path) => {
+      try {
+        await rpc.request.openInFinder({ path });
+      } catch (err) {
+        console.error("Failed to open Finder:", err);
+      }
     }
   });
   diffView = new DiffView(diffPanel);
@@ -1915,6 +2005,7 @@ function init() {
     const wsData = buildWorkspaceData(state);
     sidebar.render(wsData);
     sidebar.setActiveSession(state.activeSessionId);
+    chatView.setHeader(resolveActiveSessionTitle(state), state.activeWorkspace);
   });
   loadWorkspaces();
   loadSessionNames();
@@ -2137,6 +2228,32 @@ function buildSessionList(snapshot) {
     });
   }
   return result;
+}
+function resolveActiveSessionTitle(state) {
+  const activeSessionId = state.activeSessionId;
+  if (!activeSessionId)
+    return "New session";
+  const custom = state.customSessionNames[activeSessionId]?.trim();
+  if (custom)
+    return custom;
+  if (state.snapshot) {
+    const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);
+    if (live?.topic?.trim())
+      return live.topic.trim();
+    if (live?.prompt?.trim())
+      return live.prompt.trim();
+  }
+  for (const sessions of Object.values(state.historySessions)) {
+    const found = sessions.find((s) => s.sessionId === activeSessionId);
+    if (!found)
+      continue;
+    if (found.topic?.trim())
+      return found.topic.trim();
+    if (found.prompt?.trim())
+      return found.prompt.trim();
+    break;
+  }
+  return "Session";
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);

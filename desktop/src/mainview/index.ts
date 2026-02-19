@@ -260,6 +260,13 @@ function init(): void {
         console.error("Failed to send prompt:", err);
       }
     },
+    onOpenInFinder: async (path) => {
+      try {
+        await (rpc as any).request.openInFinder({ path });
+      } catch (err) {
+        console.error("Failed to open Finder:", err);
+      }
+    },
   });
 
   // Diff panel
@@ -321,6 +328,10 @@ function init(): void {
     const wsData = buildWorkspaceData(state);
     sidebar.render(wsData);
     sidebar.setActiveSession(state.activeSessionId);
+    chatView.setHeader(
+      resolveActiveSessionTitle(state),
+      state.activeWorkspace
+    );
   });
 
   // Load initial data
@@ -591,6 +602,30 @@ function buildSessionList(snapshot: Snapshot): SessionInfo[] {
   }
 
   return result;
+}
+
+function resolveActiveSessionTitle(state: AppState): string {
+  const activeSessionId = state.activeSessionId;
+  if (!activeSessionId) return "New session";
+
+  const custom = state.customSessionNames[activeSessionId]?.trim();
+  if (custom) return custom;
+
+  if (state.snapshot) {
+    const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);
+    if (live?.topic?.trim()) return live.topic.trim();
+    if (live?.prompt?.trim()) return live.prompt.trim();
+  }
+
+  for (const sessions of Object.values(state.historySessions)) {
+    const found = sessions.find((s) => s.sessionId === activeSessionId);
+    if (!found) continue;
+    if (found.topic?.trim()) return found.topic.trim();
+    if (found.prompt?.trim()) return found.prompt.trim();
+    break;
+  }
+
+  return "Session";
 }
 
 // ── Boot ─────────────────────────────────────────────────────────
