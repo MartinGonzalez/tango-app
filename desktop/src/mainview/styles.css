@@ -1496,12 +1496,12 @@ button {
 
 .diff-add .line-content {
   background: rgba(16, 185, 129, 0.08);
-  color: var(--green);
+  color: #d7f8ea;
 }
 
 .diff-delete .line-content {
   background: rgba(239, 68, 68, 0.08);
-  color: var(--red);
+  color: #ffd8d8;
 }
 
 .diff-add .line-no {
@@ -1518,12 +1518,12 @@ button {
 
 .diff-table.split .line-content.diff-add {
   background: rgba(16, 185, 129, 0.08);
-  color: var(--green);
+  color: #d7f8ea;
 }
 
 .diff-table.split .line-content.diff-delete {
   background: rgba(239, 68, 68, 0.08);
-  color: var(--red);
+  color: #ffd8d8;
 }
 
 .diff-table.split .line-no.diff-add {
@@ -1532,6 +1532,51 @@ button {
 
 .diff-table.split .line-no.diff-delete {
   background: rgba(239, 68, 68, 0.04);
+}
+
+.line-content .dv-diff-prefix {
+  display: inline-block;
+  width: 1ch;
+  user-select: none;
+}
+
+.line-content .dv-diff-prefix-add {
+  color: var(--green);
+}
+
+.line-content .dv-diff-prefix-del {
+  color: var(--red);
+}
+
+.line-content .dv-diff-prefix-context {
+  color: transparent;
+}
+
+.diff-table .token.comment {
+  color: #7c8794;
+}
+
+.diff-table .token.string {
+  color: #f59e0b;
+}
+
+.diff-table .token.number,
+.diff-table .token.boolean {
+  color: #60a5fa;
+}
+
+.diff-table .token.keyword,
+.diff-table .token.operator {
+  color: #c084fc;
+}
+
+.diff-table .token.function,
+.diff-table .token.class-name {
+  color: #22d3ee;
+}
+
+.diff-table .token.punctuation {
+  color: #9ca3af;
 }
 
 /* ── Files Changed Panel ─────────────────────────────────────── */

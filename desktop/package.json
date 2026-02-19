@@ -13,9 +13,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "electrobun": "latest"
+    "electrobun": "latest",
+    "prismjs": "^1.30.0"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/prismjs": "^1.26.6"
   }
 }

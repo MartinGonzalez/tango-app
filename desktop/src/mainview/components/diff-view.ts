@@ -1,5 +1,27 @@
 import { h, clearChildren } from "../lib/dom.ts";
 import type { DiffFile, DiffLine } from "../../shared/types.ts";
+import Prism from "prismjs";
+import "prismjs/components/prism-clike";
+import "prismjs/components/prism-javascript";
+import "prismjs/components/prism-typescript";
+import "prismjs/components/prism-jsx";
+import "prismjs/components/prism-tsx";
+import "prismjs/components/prism-c";
+import "prismjs/components/prism-cpp";
+import "prismjs/components/prism-csharp";
+import "prismjs/components/prism-java";
+import "prismjs/components/prism-kotlin";
+import "prismjs/components/prism-go";
+import "prismjs/components/prism-rust";
+import "prismjs/components/prism-python";
+import "prismjs/components/prism-ruby";
+import "prismjs/components/prism-bash";
+import "prismjs/components/prism-json";
+import "prismjs/components/prism-yaml";
+import "prismjs/components/prism-markdown";
+import "prismjs/components/prism-css";
+import "prismjs/components/prism-sql";
+import "prismjs/components/prism-php";
 
 /**
  * Diff content panel — renders all changed files.
@@ -170,7 +192,10 @@ export class DiffView {
             h("td", { class: "line-no" }, [
               lineNo != null ? String(lineNo) : "",
             ]),
-            h("td", { class: "line-content" }, [prefix + line.content]),
+            h("td", {
+              class: "line-content",
+              innerHTML: renderUnifiedLineContent(prefix, line.content, line.type, file.path),
+            }),
           ])
         );
       }
@@ -204,13 +229,15 @@ export class DiffView {
             ]),
             h("td", {
               class: `line-content${leftLineClass}`,
-            }, [left ? left.content : ""]),
+              innerHTML: left ? highlightCodeLine(left.content, file.path) : "",
+            }),
             h("td", { class: `line-no${rightLineClass}` }, [
               right?.newLineNo != null ? String(right.newLineNo) : "",
             ]),
             h("td", {
               class: `line-content${rightLineClass}`,
-            }, [right ? right.content : ""]),
+              innerHTML: right ? highlightCodeLine(right.content, file.path) : "",
+            }),
           ])
         );
       }
@@ -281,4 +308,89 @@ function pairLines(lines: DiffLine[]): [DiffLine | null, DiffLine | null][] {
 
   flush();
   return result;
+}
+
+function renderUnifiedLineContent(
+  prefix: string,
+  content: string,
+  type: DiffLine["type"],
+  filePath: string
+): string {
+  const prefixClass =
+    type === "add"
+      ? "dv-diff-prefix-add"
+      : type === "delete"
+      ? "dv-diff-prefix-del"
+      : "dv-diff-prefix-context";
+
+  const safePrefix = escapeHtml(prefix);
+  const highlighted = highlightCodeLine(content, filePath);
+  return `<span class="dv-diff-prefix ${prefixClass}">${safePrefix}</span>${highlighted}`;
+}
+
+function highlightCodeLine(content: string, filePath: string): string {
+  if (content.length > 8000) {
+    return escapeHtml(content);
+  }
+
+  const language = languageFromFilePath(filePath);
+  const grammar = language
+    ? (Prism.languages as Record<string, Prism.Grammar>)[language] ?? null
+    : null;
+
+  if (!grammar || !language) {
+    return escapeHtml(content);
+  }
+
+  try {
+    return Prism.highlight(content, grammar, language);
+  } catch {
+    return escapeHtml(content);
+  }
+}
+
+function languageFromFilePath(filePath: string): string | null {
+  const fileName = filePath.split("/").pop() ?? filePath;
+  const ext = fileName.includes(".")
+    ? fileName.split(".").pop()!.toLowerCase()
+    : "";
+
+  const map: Record<string, string> = {
+    js: "javascript",
+    jsx: "jsx",
+    ts: "typescript",
+    tsx: "tsx",
+    c: "c",
+    h: "c",
+    cc: "cpp",
+    cxx: "cpp",
+    cpp: "cpp",
+    hpp: "cpp",
+    cs: "csharp",
+    java: "java",
+    kt: "kotlin",
+    go: "go",
+    rs: "rust",
+    py: "python",
+    rb: "ruby",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    json: "json",
+    yml: "yaml",
+    yaml: "yaml",
+    md: "markdown",
+    css: "css",
+    sql: "sql",
+    php: "php",
+  };
+
+  return map[ext] ?? null;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
