@@ -952,31 +952,118 @@ button {
 .chat-perm-toggle-row {
   display: flex;
   align-items: center;
-  gap: 8px;
   padding: 8px 14px;
   border-top: 1px solid var(--border);
   background: var(--bg-secondary);
+  position: relative;
 }
 
-.perm-toggle-checkbox {
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
-  accent-color: var(--accent);
+.perm-selector {
+  position: relative;
 }
 
-.perm-toggle-label {
-  display: flex;
+.perm-selector > summary {
+  list-style: none;
+}
+
+.perm-selector > summary::-webkit-details-marker {
+  display: none;
+}
+
+.perm-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-secondary);
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(249, 115, 22, 0.32);
+  background: rgba(249, 115, 22, 0.12);
+  color: #fb923c;
   cursor: pointer;
   user-select: none;
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.perm-toggle-text {
-  font-weight: 500;
+.perm-chip:hover {
+  filter: brightness(1.06);
+}
+
+.perm-chip-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.perm-chip-text {
+  line-height: 1;
+}
+
+.perm-chip-caret {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.perm-selector .perm-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.28);
+  display: none;
+  z-index: 40;
+}
+
+.perm-selector[open] .perm-menu {
+  display: block;
+}
+
+.perm-menu-option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 10px 12px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.perm-menu-option:hover {
+  background: var(--bg-hover);
+}
+
+.perm-menu-title {
+  font-weight: 600;
+}
+
+.perm-menu-check {
+  opacity: 0;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.perm-menu-option.selected .perm-menu-check {
+  opacity: 1;
+}
+
+.perm-selector.full-access .perm-chip {
+  border-color: rgba(249, 115, 22, 0.32);
+  background: rgba(249, 115, 22, 0.12);
+  color: #fb923c;
+}
+
+.perm-selector:not(.full-access) .perm-chip {
+  border-color: var(--border-heavy);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 
 .chat-input-row {

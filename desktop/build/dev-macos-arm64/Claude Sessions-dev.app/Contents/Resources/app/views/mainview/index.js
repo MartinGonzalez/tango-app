@@ -775,7 +775,11 @@ class ChatView {
   #sendBtn;
   #stopBtn;
   #statusEl;
-  #toggleEl;
+  #permDetailsEl;
+  #permLabelEl;
+  #permDefaultBtn;
+  #permFullBtn;
+  #fullAccess = true;
   #callbacks;
   #isWaiting = false;
   constructor(container, callbacks) {
@@ -798,18 +802,40 @@ class ChatView {
     });
     this.#sendBtn = h("button", { class: "chat-send-btn", onclick: () => this.#send() }, ["Send"]);
     this.#stopBtn = h("button", { class: "chat-stop-btn", onclick: () => this.#stop(), hidden: true }, ["Stop"]);
-    this.#toggleEl = document.createElement("input");
-    this.#toggleEl.type = "checkbox";
-    this.#toggleEl.id = "perm-toggle";
-    this.#toggleEl.checked = true;
-    this.#toggleEl.className = "perm-toggle-checkbox";
-    const toggleLabel = h("label", { class: "perm-toggle-label", for: "perm-toggle" }, [
-      h("span", { class: "perm-toggle-text" }, ["Full Access"])
+    this.#permLabelEl = h("span", { class: "perm-chip-text" }, ["Full access"]);
+    this.#permDefaultBtn = h("button", {
+      class: "perm-menu-option",
+      onclick: (e) => {
+        e.preventDefault();
+        this.#setPermission(false);
+      }
+    }, [
+      h("span", { class: "perm-menu-title" }, ["Default permissions"]),
+      h("span", { class: "perm-menu-check" }, ["✓"])
     ]);
-    const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [
-      this.#toggleEl,
-      toggleLabel
+    this.#permFullBtn = h("button", {
+      class: "perm-menu-option",
+      onclick: (e) => {
+        e.preventDefault();
+        this.#setPermission(true);
+      }
+    }, [
+      h("span", { class: "perm-menu-title" }, ["Full access"]),
+      h("span", { class: "perm-menu-check" }, ["✓"])
     ]);
+    this.#permDetailsEl = h("details", { class: "perm-selector" }, [
+      h("summary", { class: "perm-chip" }, [
+        h("span", { class: "perm-chip-icon" }, ["⛨"]),
+        this.#permLabelEl,
+        h("span", { class: "perm-chip-caret" }, ["▾"])
+      ]),
+      h("div", { class: "perm-menu" }, [
+        this.#permDefaultBtn,
+        this.#permFullBtn
+      ])
+    ]);
+    const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [this.#permDetailsEl]);
+    this.#setPermission(true);
     const inputRow = h("div", { class: "chat-input-row" }, [
       this.#inputEl,
       this.#stopBtn,
@@ -957,7 +983,7 @@ class ChatView {
       return;
     this.#inputEl.value = "";
     this.#inputEl.style.height = "auto";
-    const fullAccess = this.#toggleEl.checked;
+    const fullAccess = this.#fullAccess;
     this.appendUserMessage(text);
     this.#callbacks.onSendPrompt(text, fullAccess);
     this.#showStopButton();
@@ -1028,7 +1054,7 @@ class ChatView {
           const btn = h("button", {
             class: "perm-option-btn",
             onclick: () => {
-              this.#callbacks.onSendPrompt(opt.label, this.#toggleEl.checked);
+              this.#callbacks.onSendPrompt(opt.label, this.#fullAccess);
               dialog.querySelectorAll("button").forEach((b) => b.disabled = true);
               dialog.classList.add("responded");
             }
@@ -1101,6 +1127,14 @@ class ChatView {
     requestAnimationFrame(() => {
       this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
     });
+  }
+  #setPermission(fullAccess) {
+    this.#fullAccess = fullAccess;
+    this.#permLabelEl.textContent = fullAccess ? "Full access" : "Default permissions";
+    this.#permDetailsEl.classList.toggle("full-access", fullAccess);
+    this.#permDefaultBtn.classList.toggle("selected", !fullAccess);
+    this.#permFullBtn.classList.toggle("selected", fullAccess);
+    this.#permDetailsEl.open = false;
   }
   get element() {
     return this.#el;
