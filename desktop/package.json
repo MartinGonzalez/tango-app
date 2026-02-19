@@ -1,0 +1,21 @@
+{
+  "name": "claude-sessions",
+  "version": "0.1.0",
+  "description": "Desktop app for managing Claude Code sessions",
+  "type": "module",
+  "scripts": {
+    "build": "electrobun build",
+    "dev": "electrobun dev",
+    "start": "bun run clean && bun run build && bun run dev",
+    "clean": "bun run kill-app; bun run kill-server; true",
+    "kill-app": "pkill -f 'Claude Sessions' 2>/dev/null; pkill -f 'electrobun dev' 2>/dev/null; true",
+    "kill-server": "lsof -ti:4242 | xargs kill 2>/dev/null; true",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "electrobun": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

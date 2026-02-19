@@ -46,6 +46,11 @@ const server = http.createServer(async (req, res) => {
         const tool = payload.tool_name ? ` → ${payload.tool_name}` : "";
         console.log(`\n${"─".repeat(60)}`);
         console.log(`[hook] ${hook}${tool}  (session: ${sid}…)`);
+        console.log(
+          `[hook-meta] pid=${payload.process_id ?? "—"} cwd=${payload.cwd ?? "—"} transcript=${payload.transcript_path ?? "—"}`
+        );
+        console.log("[hook-payload]");
+        console.log(safeStringify(payload));
         const { events, notifications } = processHookEvent(payload);
         for (const event of events) {
           console.log(`  ↳ ${event.type}  status=${event.status ?? "—"}  title=${event.title ?? "—"}`);
@@ -163,4 +168,13 @@ function contentType(filePath) {
     return "image/png";
   }
   return "text/html";
+}
+
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `{"error":"failed_to_serialize_payload","message":${JSON.stringify(message)}}`;
+  }
 }
