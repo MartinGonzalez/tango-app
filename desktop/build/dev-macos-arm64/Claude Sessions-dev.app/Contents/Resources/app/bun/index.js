@@ -4772,6 +4772,9 @@ async function finalizeTurnDiff(cwd) {
 async function getDiff(cwd, scope = "all") {
   const state = getWorkspaceState(cwd);
   if (scope === "last_turn") {
+    if (state.turnBaseline) {
+      return getSnapshotDiffFromBaseline(cwd, state.turnBaseline);
+    }
     return state.lastTurnDiff;
   }
   if (await hasGit(cwd)) {

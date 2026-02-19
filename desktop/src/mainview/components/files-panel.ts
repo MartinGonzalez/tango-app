@@ -113,6 +113,10 @@ export class FilesPanel {
       ? file.path.slice(0, file.path.lastIndexOf("/"))
       : "";
     const { adds, dels } = countFileChanges(file);
+    const delta = [
+      adds > 0 ? h("span", { class: "fp-delta-add" }, [`+${adds}`]) : null as any,
+      dels > 0 ? h("span", { class: "fp-delta-del" }, [`-${dels}`]) : null as any,
+    ].filter(Boolean) as HTMLElement[];
 
     return h(
       "div",
@@ -127,14 +131,13 @@ export class FilesPanel {
       [
         h("span", { class: `fp-status ${statusClass}` }, [statusIcon]),
         h("div", { class: "fp-file-info" }, [
-          h("span", { class: "fp-file-name" }, [fileName]),
+          h("div", { class: "fp-file-name-row" }, [
+            h("span", { class: "fp-file-name" }, [fileName]),
+            delta.length > 0 ? h("span", { class: "fp-file-delta" }, delta) : null as any,
+          ].filter(Boolean)),
           dirPath
             ? h("span", { class: "fp-file-dir" }, [dirPath])
             : null as any,
-        ].filter(Boolean)),
-        h("span", { class: "fp-file-delta" }, [
-          adds > 0 ? h("span", { class: "fp-delta-add" }, [`+${adds}`]) : null as any,
-          dels > 0 ? h("span", { class: "fp-delta-del" }, [`-${dels}`]) : null as any,
         ].filter(Boolean)),
         file.isBinary ? h("span", { class: "fp-binary-tag" }, ["bin"]) : null as any,
       ].filter(Boolean)

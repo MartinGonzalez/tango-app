@@ -1164,7 +1164,15 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
+  max-width: min(60vw, 640px);
+}
+
+.dv-file-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .dv-file-delta {
@@ -1179,22 +1187,14 @@ button {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 4px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg);
 }
 
 .dv-delta-add {
   color: var(--green);
-  border-color: rgba(16, 185, 129, 0.25);
-  background: rgba(16, 185, 129, 0.08);
 }
 
 .dv-delta-del {
   color: var(--red);
-  border-color: rgba(239, 68, 68, 0.25);
-  background: rgba(239, 68, 68, 0.08);
 }
 
 .dv-file-binary {
@@ -1422,6 +1422,19 @@ button {
   white-space: nowrap;
 }
 
+.fp-file-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fp-file-name-row .fp-file-name {
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 220px;
+}
+
 .fp-file-item.active .fp-file-name {
   color: var(--text);
 }
@@ -1442,7 +1455,6 @@ button {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  margin-top: 1px;
 }
 
 .fp-delta-add,
@@ -1450,22 +1462,14 @@ button {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border);
 }
 
 .fp-delta-add {
   color: var(--green);
-  border-color: rgba(16, 185, 129, 0.25);
-  background: rgba(16, 185, 129, 0.08);
 }
 
 .fp-delta-del {
   color: var(--red);
-  border-color: rgba(239, 68, 68, 0.25);
-  background: rgba(239, 68, 68, 0.08);
 }
 
 .fp-binary-tag {

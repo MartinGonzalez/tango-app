@@ -105,6 +105,10 @@ export class DiffView {
       renamed: "R",
     }[file.status];
     const { adds, dels } = countFileChanges(file);
+    const delta = [
+      adds > 0 ? h("span", { class: "dv-delta-add" }, [`+${adds}`]) : null as any,
+      dels > 0 ? h("span", { class: "dv-delta-del" }, [`-${dels}`]) : null as any,
+    ].filter(Boolean) as HTMLElement[];
 
     const details = h("details", {
       class: `dv-file-section${file.path === this.#activeFile ? " active" : ""}`,
@@ -118,10 +122,9 @@ export class DiffView {
     details.appendChild(
       h("summary", { class: "dv-file-summary" }, [
         h("span", { class: `dv-file-status dv-file-status-${file.status}` }, [statusSymbol]),
-        h("span", { class: "dv-file-path" }, [file.path]),
-        h("span", { class: "dv-file-delta" }, [
-          adds > 0 ? h("span", { class: "dv-delta-add" }, [`+${adds}`]) : null as any,
-          dels > 0 ? h("span", { class: "dv-delta-del" }, [`-${dels}`]) : null as any,
+        h("span", { class: "dv-file-main" }, [
+          h("span", { class: "dv-file-path" }, [file.path]),
+          delta.length > 0 ? h("span", { class: "dv-file-delta" }, delta) : null as any,
         ].filter(Boolean)),
         file.isBinary ? h("span", { class: "dv-file-binary" }, ["bin"]) : null as any,
       ].filter(Boolean))

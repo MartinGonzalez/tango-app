@@ -42,9 +42,13 @@ const rpc = Electroview.defineRPC<any>({
         if (
           state.activeSessionId === sessionId
           && state.activeWorkspace
-          && (event as any).type === "result"
+          && ((event as any).type === "result" || isDiffMutationEvent(event))
         ) {
-          loadDiff(state.activeWorkspace, state.diffScope);
+          scheduleDiffRefresh(
+            state.activeWorkspace,
+            state.diffScope,
+            (event as any).type === "result" ? 0 : 120
+          );
         }
       },
       sessionIdResolved: ({
@@ -140,6 +144,7 @@ let sidebar: Sidebar;
 let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
+let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
@@ -380,6 +385,36 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
     filesPanel.clear();
     diffView.clear();
   }
+}
+
+function scheduleDiffRefresh(
+  cwd: string,
+  scope: DiffScope,
+  delayMs: number
+): void {
+  if (diffRefreshTimer) {
+    clearTimeout(diffRefreshTimer);
+  }
+  diffRefreshTimer = setTimeout(() => {
+    diffRefreshTimer = null;
+    void loadDiff(cwd, scope);
+  }, delayMs);
+}
+
+function isDiffMutationEvent(event: ClaudeStreamEvent): boolean {
+  const ev = event as any;
+  if (ev.type !== "user") return false;
+
+  const toolResult = ev.tool_use_result;
+  if (!toolResult || typeof toolResult !== "object") return false;
+
+  const kind = String(toolResult.type ?? "").toLowerCase();
+  if (kind === "create" || kind === "update" || kind === "delete" || kind === "rename") {
+    return true;
+  }
+
+  const hasPatch = Array.isArray(toolResult.structuredPatch) && toolResult.structuredPatch.length > 0;
+  return hasPatch;
 }
 
 async function loadWorkspaces(): Promise<void> {

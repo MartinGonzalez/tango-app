@@ -1378,6 +1378,10 @@ class DiffView {
       renamed: "R"
     }[file.status];
     const { adds, dels } = countFileChanges(file);
+    const delta = [
+      adds > 0 ? h("span", { class: "dv-delta-add" }, [`+${adds}`]) : null,
+      dels > 0 ? h("span", { class: "dv-delta-del" }, [`-${dels}`]) : null
+    ].filter(Boolean);
     const details = h("details", {
       class: `dv-file-section${file.path === this.#activeFile ? " active" : ""}`,
       dataset: { filePath: file.path }
@@ -1388,10 +1392,9 @@ class DiffView {
     });
     details.appendChild(h("summary", { class: "dv-file-summary" }, [
       h("span", { class: `dv-file-status dv-file-status-${file.status}` }, [statusSymbol]),
-      h("span", { class: "dv-file-path" }, [file.path]),
-      h("span", { class: "dv-file-delta" }, [
-        adds > 0 ? h("span", { class: "dv-delta-add" }, [`+${adds}`]) : null,
-        dels > 0 ? h("span", { class: "dv-delta-del" }, [`-${dels}`]) : null
+      h("span", { class: "dv-file-main" }, [
+        h("span", { class: "dv-file-path" }, [file.path]),
+        delta.length > 0 ? h("span", { class: "dv-file-delta" }, delta) : null
       ].filter(Boolean)),
       file.isBinary ? h("span", { class: "dv-file-binary" }, ["bin"]) : null
     ].filter(Boolean)));
@@ -1601,6 +1604,10 @@ class FilesPanel {
     const fileName = file.path.split("/").pop() ?? file.path;
     const dirPath = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
     const { adds, dels } = countFileChanges2(file);
+    const delta = [
+      adds > 0 ? h("span", { class: "fp-delta-add" }, [`+${adds}`]) : null,
+      dels > 0 ? h("span", { class: "fp-delta-del" }, [`-${dels}`]) : null
+    ].filter(Boolean);
     return h("div", {
       class: `fp-file-item${file.path === this.#activeFile ? " active" : ""}`,
       dataset: { filePath: file.path },
@@ -1611,12 +1618,11 @@ class FilesPanel {
     }, [
       h("span", { class: `fp-status ${statusClass}` }, [statusIcon]),
       h("div", { class: "fp-file-info" }, [
-        h("span", { class: "fp-file-name" }, [fileName]),
+        h("div", { class: "fp-file-name-row" }, [
+          h("span", { class: "fp-file-name" }, [fileName]),
+          delta.length > 0 ? h("span", { class: "fp-file-delta" }, delta) : null
+        ].filter(Boolean)),
         dirPath ? h("span", { class: "fp-file-dir" }, [dirPath]) : null
-      ].filter(Boolean)),
-      h("span", { class: "fp-file-delta" }, [
-        adds > 0 ? h("span", { class: "fp-delta-add" }, [`+${adds}`]) : null,
-        dels > 0 ? h("span", { class: "fp-delta-del" }, [`-${dels}`]) : null
       ].filter(Boolean)),
       file.isBinary ? h("span", { class: "fp-binary-tag" }, ["bin"]) : null
     ].filter(Boolean));
@@ -1656,8 +1662,8 @@ var rpc = Electroview.defineRPC({
         if (state.activeSessionId === sessionId && chatView) {
           chatView.appendStreamEvent(event);
         }
-        if (state.activeSessionId === sessionId && state.activeWorkspace && event.type === "result") {
-          loadDiff(state.activeWorkspace, state.diffScope);
+        if (state.activeSessionId === sessionId && state.activeWorkspace && (event.type === "result" || isDiffMutationEvent(event))) {
+          scheduleDiffRefresh(state.activeWorkspace, state.diffScope, event.type === "result" ? 0 : 120);
         }
       },
       sessionIdResolved: ({
@@ -1725,6 +1731,7 @@ var sidebar;
 var chatView;
 var diffView;
 var filesPanel;
+var diffRefreshTimer = null;
 function init() {
   const panelsContainer = qs("#panels");
   panelLayout = new PanelLayout(panelsContainer, [
@@ -1930,6 +1937,29 @@ async function loadDiff(cwd, scope) {
     filesPanel.clear();
     diffView.clear();
   }
+}
+function scheduleDiffRefresh(cwd, scope, delayMs) {
+  if (diffRefreshTimer) {
+    clearTimeout(diffRefreshTimer);
+  }
+  diffRefreshTimer = setTimeout(() => {
+    diffRefreshTimer = null;
+    loadDiff(cwd, scope);
+  }, delayMs);
+}
+function isDiffMutationEvent(event) {
+  const ev = event;
+  if (ev.type !== "user")
+    return false;
+  const toolResult = ev.tool_use_result;
+  if (!toolResult || typeof toolResult !== "object")
+    return false;
+  const kind = String(toolResult.type ?? "").toLowerCase();
+  if (kind === "create" || kind === "update" || kind === "delete" || kind === "rename") {
+    return true;
+  }
+  const hasPatch = Array.isArray(toolResult.structuredPatch) && toolResult.structuredPatch.length > 0;
+  return hasPatch;
 }
 async function loadWorkspaces() {
   try {

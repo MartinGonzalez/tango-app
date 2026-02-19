@@ -85,6 +85,10 @@ export async function getDiff(
   const state = getWorkspaceState(cwd);
 
   if (scope === "last_turn") {
+    if (state.turnBaseline) {
+      // Live preview while Claude is still working on the current turn.
+      return getSnapshotDiffFromBaseline(cwd, state.turnBaseline);
+    }
     return state.lastTurnDiff;
   }
 
