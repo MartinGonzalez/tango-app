@@ -1852,7 +1852,8 @@ function init() {
         if (state.activeSessionId && isLive) {
           await rpc.request.sendFollowUp({
             sessionId: state.activeSessionId,
-            text: prompt
+            text: prompt,
+            fullAccess
           });
         } else {
           const { sessionId } = await rpc.request.sendPrompt({

@@ -142,10 +142,21 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         }
       },
 
-      sendFollowUp: async ({ sessionId, text }: { sessionId: string; text: string }) => {
+      sendFollowUp: async ({
+        sessionId,
+        text,
+        fullAccess,
+      }: {
+        sessionId: string;
+        text: string;
+        fullAccess?: boolean;
+      }) => {
         const cwd = resolveSessionCwd(sessionId);
         if (cwd) {
           await beginTurnDiff(cwd).catch(() => {});
+        }
+        if (typeof fullAccess === "boolean") {
+          approvals.setSessionFullAccess(sessionId, fullAccess);
         }
         await sessions.sendMessage(sessionId, text);
       },

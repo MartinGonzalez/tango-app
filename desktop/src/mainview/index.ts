@@ -242,6 +242,7 @@ function init(): void {
           await (rpc as any).request.sendFollowUp({
             sessionId: state.activeSessionId,
             text: prompt,
+            fullAccess,
           });
         } else {
           // New session or resume a historical/finished session

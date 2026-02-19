@@ -5233,6 +5233,14 @@ class ApprovalServer {
       this.#autoAllowSessions.delete(sessionId);
     }
   }
+  setSessionFullAccess(sessionId, fullAccess) {
+    this.#managedSessions.add(sessionId);
+    if (fullAccess) {
+      this.#autoAllowSessions.add(sessionId);
+    } else {
+      this.#autoAllowSessions.delete(sessionId);
+    }
+  }
   resolveSessionId(tempId, realId) {
     const wasManaged = this.#managedSessions.has(tempId);
     const wasAutoAllow = this.#autoAllowSessions.has(tempId);
@@ -5578,10 +5586,17 @@ var rpc = BrowserView.defineRPC({
           throw new Error(msg);
         }
       },
-      sendFollowUp: async ({ sessionId, text }) => {
+      sendFollowUp: async ({
+        sessionId,
+        text,
+        fullAccess
+      }) => {
         const cwd = resolveSessionCwd(sessionId);
         if (cwd) {
           await beginTurnDiff(cwd).catch(() => {});
+        }
+        if (typeof fullAccess === "boolean") {
+          approvals.setSessionFullAccess(sessionId, fullAccess);
         }
         await sessions.sendMessage(sessionId, text);
       },

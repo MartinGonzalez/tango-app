@@ -36,6 +36,16 @@ export class ApprovalServer {
     }
   }
 
+  setSessionFullAccess(sessionId: string, fullAccess: boolean): void {
+    // Treat this as managed if it exists in current app lifecycle.
+    this.#managedSessions.add(sessionId);
+    if (fullAccess) {
+      this.#autoAllowSessions.add(sessionId);
+    } else {
+      this.#autoAllowSessions.delete(sessionId);
+    }
+  }
+
   resolveSessionId(tempId: string, realId: string): void {
     const wasManaged = this.#managedSessions.has(tempId);
     const wasAutoAllow = this.#autoAllowSessions.has(tempId);

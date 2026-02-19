@@ -223,11 +223,11 @@ export type AppRPC = {
         response: TranscriptMessage[];
       };
       sendPrompt: {
-        params: { prompt: string; cwd: string; sessionId?: string };
+        params: { prompt: string; cwd: string; fullAccess?: boolean; sessionId?: string };
         response: { sessionId: string };
       };
       sendFollowUp: {
-        params: { sessionId: string; text: string };
+        params: { sessionId: string; text: string; fullAccess?: boolean };
         response: void;
       };
       respondPermission: {
