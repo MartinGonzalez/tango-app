@@ -1,0 +1,13 @@
+{
+  "name": "claude-watcher",
+  "version": "0.1.0",
+  "description": "Local process and task monitor for Claude sessions",
+  "type": "module",
+  "bin": {
+    "claude-watch": "./bin/claude-watch"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  }
+}
