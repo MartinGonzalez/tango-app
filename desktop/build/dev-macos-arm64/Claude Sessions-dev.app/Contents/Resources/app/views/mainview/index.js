@@ -731,14 +731,14 @@ class Sidebar {
         class: "ws-session-menu-btn",
         onclick: (e) => {
           e.stopPropagation();
-          this.#toggleSessionMenu(session.sessionId, sessionItem);
+          this.#toggleSessionMenu(session.sessionId, sessionItem, workspacePath);
         },
         title: "Session options"
       }, ["⋮"])
     ]);
     return sessionItem;
   }
-  #toggleSessionMenu(sessionId, sessionItem) {
+  #toggleSessionMenu(sessionId, sessionItem, workspacePath) {
     const existingMenu = this.#el.querySelector(".ws-session-menu");
     if (existingMenu) {
       existingMenu.remove();
@@ -756,7 +756,15 @@ class Sidebar {
           menu.remove();
           this.#openMenuSessionId = null;
         }
-      }, ["Rename"])
+      }, ["Rename"]),
+      h("button", {
+        class: "ws-session-menu-item ws-session-menu-item-danger",
+        onclick: () => {
+          this.#callbacks.onDeleteSession(sessionId, workspacePath);
+          menu.remove();
+          this.#openMenuSessionId = null;
+        }
+      }, ["Delete"])
     ]);
     sessionItem.appendChild(menu);
     const closeMenu = (e) => {
@@ -1953,6 +1961,50 @@ function init() {
     },
     onAddWorkspace: () => openWorkspace(),
     onRemoveWorkspace: (path) => removeWorkspace(path),
+    onDeleteSession: async (sessionId, workspacePath) => {
+      const state = appState.get();
+      const isLiveSession = state.liveSessions.has(sessionId);
+      const transcriptPath = (state.historySessions[workspacePath] ?? []).find((h2) => h2.sessionId === sessionId)?.transcriptPath;
+      if (isLiveSession) {
+        try {
+          await rpc.request.killSession({ sessionId });
+        } catch (err) {
+          console.error("Failed to kill session:", err);
+        }
+      }
+      try {
+        await rpc.request.deleteSession({
+          sessionId,
+          cwd: workspacePath,
+          transcriptPath
+        });
+      } catch (err) {
+        console.error("Failed to delete session transcript:", err);
+      }
+      appState.update((s) => {
+        const live = new Set(s.liveSessions);
+        live.delete(sessionId);
+        const names = { ...s.customSessionNames };
+        delete names[sessionId];
+        const wsHistory = s.historySessions[workspacePath] ?? [];
+        const nextHistory = wsHistory.filter((h2) => h2.sessionId !== sessionId);
+        return {
+          ...s,
+          liveSessions: live,
+          historySessions: {
+            ...s.historySessions,
+            [workspacePath]: nextHistory
+          },
+          customSessionNames: names,
+          activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId
+        };
+      });
+      const next = appState.get();
+      if (!next.activeSessionId) {
+        chatView.clear();
+      }
+      loadSessionHistory(workspacePath);
+    },
     onToggleWorkspace: (path) => {
       const state = appState.get();
       const wasExpanded = state.expandedWorkspaces.has(path);

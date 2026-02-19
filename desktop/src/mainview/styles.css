@@ -510,6 +510,15 @@ button {
   background: var(--bg-hover);
 }
 
+.ws-session-menu-item-danger {
+  color: var(--red);
+}
+
+.ws-session-menu-item-danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
 .ws-session-rename-input {
   width: 100%;
   padding: 2px 4px;
@@ -1189,7 +1198,7 @@ button {
 
 .chat-input-row {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 6px;
   padding: 8px 14px 10px;
   background: transparent;
@@ -1221,6 +1230,7 @@ button {
 
 .chat-send-btn {
   padding: 7px 16px;
+  min-height: 36px;
   font-size: 12px;
   font-weight: 600;
   background: var(--blue);
@@ -1228,14 +1238,22 @@ button {
   border-radius: var(--radius-md);
   transition: all 100ms ease;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-send-btn:hover {
   filter: brightness(1.1);
 }
 
+.chat-send-btn[hidden] {
+  display: none !important;
+}
+
 .chat-stop-btn {
   padding: 7px 16px;
+  min-height: 36px;
   font-size: 12px;
   font-weight: 600;
   background: var(--red);
@@ -1243,10 +1261,17 @@ button {
   border-radius: var(--radius-md);
   transition: all 100ms ease;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-stop-btn:hover {
   filter: brightness(1.1);
+}
+
+.chat-stop-btn[hidden] {
+  display: none !important;
 }
 
 /* ── Diff Panel ──────────────────────────────────────────────── */

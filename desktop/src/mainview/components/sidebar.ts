@@ -1,4 +1,4 @@
-import { h, qs, clearChildren } from "../lib/dom.ts";
+import { h, clearChildren } from "../lib/dom.ts";
 import type { SessionInfo } from "../../shared/types.ts";
 
 const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
@@ -21,6 +21,7 @@ export type SidebarCallbacks = {
   onNewSession: (workspacePath: string) => void;
   onAddWorkspace: () => void;
   onRemoveWorkspace: (path: string) => void;
+  onDeleteSession: (sessionId: string, workspacePath: string) => void;
   onToggleWorkspace: (path: string) => void;
   onRenameSession: (sessionId: string, newName: string) => void;
 };
@@ -194,7 +195,7 @@ export class Sidebar {
           class: "ws-session-menu-btn",
           onclick: (e: Event) => {
             e.stopPropagation();
-            this.#toggleSessionMenu(session.sessionId, sessionItem);
+            this.#toggleSessionMenu(session.sessionId, sessionItem, workspacePath);
           },
           title: "Session options",
         }, ["\u22EE"]), // vertical ellipsis
@@ -204,7 +205,7 @@ export class Sidebar {
     return sessionItem;
   }
 
-  #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement): void {
+  #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement, workspacePath: string): void {
     // Close any open menu
     const existingMenu = this.#el.querySelector(".ws-session-menu");
     if (existingMenu) {
@@ -226,6 +227,14 @@ export class Sidebar {
           this.#openMenuSessionId = null;
         },
       }, ["Rename"]),
+      h("button", {
+        class: "ws-session-menu-item ws-session-menu-item-danger",
+        onclick: () => {
+          this.#callbacks.onDeleteSession(sessionId, workspacePath);
+          menu.remove();
+          this.#openMenuSessionId = null;
+        },
+      }, ["Delete"]),
     ]);
 
     sessionItem.appendChild(menu);

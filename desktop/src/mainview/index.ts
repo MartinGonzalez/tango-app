@@ -185,6 +185,58 @@ function init(): void {
     },
     onAddWorkspace: () => openWorkspace(),
     onRemoveWorkspace: (path) => removeWorkspace(path),
+    onDeleteSession: async (sessionId, workspacePath) => {
+      const state = appState.get();
+      const isLiveSession = state.liveSessions.has(sessionId);
+      const transcriptPath = (state.historySessions[workspacePath] ?? [])
+        .find((h) => h.sessionId === sessionId)?.transcriptPath;
+
+      if (isLiveSession) {
+        try {
+          await (rpc as any).request.killSession({ sessionId });
+        } catch (err) {
+          console.error("Failed to kill session:", err);
+        }
+      }
+
+      try {
+        await (rpc as any).request.deleteSession({
+          sessionId,
+          cwd: workspacePath,
+          transcriptPath,
+        });
+      } catch (err) {
+        console.error("Failed to delete session transcript:", err);
+      }
+
+      appState.update((s) => {
+        const live = new Set(s.liveSessions);
+        live.delete(sessionId);
+
+        const names = { ...s.customSessionNames };
+        delete names[sessionId];
+
+        const wsHistory = s.historySessions[workspacePath] ?? [];
+        const nextHistory = wsHistory.filter((h) => h.sessionId !== sessionId);
+
+        return {
+          ...s,
+          liveSessions: live,
+          historySessions: {
+            ...s.historySessions,
+            [workspacePath]: nextHistory,
+          },
+          customSessionNames: names,
+          activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId,
+        };
+      });
+
+      const next = appState.get();
+      if (!next.activeSessionId) {
+        chatView.clear();
+      }
+      loadSessionHistory(workspacePath);
+    },
     onToggleWorkspace: (path) => {
       const state = appState.get();
       const wasExpanded = state.expandedWorkspaces.has(path);

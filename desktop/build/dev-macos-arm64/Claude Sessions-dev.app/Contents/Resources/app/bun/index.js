@@ -4282,6 +4282,11 @@ await __promiseAll([
   init_native()
 ]);
 
+// src/bun/index.ts
+import { unlink } from "fs/promises";
+import { join as join10 } from "path";
+import { homedir as homedir7 } from "os";
+
 // src/bun/watcher-client.ts
 var DEFAULT_URL = "http://localhost:4242";
 var DEFAULT_POLL_MS = 2000;
@@ -5484,6 +5489,12 @@ class SessionNamesStore {
     this.#names[sessionId] = name;
     await this.#save();
   }
+  async delete(sessionId) {
+    if (!(sessionId in this.#names))
+      return;
+    delete this.#names[sessionId];
+    await this.#save();
+  }
   async#save() {
     await mkdir3(join9(homedir6(), ".claude-sessions"), { recursive: true });
     await writeFile3(STORE_PATH, JSON.stringify(this.#names, null, 2));
@@ -5622,6 +5633,26 @@ var rpc = BrowserView.defineRPC({
       killSession: async ({ sessionId }) => {
         sessions.kill(sessionId);
       },
+      deleteSession: async ({
+        sessionId,
+        cwd,
+        transcriptPath
+      }) => {
+        const resolvedPath = transcriptPath ?? latestSnapshot?.tasks.find((t) => t.sessionId === sessionId)?.transcriptPath ?? (cwd ? guessTranscriptPath(cwd, sessionId) : null);
+        let deleted = false;
+        if (resolvedPath) {
+          try {
+            await unlink(resolvedPath);
+            deleted = true;
+          } catch (err) {
+            if (err?.code !== "ENOENT") {
+              console.warn("Failed to delete transcript:", resolvedPath, err);
+            }
+          }
+        }
+        await sessionNames.delete(sessionId).catch(() => {});
+        return { deleted, transcriptPath: resolvedPath ?? null };
+      },
       getSessionHistory: async ({ cwd }) => {
         return listSessionsForWorkspace(cwd);
       },
@@ -5703,6 +5734,10 @@ function resolveSessionCwd(sessionId) {
     return direct;
   const fromSnapshot = latestSnapshot?.tasks.find((t) => t.sessionId === sessionId)?.cwd ?? null;
   return fromSnapshot;
+}
+function guessTranscriptPath(cwd, sessionId) {
+  const encoded = cwd.replace(/\//g, "-");
+  return join10(homedir7(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
 }
 exports_ApplicationMenu.setApplicationMenu([
   {

@@ -32,6 +32,12 @@ export class SessionNamesStore {
     await this.#save();
   }
 
+  async delete(sessionId: string): Promise<void> {
+    if (!(sessionId in this.#names)) return;
+    delete this.#names[sessionId];
+    await this.#save();
+  }
+
   async #save(): Promise<void> {
     await mkdir(join(homedir(), ".claude-sessions"), { recursive: true });
     await writeFile(STORE_PATH, JSON.stringify(this.#names, null, 2));

@@ -246,6 +246,10 @@ export type AppRPC = {
         params: { sessionId: string };
         response: void;
       };
+      deleteSession: {
+        params: { sessionId: string; cwd?: string; transcriptPath?: string };
+        response: { deleted: boolean; transcriptPath?: string | null };
+      };
       getSessionHistory: {
         params: { cwd: string };
         response: HistorySession[];

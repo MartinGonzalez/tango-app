@@ -1,4 +1,7 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { WatcherClient } from "./watcher-client.ts";
 import { SessionManager } from "./session-manager.ts";
 import { readTranscript } from "./transcript-reader.ts";
@@ -197,6 +200,35 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         sessions.kill(sessionId);
       },
 
+      deleteSession: async ({
+        sessionId,
+        cwd,
+        transcriptPath,
+      }: {
+        sessionId: string;
+        cwd?: string;
+        transcriptPath?: string;
+      }) => {
+        const resolvedPath = transcriptPath
+          ?? latestSnapshot?.tasks.find((t) => t.sessionId === sessionId)?.transcriptPath
+          ?? (cwd ? guessTranscriptPath(cwd, sessionId) : null);
+
+        let deleted = false;
+        if (resolvedPath) {
+          try {
+            await unlink(resolvedPath);
+            deleted = true;
+          } catch (err: any) {
+            if (err?.code !== "ENOENT") {
+              console.warn("Failed to delete transcript:", resolvedPath, err);
+            }
+          }
+        }
+
+        await sessionNames.delete(sessionId).catch(() => {});
+        return { deleted, transcriptPath: resolvedPath ?? null };
+      },
+
       getSessionHistory: async ({ cwd }) => {
         return listSessionsForWorkspace(cwd);
       },
@@ -289,6 +321,11 @@ function resolveSessionCwd(sessionId: string): string | null {
 
   const fromSnapshot = latestSnapshot?.tasks.find((t) => t.sessionId === sessionId)?.cwd ?? null;
   return fromSnapshot;
+}
+
+function guessTranscriptPath(cwd: string, sessionId: string): string {
+  const encoded = cwd.replace(/\//g, "-");
+  return join(homedir(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
 }
 
 // ── Window ───────────────────────────────────────────────────────
