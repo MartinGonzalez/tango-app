@@ -5073,15 +5073,20 @@ function highlightCodeLine(content, filePath) {
   if (content.length > 8000) {
     return escapeHtml2(content);
   }
+  const prism = resolvePrism();
+  if (!prism) {
+    return fallbackHighlight(content);
+  }
   const language = languageFromFilePath(filePath);
-  const grammar = language ? import_prismjs.default.languages[language] ?? null : null;
+  const grammar = language ? resolveGrammar(prism.languages, language) : null;
   if (!grammar || !language) {
-    return escapeHtml2(content);
+    return fallbackHighlight(content);
   }
   try {
-    return import_prismjs.default.highlight(content, grammar, language);
+    const highlighted = prism.highlight(content, grammar, language);
+    return highlighted.includes("token") ? highlighted : fallbackHighlight(content);
   } catch {
-    return escapeHtml2(content);
+    return fallbackHighlight(content);
   }
 }
 function languageFromFilePath(filePath) {
@@ -5120,6 +5125,53 @@ function languageFromFilePath(filePath) {
 }
 function escapeHtml2(text) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function resolvePrism() {
+  const globalPrism = globalThis?.Prism;
+  if (globalPrism?.highlight && globalPrism?.languages) {
+    return globalPrism;
+  }
+  const imported = import_prismjs.default;
+  if (imported?.highlight && imported?.languages) {
+    return imported;
+  }
+  return null;
+}
+function resolveGrammar(languages, language) {
+  if (languages[language])
+    return languages[language];
+  if (language === "csharp") {
+    return languages.cs ?? languages.dotnet ?? null;
+  }
+  if (language === "typescript") {
+    return languages.ts ?? null;
+  }
+  if (language === "javascript") {
+    return languages.js ?? null;
+  }
+  if (language === "yaml") {
+    return languages.yml ?? null;
+  }
+  return null;
+}
+var FALLBACK_KEYWORD_REGEX = /\b(import|from|export|default|class|interface|type|enum|public|private|protected|function|const|let|var|return|if|else|for|while|switch|case|break|continue|new|async|await|try|catch|finally|extends|implements|static|readonly|true|false|null|undefined|using|namespace|void|string|int|bool|this|base)\b/g;
+var FALLBACK_NUMBER_REGEX = /\b\d+(?:\.\d+)?\b/g;
+var FALLBACK_STRING_REGEX = /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+var FALLBACK_COMMENT_REGEX = /\/\/.*$/g;
+function fallbackHighlight(content) {
+  let html = escapeHtml2(content);
+  const tokens = [];
+  const stash = (value, className) => {
+    const idx = tokens.push(`<span class="token ${className}">${value}</span>`) - 1;
+    return `@@DV_FALLBACK_${idx}@@`;
+  };
+  html = html.replace(FALLBACK_STRING_REGEX, (m) => stash(m, "string"));
+  html = html.replace(FALLBACK_COMMENT_REGEX, (m) => stash(m, "comment"));
+  html = html.replace(FALLBACK_KEYWORD_REGEX, '<span class="token keyword">$1</span>');
+  html = html.replace(FALLBACK_NUMBER_REGEX, '<span class="token number">$&</span>');
+  return html.replace(/@@DV_FALLBACK_(\d+)@@/g, (_match, idx) => {
+    return tokens[Number(idx)] ?? "";
+  });
 }
 
 // src/mainview/components/files-panel.ts

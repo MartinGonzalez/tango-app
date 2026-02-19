@@ -333,19 +333,23 @@ function highlightCodeLine(content: string, filePath: string): string {
     return escapeHtml(content);
   }
 
+  const prism = resolvePrism();
+  if (!prism) {
+    return fallbackHighlight(content);
+  }
+
   const language = languageFromFilePath(filePath);
-  const grammar = language
-    ? (Prism.languages as Record<string, Prism.Grammar>)[language] ?? null
-    : null;
+  const grammar = language ? resolveGrammar(prism.languages, language) : null;
 
   if (!grammar || !language) {
-    return escapeHtml(content);
+    return fallbackHighlight(content);
   }
 
   try {
-    return Prism.highlight(content, grammar, language);
+    const highlighted = prism.highlight(content, grammar, language);
+    return highlighted.includes("token") ? highlighted : fallbackHighlight(content);
   } catch {
-    return escapeHtml(content);
+    return fallbackHighlight(content);
   }
 }
 
@@ -393,4 +397,72 @@ function escapeHtml(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+type PrismLike = {
+  languages: Record<string, Prism.Grammar>;
+  highlight: (text: string, grammar: Prism.Grammar, language: string) => string;
+};
+
+function resolvePrism(): PrismLike | null {
+  const globalPrism = (globalThis as any)?.Prism as PrismLike | undefined;
+  if (globalPrism?.highlight && globalPrism?.languages) {
+    return globalPrism;
+  }
+
+  const imported = Prism as unknown as PrismLike;
+  if (imported?.highlight && imported?.languages) {
+    return imported;
+  }
+
+  return null;
+}
+
+function resolveGrammar(
+  languages: Record<string, Prism.Grammar>,
+  language: string
+): Prism.Grammar | null {
+  if (languages[language]) return languages[language];
+
+  if (language === "csharp") {
+    return languages.cs ?? languages.dotnet ?? null;
+  }
+
+  if (language === "typescript") {
+    return languages.ts ?? null;
+  }
+
+  if (language === "javascript") {
+    return languages.js ?? null;
+  }
+
+  if (language === "yaml") {
+    return languages.yml ?? null;
+  }
+
+  return null;
+}
+
+const FALLBACK_KEYWORD_REGEX = /\b(import|from|export|default|class|interface|type|enum|public|private|protected|function|const|let|var|return|if|else|for|while|switch|case|break|continue|new|async|await|try|catch|finally|extends|implements|static|readonly|true|false|null|undefined|using|namespace|void|string|int|bool|this|base)\b/g;
+const FALLBACK_NUMBER_REGEX = /\b\d+(?:\.\d+)?\b/g;
+const FALLBACK_STRING_REGEX = /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+const FALLBACK_COMMENT_REGEX = /\/\/.*$/g;
+
+function fallbackHighlight(content: string): string {
+  let html = escapeHtml(content);
+  const tokens: string[] = [];
+
+  const stash = (value: string, className: string): string => {
+    const idx = tokens.push(`<span class="token ${className}">${value}</span>`) - 1;
+    return `@@DV_FALLBACK_${idx}@@`;
+  };
+
+  html = html.replace(FALLBACK_STRING_REGEX, (m) => stash(m, "string"));
+  html = html.replace(FALLBACK_COMMENT_REGEX, (m) => stash(m, "comment"));
+  html = html.replace(FALLBACK_KEYWORD_REGEX, '<span class="token keyword">$1</span>');
+  html = html.replace(FALLBACK_NUMBER_REGEX, '<span class="token number">$&</span>');
+
+  return html.replace(/@@DV_FALLBACK_(\d+)@@/g, (_match, idx) => {
+    return tokens[Number(idx)] ?? "";
+  });
 }
