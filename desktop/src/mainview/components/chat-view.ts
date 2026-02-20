@@ -4,12 +4,18 @@ import type {
   ClaudeStreamEvent,
   ContentBlock,
   ToolApprovalRequest,
+  Activity,
 } from "../../shared/types.ts";
 
 export type ChatCallbacks = {
-  onSendPrompt: (prompt: string, fullAccess: boolean) => void;
+  onSendPrompt: (
+    prompt: string,
+    fullAccess: boolean,
+    selectedFiles?: string[]
+  ) => void;
   onStopSession?: () => void;
   onOpenInFinder?: (path: string) => void;
+  onSearchFiles?: (query: string) => Promise<string[]>;
 };
 
 export class ChatView {
@@ -20,9 +26,22 @@ export class ChatView {
   #headerMenuEl: HTMLDetailsElement;
   #headerOpenInFinderBtn: HTMLButtonElement;
   #messagesEl: HTMLElement;
+  #composerEl: HTMLElement;
+  #scrollToBottomBtn: HTMLButtonElement;
   #inputEl: HTMLTextAreaElement;
+  #inputWrapEl: HTMLElement;
+  #attachmentStripEl: HTMLElement;
+  #attachmentListEl: HTMLElement;
   #sendBtn: HTMLElement;
   #stopBtn: HTMLElement;
+  #mentionMenuEl: HTMLElement;
+  #mentionListEl: HTMLElement;
+  #mentionEmptyEl: HTMLElement;
+  #contextDetailsEl: HTMLDetailsElement;
+  #contextSummaryValueEl: HTMLElement;
+  #contextUsedEl: HTMLElement;
+  #contextTokensEl: HTMLElement;
+  #contextHintEl: HTMLElement;
   #statusEl: HTMLElement;
   #permDetailsEl: HTMLDetailsElement;
   #permLabelEl: HTMLElement;
@@ -32,8 +51,17 @@ export class ChatView {
   #callbacks: ChatCallbacks;
   #isWaiting: boolean = false;
   #workspacePath: string | null = null;
+  #mentionVisible: boolean = false;
+  #mentionSelection: number = 0;
+  #mentionRequestId: number = 0;
+  #mentionSuggestions: string[] = [];
+  #selectedFiles: string[] = [];
+  #hasUserScrolledUp: boolean = false;
+  #isProgrammaticScroll: boolean = false;
   #onGlobalPointerDown: (event: PointerEvent) => void;
   #onGlobalKeyDown: (event: KeyboardEvent) => void;
+  #scrollAnimationFrame: number | null = null;
+  #composerResizeObserver: ResizeObserver | null = null;
 
   constructor(container: HTMLElement, callbacks: ChatCallbacks) {
     this.#callbacks = callbacks;
@@ -49,11 +77,24 @@ export class ChatView {
           this.#permDetailsEl.open = false;
         }
       }
+      if (this.#contextDetailsEl?.open) {
+        if (!(target && this.#contextDetailsEl.contains(target))) {
+          this.#contextDetailsEl.open = false;
+        }
+      }
+      if (
+        this.#mentionVisible
+        && !(target && this.#inputWrapEl.contains(target))
+      ) {
+        this.#hideMentionMenu();
+      }
     };
     this.#onGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (this.#headerMenuEl.open) this.#headerMenuEl.open = false;
       if (this.#permDetailsEl?.open) this.#permDetailsEl.open = false;
+      if (this.#contextDetailsEl?.open) this.#contextDetailsEl.open = false;
+      if (this.#mentionVisible) this.#hideMentionMenu();
     };
 
     this.#headerTitleEl = h("span", { class: "chat-header-title" }, ["New session"]);
@@ -92,6 +133,18 @@ export class ChatView {
     ]);
 
     this.#messagesEl = h("div", { class: "chat-messages" });
+    this.#messagesEl.addEventListener("scroll", (event) => {
+      this.#onMessagesScroll(event);
+    });
+
+    this.#scrollToBottomBtn = h("button", {
+      type: "button",
+      class: "chat-scroll-bottom-btn",
+      hidden: true,
+      title: "Scroll to latest message",
+      "aria-label": "Scroll to latest message",
+      onclick: () => this.#scrollToBottomAnimated(1000),
+    }, ["\u2193"]) as HTMLButtonElement;
 
     this.#statusEl = h("div", { class: "chat-status", hidden: true });
 
@@ -99,16 +152,22 @@ export class ChatView {
     this.#inputEl.className = "chat-input";
     this.#inputEl.placeholder = "Ask Claude something...";
     this.#inputEl.rows = 1;
-    this.#inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        this.#send();
-      }
-    });
+    this.#inputEl.addEventListener("keydown", (e) => this.#onInputKeyDown(e));
     this.#inputEl.addEventListener("input", () => {
-      this.#inputEl.style.height = "auto";
-      this.#inputEl.style.height =
-        Math.min(this.#inputEl.scrollHeight, 150) + "px";
+      this.#resizeInput();
+      void this.#updateMentionSuggestions();
+    });
+    this.#inputEl.addEventListener("click", () => {
+      void this.#updateMentionSuggestions();
+    });
+    this.#inputEl.addEventListener("keyup", (event) => {
+      if (
+        event.key.startsWith("Arrow")
+        || event.key === "Home"
+        || event.key === "End"
+      ) {
+        void this.#updateMentionSuggestions();
+      }
     });
 
     this.#sendBtn = h(
@@ -122,6 +181,29 @@ export class ChatView {
       { class: "chat-stop-btn", onclick: () => this.#stop(), hidden: true },
       ["Stop"]
     );
+
+    this.#mentionListEl = h("div", { class: "chat-mention-list" });
+    this.#mentionEmptyEl = h("div", {
+      class: "chat-mention-empty",
+      hidden: true,
+    }, ["No matching files"]);
+    this.#mentionMenuEl = h("div", {
+      class: "chat-mention-menu",
+      hidden: true,
+    }, [
+      this.#mentionListEl,
+      this.#mentionEmptyEl,
+    ]);
+    this.#attachmentListEl = h("div", { class: "chat-attachment-list" });
+    this.#attachmentStripEl = h("div", {
+      class: "chat-attachment-strip",
+      hidden: true,
+    }, [this.#attachmentListEl]);
+    this.#inputWrapEl = h("div", { class: "chat-input-wrap" }, [
+      this.#attachmentStripEl,
+      this.#inputEl,
+      this.#mentionMenuEl,
+    ]);
 
     this.#permLabelEl = h("span", { class: "perm-chip-text" }, ["Full access"]);
     this.#permDefaultBtn = h("button", {
@@ -157,20 +239,48 @@ export class ChatView {
       ]),
     ]) as HTMLDetailsElement;
 
-    const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [this.#permDetailsEl]);
+    this.#contextSummaryValueEl = h("span", { class: "context-meter-value" }, ["--"]);
+    this.#contextUsedEl = h("div", { class: "context-meter-line" }, ["--"]);
+    this.#contextTokensEl = h("div", { class: "context-meter-line" }, [""]);
+    this.#contextHintEl = h("div", { class: "context-meter-hint" }, [
+      "Claude may automatically compact its context.",
+    ]);
+    this.#contextDetailsEl = h("details", {
+      class: "context-meter",
+      hidden: true,
+    }, [
+      h("summary", { class: "context-meter-btn", title: "Context window usage" }, [
+        h("span", { class: "context-meter-spinner" }),
+        this.#contextSummaryValueEl,
+      ]),
+      h("div", { class: "context-meter-popover" }, [
+        h("div", { class: "context-meter-title" }, ["Context window"]),
+        this.#contextUsedEl,
+        this.#contextTokensEl,
+        this.#contextHintEl,
+      ]),
+    ]) as HTMLDetailsElement;
+
+    const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [
+      this.#permDetailsEl,
+      h("div", { class: "chat-footer-spacer" }),
+      this.#contextDetailsEl,
+    ]);
     this.#setPermission(true);
 
     const inputRow = h("div", { class: "chat-input-row" }, [
-      this.#inputEl,
+      this.#inputWrapEl,
       this.#stopBtn,
       this.#sendBtn,
     ]);
 
     const composerEl = h("div", { class: "chat-composer" }, [
+      this.#scrollToBottomBtn,
       this.#statusEl,
       inputRow,
       toggleRow,
     ]);
+    this.#composerEl = composerEl;
 
     this.#el = h("div", { class: "chat-view" }, [
       this.#headerEl,
@@ -179,13 +289,22 @@ export class ChatView {
     ]);
 
     container.appendChild(this.#el);
+    this.#syncComposerInset();
+    if (typeof ResizeObserver !== "undefined") {
+      this.#composerResizeObserver = new ResizeObserver(() => {
+        this.#syncComposerInset();
+      });
+      this.#composerResizeObserver.observe(this.#composerEl);
+    }
     this.setHeader("New session", null);
+    this.#updateScrollToBottomButton();
     document.addEventListener("pointerdown", this.#onGlobalPointerDown, true);
     document.addEventListener("keydown", this.#onGlobalKeyDown, true);
   }
 
   renderTranscript(messages: TranscriptMessage[]): void {
     clearChildren(this.#messagesEl);
+    this.#hasUserScrolledUp = false;
     this.#isWaiting = false;
     this.#hideStatus();
 
@@ -277,12 +396,11 @@ export class ChatView {
       this.#hideStatus();
       this.#isWaiting = false;
       this.#hideStopButton();
-      const cost = ev.total_cost_usd;
       const turns = ev.num_turns;
-      if (cost != null) {
-        this.#appendSystemInfo(
-          `Done — ${turns} turn${turns !== 1 ? "s" : ""}, $${cost.toFixed(4)}`
-        );
+      if (typeof turns === "number") {
+        this.#appendSystemInfo(`Done — ${turns} turn${turns !== 1 ? "s" : ""}`);
+      } else {
+        this.#appendSystemInfo("Done");
       }
       return;
     }
@@ -300,9 +418,9 @@ export class ChatView {
     console.log("[chat-view] Unhandled event:", ev.type, ev);
   }
 
-  appendUserMessage(text: string): void {
+  appendUserMessage(text: string, selectedFiles: string[] = []): void {
     const bubble = h("div", { class: "chat-bubble user" });
-    bubble.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+    bubble.innerHTML = this.#renderUserMessageHtml(text, selectedFiles);
     this.#messagesEl.appendChild(bubble);
     this.#showStatus("Starting Claude...");
     this.#isWaiting = true;
@@ -311,8 +429,13 @@ export class ChatView {
 
   clear(): void {
     clearChildren(this.#messagesEl);
+    this.#cancelScrollAnimation();
+    this.#hasUserScrolledUp = false;
+    this.#updateScrollToBottomButton();
     this.#isWaiting = false;
     this.#hideStatus();
+    this.#hideMentionMenu();
+    this.#clearSelectedFiles();
   }
 
   setHeader(sessionTitle: string, workspacePath: string | null): void {
@@ -332,6 +455,57 @@ export class ChatView {
       this.#headerWorkspaceEl.hidden = true;
       this.#headerOpenInFinderBtn.disabled = true;
       this.#headerMenuEl.open = false;
+    }
+  }
+
+  setContextUsage(
+    contextPercentage: number | null,
+    model: string | null,
+    activity: Activity | null,
+    promptTokens: number | null = null
+  ): void {
+    const normalized = normalizePercent(contextPercentage);
+    const hasAnySignal = normalized !== null || promptTokens !== null || model !== null || activity !== null;
+    if (!hasAnySignal) {
+      this.#contextDetailsEl.hidden = true;
+      this.#contextDetailsEl.open = false;
+      return;
+    }
+
+    this.#contextDetailsEl.hidden = false;
+    const isBusy = activity === "working" || activity === "waiting";
+    this.#contextDetailsEl.classList.toggle("busy", isBusy);
+
+    const windowSize = inferContextWindow(model);
+    let usedPct: number | null = normalized;
+    if (usedPct === null && windowSize && promptTokens !== null) {
+      usedPct = Math.min(100, (promptTokens / windowSize) * 100);
+    }
+
+    if (usedPct === null) {
+      this.#contextSummaryValueEl.textContent = "--";
+      this.#contextUsedEl.textContent = "Usage is being tracked";
+      this.#contextTokensEl.textContent = model
+        ? `Model: ${model}`
+        : "No context usage data yet";
+      return;
+    }
+
+    const roundedPct = Math.round(usedPct);
+    const leftPct = Math.max(0, 100 - roundedPct);
+    this.#contextSummaryValueEl.textContent = `${roundedPct}%`;
+    this.#contextUsedEl.textContent = `${roundedPct}% used (${leftPct}% left)`;
+
+    if (windowSize) {
+      const usedTokens = promptTokens !== null
+        ? Math.round(promptTokens)
+        : Math.round((windowSize * roundedPct) / 100);
+      this.#contextTokensEl.textContent =
+        `Approx. ${formatTokens(usedTokens)} / ${formatTokens(windowSize)} tokens used`;
+    } else if (model) {
+      this.#contextTokensEl.textContent = `Model: ${model}`;
+    } else {
+      this.#contextTokensEl.textContent = "Live estimate from Claude hooks";
     }
   }
 
@@ -394,15 +568,62 @@ export class ChatView {
     this.#inputEl.focus();
   }
 
+  #onInputKeyDown(event: KeyboardEvent): void {
+    if (
+      event.key === "Backspace"
+      && this.#inputEl.value.length === 0
+      && this.#selectedFiles.length > 0
+    ) {
+      event.preventDefault();
+      this.#selectedFiles.pop();
+      this.#renderSelectedFiles();
+      return;
+    }
+
+    if (this.#mentionVisible) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        this.#moveMentionSelection(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        this.#moveMentionSelection(-1);
+        return;
+      }
+      if (
+        ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab")
+        && this.#mentionSuggestions.length > 0
+      ) {
+        event.preventDefault();
+        this.#applyMentionSelection();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.#hideMentionMenu();
+        return;
+      }
+    }
+
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      this.#send();
+    }
+  }
+
   #send(): void {
     if (this.#isWaiting) return;
     const text = this.#inputEl.value.trim();
-    if (!text) return;
+    const selectedFiles = this.#selectedFiles.slice();
+    if (!text && selectedFiles.length === 0) return;
+    this.#hideMentionMenu();
     this.#inputEl.value = "";
-    this.#inputEl.style.height = "auto";
+    this.#resizeInput();
     const fullAccess = this.#fullAccess;
-    this.appendUserMessage(text);
-    this.#callbacks.onSendPrompt(text, fullAccess);
+    this.appendUserMessage(text, selectedFiles);
+    this.#callbacks.onSendPrompt(text, fullAccess, selectedFiles);
+    this.#clearSelectedFiles();
     this.#showStopButton();
   }
 
@@ -421,6 +642,184 @@ export class ChatView {
   #hideStopButton(): void {
     this.#stopBtn.hidden = true;
     this.#sendBtn.hidden = false;
+  }
+
+  #resizeInput(): void {
+    this.#inputEl.style.height = "auto";
+    this.#inputEl.style.height =
+      Math.min(this.#inputEl.scrollHeight, 150) + "px";
+  }
+
+  async #updateMentionSuggestions(): Promise<void> {
+    const provider = this.#callbacks.onSearchFiles;
+    if (!provider) {
+      this.#hideMentionMenu();
+      return;
+    }
+
+    const cursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
+    const token = findMentionToken(this.#inputEl.value, cursor);
+    if (!token) {
+      this.#hideMentionMenu();
+      return;
+    }
+
+    const requestId = ++this.#mentionRequestId;
+    let suggestions: string[] = [];
+    try {
+      suggestions = await provider(token.query);
+    } catch (error) {
+      console.error("Failed to load @file suggestions:", error);
+      this.#hideMentionMenu();
+      return;
+    }
+
+    if (requestId !== this.#mentionRequestId) return;
+
+    const latestCursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
+    const latestToken = findMentionToken(this.#inputEl.value, latestCursor);
+    if (!latestToken) {
+      this.#hideMentionMenu();
+      return;
+    }
+
+    this.#mentionSuggestions = suggestions.slice(0, 30);
+    if (this.#mentionSuggestions.length === 0) {
+      clearChildren(this.#mentionListEl);
+      this.#mentionEmptyEl.hidden = false;
+      this.#mentionMenuEl.hidden = false;
+      this.#mentionVisible = true;
+      return;
+    }
+
+    this.#mentionSelection = Math.min(
+      this.#mentionSelection,
+      this.#mentionSuggestions.length - 1
+    );
+    this.#mentionEmptyEl.hidden = true;
+    this.#mentionMenuEl.hidden = false;
+    this.#mentionVisible = true;
+    this.#renderMentionSuggestions();
+  }
+
+  #moveMentionSelection(delta: number): void {
+    if (!this.#mentionVisible || this.#mentionSuggestions.length === 0) return;
+    const max = this.#mentionSuggestions.length - 1;
+    this.#mentionSelection = clamp(this.#mentionSelection + delta, 0, max);
+    this.#renderMentionSuggestions();
+  }
+
+  #renderMentionSuggestions(): void {
+    clearChildren(this.#mentionListEl);
+
+    this.#mentionSuggestions.forEach((path, index) => {
+      const { name, dir } = splitPath(path);
+      const option = h("button", {
+        type: "button",
+        class: `chat-mention-option${index === this.#mentionSelection ? " active" : ""}`,
+      }, [
+        h("span", { class: "chat-mention-icon" }, [fileIcon(name)]),
+        h("span", { class: "chat-mention-name" }, [name]),
+        h("span", { class: "chat-mention-dir" }, [dir || "./"]),
+      ]) as HTMLButtonElement;
+
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
+      option.addEventListener("click", (event) => {
+        event.preventDefault();
+        this.#mentionSelection = index;
+        this.#applyMentionSelection();
+      });
+
+      this.#mentionListEl.appendChild(option);
+    });
+
+    const active = this.#mentionListEl.querySelector<HTMLElement>(".chat-mention-option.active");
+    active?.scrollIntoView({ block: "nearest" });
+  }
+
+  #applyMentionSelection(): void {
+    if (this.#mentionSuggestions.length === 0) {
+      this.#hideMentionMenu();
+      return;
+    }
+
+    const selected = this.#mentionSuggestions[this.#mentionSelection];
+    if (!selected) {
+      this.#hideMentionMenu();
+      return;
+    }
+
+    const value = this.#inputEl.value;
+    const cursor = this.#inputEl.selectionStart ?? value.length;
+    const token = findMentionToken(value, cursor);
+    if (!token) {
+      this.#hideMentionMenu();
+      return;
+    }
+
+    const before = value.slice(0, token.start);
+    const after = value.slice(token.end);
+    const needsSingleSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(after);
+    const inserted = `${before}${needsSingleSpace ? " " : ""}${after}`;
+
+    this.#inputEl.value = inserted;
+    const nextCursor = before.length + (needsSingleSpace ? 1 : 0);
+    this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+    this.#addSelectedFile(selected);
+    this.#resizeInput();
+    this.#hideMentionMenu();
+    this.#inputEl.focus();
+  }
+
+  #hideMentionMenu(): void {
+    this.#mentionVisible = false;
+    this.#mentionSuggestions = [];
+    this.#mentionSelection = 0;
+    this.#mentionMenuEl.hidden = true;
+    this.#mentionEmptyEl.hidden = true;
+    clearChildren(this.#mentionListEl);
+  }
+
+  #addSelectedFile(path: string): void {
+    if (this.#selectedFiles.includes(path)) return;
+    this.#selectedFiles.push(path);
+    this.#renderSelectedFiles();
+  }
+
+  #removeSelectedFile(path: string): void {
+    this.#selectedFiles = this.#selectedFiles.filter((item) => item !== path);
+    this.#renderSelectedFiles();
+  }
+
+  #clearSelectedFiles(): void {
+    this.#selectedFiles = [];
+    this.#renderSelectedFiles();
+  }
+
+  #renderSelectedFiles(): void {
+    clearChildren(this.#attachmentListEl);
+    this.#attachmentStripEl.hidden = this.#selectedFiles.length === 0;
+    if (this.#selectedFiles.length === 0) return;
+
+    this.#selectedFiles.forEach((path) => {
+      const chip = h("span", { class: "chat-attachment-chip" }, [
+        h("span", { class: "chat-attachment-chip-icon" }, [fileIcon(basename(path))]),
+        h("span", { class: "chat-attachment-chip-label" }, [basename(path)]),
+        h("button", {
+          type: "button",
+          class: "chat-attachment-chip-remove",
+          title: "Remove file",
+          onclick: (event: Event) => {
+            event.preventDefault();
+            this.#removeSelectedFile(path);
+            this.#inputEl.focus();
+          },
+        }, ["×"]),
+      ]);
+      this.#attachmentListEl.appendChild(chip);
+    });
   }
 
   // ── Render content blocks from assistant message ────────────────
@@ -497,7 +896,9 @@ export class ChatView {
               class: "perm-option-btn",
               onclick: () => {
                 // Respond by sending a follow-up with the selection
-                this.#callbacks.onSendPrompt(opt.label, this.#fullAccess);
+                const selectedFiles = this.#selectedFiles.slice();
+                this.#callbacks.onSendPrompt(opt.label, this.#fullAccess, selectedFiles);
+                this.#clearSelectedFiles();
                 // Disable all buttons in this dialog
                 dialog
                   .querySelectorAll("button")
@@ -566,7 +967,11 @@ export class ChatView {
     const bubble = h("div", {
       class: `chat-bubble ${isUser ? "user" : "assistant"}`,
     });
-    bubble.innerHTML = renderMarkdown(msg.content);
+    if (isUser) {
+      bubble.innerHTML = this.#renderUserMessageHtml(msg.content, []);
+    } else {
+      bubble.innerHTML = renderMarkdown(msg.content);
+    }
     this.#messagesEl.appendChild(bubble);
   }
 
@@ -590,16 +995,108 @@ export class ChatView {
   #showStatus(text: string): void {
     this.#statusEl.textContent = text;
     this.#statusEl.hidden = false;
+    this.#syncComposerInset();
   }
 
   #hideStatus(): void {
     this.#statusEl.hidden = true;
+    this.#syncComposerInset();
   }
 
   #scrollToBottom(): void {
+    this.#cancelScrollAnimation();
     requestAnimationFrame(() => {
+      this.#isProgrammaticScroll = true;
       this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
+      this.#updateScrollToBottomButton();
+      requestAnimationFrame(() => {
+        this.#isProgrammaticScroll = false;
+      });
     });
+  }
+
+  #scrollToBottomAnimated(durationMs: number): void {
+    this.#cancelScrollAnimation();
+    const maxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+    const startTop = this.#messagesEl.scrollTop;
+    if (maxScrollTop <= startTop) {
+      this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
+      this.#updateScrollToBottomButton();
+      return;
+    }
+
+    let startTime = 0;
+    this.#isProgrammaticScroll = true;
+    const step = (time: number): void => {
+      if (startTime === 0) startTime = time;
+      const elapsed = time - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      const easedProgress = easeInOutCubic(progress);
+      const currentMaxScrollTop =
+        this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+      this.#messagesEl.scrollTop =
+        startTop + (currentMaxScrollTop - startTop) * easedProgress;
+      this.#updateScrollToBottomButton();
+
+      if (progress < 1) {
+        this.#scrollAnimationFrame = requestAnimationFrame(step);
+        return;
+      }
+
+      this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
+      this.#hasUserScrolledUp = false;
+      this.#updateScrollToBottomButton();
+      this.#scrollAnimationFrame = null;
+      requestAnimationFrame(() => {
+        this.#isProgrammaticScroll = false;
+      });
+    };
+
+    this.#scrollAnimationFrame = requestAnimationFrame(step);
+  }
+
+  #cancelScrollAnimation(): void {
+    if (this.#scrollAnimationFrame === null) return;
+    cancelAnimationFrame(this.#scrollAnimationFrame);
+    this.#scrollAnimationFrame = null;
+  }
+
+  #onMessagesScroll(event: Event): void {
+    if (this.#isProgrammaticScroll) {
+      this.#updateScrollToBottomButton();
+      return;
+    }
+
+    const maxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+    if (maxScrollTop <= 0) {
+      this.#hasUserScrolledUp = false;
+      this.#updateScrollToBottomButton();
+      return;
+    }
+
+    const distanceFromBottom = maxScrollTop - this.#messagesEl.scrollTop;
+    const threshold = Math.max(2, maxScrollTop * 0.05);
+    if (distanceFromBottom <= threshold) {
+      this.#hasUserScrolledUp = false;
+    } else if (event.isTrusted) {
+      // Only reveal the jump button after the user manually scrolls up.
+      this.#hasUserScrolledUp = true;
+    }
+
+    this.#updateScrollToBottomButton();
+  }
+
+  #updateScrollToBottomButton(): void {
+    const maxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+    if (maxScrollTop <= 0) {
+      this.#scrollToBottomBtn.hidden = true;
+      return;
+    }
+
+    const distanceFromBottom = maxScrollTop - this.#messagesEl.scrollTop;
+    const threshold = Math.max(2, maxScrollTop * 0.05);
+    this.#scrollToBottomBtn.hidden =
+      distanceFromBottom <= threshold || !this.#hasUserScrolledUp;
   }
 
   #setPermission(fullAccess: boolean): void {
@@ -611,13 +1108,42 @@ export class ChatView {
     this.#permDetailsEl.open = false;
   }
 
+  #syncComposerInset(): void {
+    const composerHeight = this.#composerEl.offsetHeight;
+    if (composerHeight <= 0) return;
+    const clearance = Math.max(170, composerHeight + 26);
+    this.#messagesEl.style.paddingBottom = `${clearance}px`;
+    this.#messagesEl.style.scrollPaddingBottom = `${clearance}px`;
+  }
+
+  #renderUserMessageHtml(rawText: string, selectedFiles: string[]): string {
+    const parsed = parseAttachedFilesDirective(rawText);
+    const files = uniqueFiles([...selectedFiles, ...parsed.files]);
+    const cleanedText = parsed.text.trim();
+    const parts: string[] = [];
+
+    if (files.length > 0) {
+      const fileTags = files
+        .map((path) => `<span class="chat-file-chip-inline">${escapeHtml(basename(path))}</span>`)
+        .join(" ");
+      parts.push(
+        `<div class="chat-user-files"><span class="chat-user-files-label">Attached files:</span>${fileTags}</div>`
+      );
+    }
+
+    if (cleanedText) {
+      parts.push(escapeHtml(cleanedText).replace(/\n/g, "<br>"));
+    }
+
+    return parts.join("");
+  }
+
   get element(): HTMLElement {
     return this.#el;
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
-
 function toolIcon(toolName: string): string {
   const icons: Record<string, string> = {
     Bash: "\u25B8",
@@ -630,6 +1156,131 @@ function toolIcon(toolName: string): string {
     WebFetch: "\u2197",
   };
   return icons[toolName] ?? "\u2022";
+}
+
+function findMentionToken(
+  text: string,
+  cursor: number
+): { start: number; end: number; query: string } | null {
+  const clampedCursor = clamp(cursor, 0, text.length);
+  const beforeCursor = text.slice(0, clampedCursor);
+  const atIndex = beforeCursor.lastIndexOf("@");
+  if (atIndex < 0) return null;
+
+  if (atIndex > 0 && !/\s/.test(text[atIndex - 1])) {
+    return null;
+  }
+
+  const token = text.slice(atIndex + 1, clampedCursor);
+  if (/\s/.test(token)) return null;
+
+  return {
+    start: atIndex,
+    end: clampedCursor,
+    query: token,
+  };
+}
+
+function splitPath(path: string): { name: string; dir: string } {
+  const parts = path.split("/");
+  const name = parts.pop() || path;
+  return {
+    name,
+    dir: parts.join("/"),
+  };
+}
+
+function fileIcon(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "ts" || ext === "tsx") return "TS";
+  if (ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs") return "JS";
+  if (ext === "json" || ext === "yaml" || ext === "yml" || ext === "toml") return "{}";
+  if (ext === "md") return "MD";
+  return "·";
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function easeInOutCubic(progress: number): number {
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function normalizePercent(value: number | null): number | null {
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return clamp(number, 0, 100);
+}
+
+function inferContextWindow(model: string | null): number | null {
+  if (!model) return null;
+  const normalized = model.toLowerCase();
+  if (
+    normalized.includes("claude")
+    || normalized.includes("sonnet")
+    || normalized.includes("opus")
+    || normalized.includes("haiku")
+  ) {
+    return 200_000;
+  }
+  return null;
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}k`;
+  }
+  return `${Math.round(value)}`;
+}
+
+function parseAttachedFilesDirective(text: string): { text: string; files: string[] } {
+  const files: string[] = [];
+  const directivePattern = /<attached_files>\s*([\s\S]*?)<\/attached_files>/gi;
+  const cleaned = text.replace(directivePattern, (_match, block) => {
+    for (const rawLine of String(block).split("\n")) {
+      const line = rawLine.trim();
+      if (!line.startsWith("-")) continue;
+      const parsed = parseAttachedFileLine(line);
+      if (parsed) files.push(parsed);
+    }
+    return "";
+  });
+
+  return {
+    text: cleaned.replace(/\n{3,}/g, "\n\n"),
+    files: uniqueFiles(files),
+  };
+}
+
+function parseAttachedFileLine(line: string): string | null {
+  const match = line.match(/^-+\s+(.+?)(?:\s+\(workspace:\s*(.+?)\))?$/);
+  if (!match) return null;
+
+  const workspacePath = match[2]?.trim();
+  if (workspacePath) return workspacePath;
+
+  const absolutePath = match[1]?.trim();
+  if (!absolutePath) return null;
+  return basename(absolutePath);
+}
+
+function uniqueFiles(files: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const file of files) {
+    const normalized = file.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
 }
 
 function summarizeToolInput(

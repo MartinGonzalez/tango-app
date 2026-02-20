@@ -1,4 +1,5 @@
 import type { ClaudeStreamEvent } from "../shared/types.ts";
+import { join } from "node:path";
 
 export type SessionProcess = {
   sessionId: string | null;
@@ -48,7 +49,8 @@ export class SessionManager {
     prompt: string,
     cwd: string,
     fullAccess: boolean = true,
-    resumeSessionId?: string
+    resumeSessionId?: string,
+    selectedFiles: string[] = []
   ): Promise<string> {
     const args = [
       "-p",
@@ -91,13 +93,18 @@ export class SessionManager {
     this.#readStderr(tempId, proc);
 
     // Send the initial prompt as a stream-json user message
-    await this.#writeToProc(proc, {
+    const outbound = {
       type: "user",
       message: {
         role: "user",
-        content: [{ type: "text", text: prompt }],
+        content: buildUserMessageContent(prompt, selectedFiles, cwd),
       },
-    });
+    } as const;
+    console.log(
+      `[session-manager] outbound user message (spawn ${tempId})`,
+      safeStringify(outbound)
+    );
+    await this.#writeToProc(proc, outbound);
 
     return tempId;
   }
@@ -105,19 +112,28 @@ export class SessionManager {
   /**
    * Send a follow-up message to an active session.
    */
-  async sendMessage(sessionId: string, text: string): Promise<void> {
+  async sendMessage(
+    sessionId: string,
+    text: string,
+    selectedFiles: string[] = []
+  ): Promise<void> {
     const session = this.#sessions.get(sessionId);
     if (!session) {
       throw new Error(`No active session: ${sessionId}`);
     }
 
-    await this.#writeToProc(session.proc, {
+    const outbound = {
       type: "user",
       message: {
         role: "user",
-        content: [{ type: "text", text }],
+        content: buildUserMessageContent(text, selectedFiles, session.cwd),
       },
-    });
+    } as const;
+    console.log(
+      `[session-manager] outbound user message (follow-up ${sessionId})`,
+      safeStringify(outbound)
+    );
+    await this.#writeToProc(session.proc, outbound);
   }
 
   /**
@@ -249,4 +265,50 @@ function safeStringify(value: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
     return `{"error":"failed_to_serialize","message":${JSON.stringify(message)}}`;
   }
+}
+
+function buildUserMessageContent(
+  text: string,
+  selectedFiles: string[],
+  cwd: string
+): Array<{ type: "text"; text: string }> {
+  const normalized = normalizeSelectedFiles(selectedFiles);
+  if (normalized.length === 0) {
+    return [{ type: "text", text }];
+  }
+
+  const absoluteFiles = normalized.map((rel) => join(cwd, rel));
+  const fileLines = absoluteFiles.map((abs, index) => {
+    const rel = normalized[index];
+    return `- ${abs} (workspace: ${rel})`;
+  });
+
+  const attachmentHeader = [
+    "<attached_files>",
+    ...fileLines,
+    "</attached_files>",
+  ].join("\n");
+
+  if (text.trim().length === 0) {
+    return [{ type: "text", text: attachmentHeader }];
+  }
+
+  return [{
+    type: "text",
+    text: `${attachmentHeader}\n\n${text}`,
+  }];
+}
+
+function normalizeSelectedFiles(paths: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of paths) {
+    const value = String(raw ?? "").trim().replace(/\\/g, "/");
+    if (!value) continue;
+    if (value.startsWith("/") || value.startsWith("..")) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }

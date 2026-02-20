@@ -1873,9 +1873,22 @@ class ChatView {
   #headerMenuEl;
   #headerOpenInFinderBtn;
   #messagesEl;
+  #composerEl;
+  #scrollToBottomBtn;
   #inputEl;
+  #inputWrapEl;
+  #attachmentStripEl;
+  #attachmentListEl;
   #sendBtn;
   #stopBtn;
+  #mentionMenuEl;
+  #mentionListEl;
+  #mentionEmptyEl;
+  #contextDetailsEl;
+  #contextSummaryValueEl;
+  #contextUsedEl;
+  #contextTokensEl;
+  #contextHintEl;
   #statusEl;
   #permDetailsEl;
   #permLabelEl;
@@ -1885,8 +1898,17 @@ class ChatView {
   #callbacks;
   #isWaiting = false;
   #workspacePath = null;
+  #mentionVisible = false;
+  #mentionSelection = 0;
+  #mentionRequestId = 0;
+  #mentionSuggestions = [];
+  #selectedFiles = [];
+  #hasUserScrolledUp = false;
+  #isProgrammaticScroll = false;
   #onGlobalPointerDown;
   #onGlobalKeyDown;
+  #scrollAnimationFrame = null;
+  #composerResizeObserver = null;
   constructor(container, callbacks) {
     this.#callbacks = callbacks;
     this.#onGlobalPointerDown = (event) => {
@@ -1901,6 +1923,14 @@ class ChatView {
           this.#permDetailsEl.open = false;
         }
       }
+      if (this.#contextDetailsEl?.open) {
+        if (!(target && this.#contextDetailsEl.contains(target))) {
+          this.#contextDetailsEl.open = false;
+        }
+      }
+      if (this.#mentionVisible && !(target && this.#inputWrapEl.contains(target))) {
+        this.#hideMentionMenu();
+      }
     };
     this.#onGlobalKeyDown = (event) => {
       if (event.key !== "Escape")
@@ -1909,6 +1939,10 @@ class ChatView {
         this.#headerMenuEl.open = false;
       if (this.#permDetailsEl?.open)
         this.#permDetailsEl.open = false;
+      if (this.#contextDetailsEl?.open)
+        this.#contextDetailsEl.open = false;
+      if (this.#mentionVisible)
+        this.#hideMentionMenu();
     };
     this.#headerTitleEl = h("span", { class: "chat-header-title" }, ["New session"]);
     this.#headerWorkspaceEl = h("span", {
@@ -1940,23 +1974,59 @@ class ChatView {
       this.#headerMenuEl
     ]);
     this.#messagesEl = h("div", { class: "chat-messages" });
+    this.#messagesEl.addEventListener("scroll", (event) => {
+      this.#onMessagesScroll(event);
+    });
+    this.#scrollToBottomBtn = h("button", {
+      type: "button",
+      class: "chat-scroll-bottom-btn",
+      hidden: true,
+      title: "Scroll to latest message",
+      "aria-label": "Scroll to latest message",
+      onclick: () => this.#scrollToBottomAnimated(1000)
+    }, ["↓"]);
     this.#statusEl = h("div", { class: "chat-status", hidden: true });
     this.#inputEl = document.createElement("textarea");
     this.#inputEl.className = "chat-input";
     this.#inputEl.placeholder = "Ask Claude something...";
     this.#inputEl.rows = 1;
-    this.#inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        this.#send();
-      }
-    });
+    this.#inputEl.addEventListener("keydown", (e) => this.#onInputKeyDown(e));
     this.#inputEl.addEventListener("input", () => {
-      this.#inputEl.style.height = "auto";
-      this.#inputEl.style.height = Math.min(this.#inputEl.scrollHeight, 150) + "px";
+      this.#resizeInput();
+      this.#updateMentionSuggestions();
+    });
+    this.#inputEl.addEventListener("click", () => {
+      this.#updateMentionSuggestions();
+    });
+    this.#inputEl.addEventListener("keyup", (event) => {
+      if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") {
+        this.#updateMentionSuggestions();
+      }
     });
     this.#sendBtn = h("button", { class: "chat-send-btn", onclick: () => this.#send() }, ["Send"]);
     this.#stopBtn = h("button", { class: "chat-stop-btn", onclick: () => this.#stop(), hidden: true }, ["Stop"]);
+    this.#mentionListEl = h("div", { class: "chat-mention-list" });
+    this.#mentionEmptyEl = h("div", {
+      class: "chat-mention-empty",
+      hidden: true
+    }, ["No matching files"]);
+    this.#mentionMenuEl = h("div", {
+      class: "chat-mention-menu",
+      hidden: true
+    }, [
+      this.#mentionListEl,
+      this.#mentionEmptyEl
+    ]);
+    this.#attachmentListEl = h("div", { class: "chat-attachment-list" });
+    this.#attachmentStripEl = h("div", {
+      class: "chat-attachment-strip",
+      hidden: true
+    }, [this.#attachmentListEl]);
+    this.#inputWrapEl = h("div", { class: "chat-input-wrap" }, [
+      this.#attachmentStripEl,
+      this.#inputEl,
+      this.#mentionMenuEl
+    ]);
     this.#permLabelEl = h("span", { class: "perm-chip-text" }, ["Full access"]);
     this.#permDefaultBtn = h("button", {
       class: "perm-menu-option",
@@ -1989,30 +2059,66 @@ class ChatView {
         this.#permFullBtn
       ])
     ]);
-    const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [this.#permDetailsEl]);
+    this.#contextSummaryValueEl = h("span", { class: "context-meter-value" }, ["--"]);
+    this.#contextUsedEl = h("div", { class: "context-meter-line" }, ["--"]);
+    this.#contextTokensEl = h("div", { class: "context-meter-line" }, [""]);
+    this.#contextHintEl = h("div", { class: "context-meter-hint" }, [
+      "Claude may automatically compact its context."
+    ]);
+    this.#contextDetailsEl = h("details", {
+      class: "context-meter",
+      hidden: true
+    }, [
+      h("summary", { class: "context-meter-btn", title: "Context window usage" }, [
+        h("span", { class: "context-meter-spinner" }),
+        this.#contextSummaryValueEl
+      ]),
+      h("div", { class: "context-meter-popover" }, [
+        h("div", { class: "context-meter-title" }, ["Context window"]),
+        this.#contextUsedEl,
+        this.#contextTokensEl,
+        this.#contextHintEl
+      ])
+    ]);
+    const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [
+      this.#permDetailsEl,
+      h("div", { class: "chat-footer-spacer" }),
+      this.#contextDetailsEl
+    ]);
     this.#setPermission(true);
     const inputRow = h("div", { class: "chat-input-row" }, [
-      this.#inputEl,
+      this.#inputWrapEl,
       this.#stopBtn,
       this.#sendBtn
     ]);
     const composerEl = h("div", { class: "chat-composer" }, [
+      this.#scrollToBottomBtn,
       this.#statusEl,
       inputRow,
       toggleRow
     ]);
+    this.#composerEl = composerEl;
     this.#el = h("div", { class: "chat-view" }, [
       this.#headerEl,
       this.#messagesEl,
       composerEl
     ]);
     container.appendChild(this.#el);
+    this.#syncComposerInset();
+    if (typeof ResizeObserver !== "undefined") {
+      this.#composerResizeObserver = new ResizeObserver(() => {
+        this.#syncComposerInset();
+      });
+      this.#composerResizeObserver.observe(this.#composerEl);
+    }
     this.setHeader("New session", null);
+    this.#updateScrollToBottomButton();
     document.addEventListener("pointerdown", this.#onGlobalPointerDown, true);
     document.addEventListener("keydown", this.#onGlobalKeyDown, true);
   }
   renderTranscript(messages) {
     clearChildren(this.#messagesEl);
+    this.#hasUserScrolledUp = false;
     this.#isWaiting = false;
     this.#hideStatus();
     for (const msg of messages) {
@@ -2072,10 +2178,11 @@ class ChatView {
       this.#hideStatus();
       this.#isWaiting = false;
       this.#hideStopButton();
-      const cost = ev.total_cost_usd;
       const turns = ev.num_turns;
-      if (cost != null) {
-        this.#appendSystemInfo(`Done — ${turns} turn${turns !== 1 ? "s" : ""}, $${cost.toFixed(4)}`);
+      if (typeof turns === "number") {
+        this.#appendSystemInfo(`Done — ${turns} turn${turns !== 1 ? "s" : ""}`);
+      } else {
+        this.#appendSystemInfo("Done");
       }
       return;
     }
@@ -2089,9 +2196,9 @@ class ChatView {
     }
     console.log("[chat-view] Unhandled event:", ev.type, ev);
   }
-  appendUserMessage(text) {
+  appendUserMessage(text, selectedFiles = []) {
     const bubble = h("div", { class: "chat-bubble user" });
-    bubble.innerHTML = escapeHtml(text).replace(/\n/g, "<br>");
+    bubble.innerHTML = this.#renderUserMessageHtml(text, selectedFiles);
     this.#messagesEl.appendChild(bubble);
     this.#showStatus("Starting Claude...");
     this.#isWaiting = true;
@@ -2099,8 +2206,13 @@ class ChatView {
   }
   clear() {
     clearChildren(this.#messagesEl);
+    this.#cancelScrollAnimation();
+    this.#hasUserScrolledUp = false;
+    this.#updateScrollToBottomButton();
     this.#isWaiting = false;
     this.#hideStatus();
+    this.#hideMentionMenu();
+    this.#clearSelectedFiles();
   }
   setHeader(sessionTitle, workspacePath) {
     const title = sessionTitle.trim() || "New session";
@@ -2118,6 +2230,41 @@ class ChatView {
       this.#headerWorkspaceEl.hidden = true;
       this.#headerOpenInFinderBtn.disabled = true;
       this.#headerMenuEl.open = false;
+    }
+  }
+  setContextUsage(contextPercentage, model, activity, promptTokens = null) {
+    const normalized = normalizePercent(contextPercentage);
+    const hasAnySignal = normalized !== null || promptTokens !== null || model !== null || activity !== null;
+    if (!hasAnySignal) {
+      this.#contextDetailsEl.hidden = true;
+      this.#contextDetailsEl.open = false;
+      return;
+    }
+    this.#contextDetailsEl.hidden = false;
+    const isBusy = activity === "working" || activity === "waiting";
+    this.#contextDetailsEl.classList.toggle("busy", isBusy);
+    const windowSize = inferContextWindow(model);
+    let usedPct = normalized;
+    if (usedPct === null && windowSize && promptTokens !== null) {
+      usedPct = Math.min(100, promptTokens / windowSize * 100);
+    }
+    if (usedPct === null) {
+      this.#contextSummaryValueEl.textContent = "--";
+      this.#contextUsedEl.textContent = "Usage is being tracked";
+      this.#contextTokensEl.textContent = model ? `Model: ${model}` : "No context usage data yet";
+      return;
+    }
+    const roundedPct = Math.round(usedPct);
+    const leftPct = Math.max(0, 100 - roundedPct);
+    this.#contextSummaryValueEl.textContent = `${roundedPct}%`;
+    this.#contextUsedEl.textContent = `${roundedPct}% used (${leftPct}% left)`;
+    if (windowSize) {
+      const usedTokens = promptTokens !== null ? Math.round(promptTokens) : Math.round(windowSize * roundedPct / 100);
+      this.#contextTokensEl.textContent = `Approx. ${formatTokens(usedTokens)} / ${formatTokens(windowSize)} tokens used`;
+    } else if (model) {
+      this.#contextTokensEl.textContent = `Model: ${model}`;
+    } else {
+      this.#contextTokensEl.textContent = "Live estimate from Claude hooks";
     }
   }
   showToolApproval(req, respond) {
@@ -2161,17 +2308,54 @@ class ChatView {
   focus() {
     this.#inputEl.focus();
   }
+  #onInputKeyDown(event) {
+    if (event.key === "Backspace" && this.#inputEl.value.length === 0 && this.#selectedFiles.length > 0) {
+      event.preventDefault();
+      this.#selectedFiles.pop();
+      this.#renderSelectedFiles();
+      return;
+    }
+    if (this.#mentionVisible) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        this.#moveMentionSelection(1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        this.#moveMentionSelection(-1);
+        return;
+      }
+      if ((event.key === "Enter" && !event.shiftKey || event.key === "Tab") && this.#mentionSuggestions.length > 0) {
+        event.preventDefault();
+        this.#applyMentionSelection();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.#hideMentionMenu();
+        return;
+      }
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      this.#send();
+    }
+  }
   #send() {
     if (this.#isWaiting)
       return;
     const text = this.#inputEl.value.trim();
-    if (!text)
+    const selectedFiles = this.#selectedFiles.slice();
+    if (!text && selectedFiles.length === 0)
       return;
+    this.#hideMentionMenu();
     this.#inputEl.value = "";
-    this.#inputEl.style.height = "auto";
+    this.#resizeInput();
     const fullAccess = this.#fullAccess;
-    this.appendUserMessage(text);
-    this.#callbacks.onSendPrompt(text, fullAccess);
+    this.appendUserMessage(text, selectedFiles);
+    this.#callbacks.onSendPrompt(text, fullAccess, selectedFiles);
+    this.#clearSelectedFiles();
     this.#showStopButton();
   }
   #stop() {
@@ -2187,6 +2371,159 @@ class ChatView {
   #hideStopButton() {
     this.#stopBtn.hidden = true;
     this.#sendBtn.hidden = false;
+  }
+  #resizeInput() {
+    this.#inputEl.style.height = "auto";
+    this.#inputEl.style.height = Math.min(this.#inputEl.scrollHeight, 150) + "px";
+  }
+  async#updateMentionSuggestions() {
+    const provider = this.#callbacks.onSearchFiles;
+    if (!provider) {
+      this.#hideMentionMenu();
+      return;
+    }
+    const cursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
+    const token = findMentionToken(this.#inputEl.value, cursor);
+    if (!token) {
+      this.#hideMentionMenu();
+      return;
+    }
+    const requestId = ++this.#mentionRequestId;
+    let suggestions = [];
+    try {
+      suggestions = await provider(token.query);
+    } catch (error) {
+      console.error("Failed to load @file suggestions:", error);
+      this.#hideMentionMenu();
+      return;
+    }
+    if (requestId !== this.#mentionRequestId)
+      return;
+    const latestCursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
+    const latestToken = findMentionToken(this.#inputEl.value, latestCursor);
+    if (!latestToken) {
+      this.#hideMentionMenu();
+      return;
+    }
+    this.#mentionSuggestions = suggestions.slice(0, 30);
+    if (this.#mentionSuggestions.length === 0) {
+      clearChildren(this.#mentionListEl);
+      this.#mentionEmptyEl.hidden = false;
+      this.#mentionMenuEl.hidden = false;
+      this.#mentionVisible = true;
+      return;
+    }
+    this.#mentionSelection = Math.min(this.#mentionSelection, this.#mentionSuggestions.length - 1);
+    this.#mentionEmptyEl.hidden = true;
+    this.#mentionMenuEl.hidden = false;
+    this.#mentionVisible = true;
+    this.#renderMentionSuggestions();
+  }
+  #moveMentionSelection(delta) {
+    if (!this.#mentionVisible || this.#mentionSuggestions.length === 0)
+      return;
+    const max = this.#mentionSuggestions.length - 1;
+    this.#mentionSelection = clamp(this.#mentionSelection + delta, 0, max);
+    this.#renderMentionSuggestions();
+  }
+  #renderMentionSuggestions() {
+    clearChildren(this.#mentionListEl);
+    this.#mentionSuggestions.forEach((path, index) => {
+      const { name, dir } = splitPath(path);
+      const option = h("button", {
+        type: "button",
+        class: `chat-mention-option${index === this.#mentionSelection ? " active" : ""}`
+      }, [
+        h("span", { class: "chat-mention-icon" }, [fileIcon(name)]),
+        h("span", { class: "chat-mention-name" }, [name]),
+        h("span", { class: "chat-mention-dir" }, [dir || "./"])
+      ]);
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
+      option.addEventListener("click", (event) => {
+        event.preventDefault();
+        this.#mentionSelection = index;
+        this.#applyMentionSelection();
+      });
+      this.#mentionListEl.appendChild(option);
+    });
+    const active = this.#mentionListEl.querySelector(".chat-mention-option.active");
+    active?.scrollIntoView({ block: "nearest" });
+  }
+  #applyMentionSelection() {
+    if (this.#mentionSuggestions.length === 0) {
+      this.#hideMentionMenu();
+      return;
+    }
+    const selected = this.#mentionSuggestions[this.#mentionSelection];
+    if (!selected) {
+      this.#hideMentionMenu();
+      return;
+    }
+    const value = this.#inputEl.value;
+    const cursor = this.#inputEl.selectionStart ?? value.length;
+    const token = findMentionToken(value, cursor);
+    if (!token) {
+      this.#hideMentionMenu();
+      return;
+    }
+    const before = value.slice(0, token.start);
+    const after = value.slice(token.end);
+    const needsSingleSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(after);
+    const inserted = `${before}${needsSingleSpace ? " " : ""}${after}`;
+    this.#inputEl.value = inserted;
+    const nextCursor = before.length + (needsSingleSpace ? 1 : 0);
+    this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+    this.#addSelectedFile(selected);
+    this.#resizeInput();
+    this.#hideMentionMenu();
+    this.#inputEl.focus();
+  }
+  #hideMentionMenu() {
+    this.#mentionVisible = false;
+    this.#mentionSuggestions = [];
+    this.#mentionSelection = 0;
+    this.#mentionMenuEl.hidden = true;
+    this.#mentionEmptyEl.hidden = true;
+    clearChildren(this.#mentionListEl);
+  }
+  #addSelectedFile(path) {
+    if (this.#selectedFiles.includes(path))
+      return;
+    this.#selectedFiles.push(path);
+    this.#renderSelectedFiles();
+  }
+  #removeSelectedFile(path) {
+    this.#selectedFiles = this.#selectedFiles.filter((item) => item !== path);
+    this.#renderSelectedFiles();
+  }
+  #clearSelectedFiles() {
+    this.#selectedFiles = [];
+    this.#renderSelectedFiles();
+  }
+  #renderSelectedFiles() {
+    clearChildren(this.#attachmentListEl);
+    this.#attachmentStripEl.hidden = this.#selectedFiles.length === 0;
+    if (this.#selectedFiles.length === 0)
+      return;
+    this.#selectedFiles.forEach((path) => {
+      const chip = h("span", { class: "chat-attachment-chip" }, [
+        h("span", { class: "chat-attachment-chip-icon" }, [fileIcon(basename(path))]),
+        h("span", { class: "chat-attachment-chip-label" }, [basename(path)]),
+        h("button", {
+          type: "button",
+          class: "chat-attachment-chip-remove",
+          title: "Remove file",
+          onclick: (event) => {
+            event.preventDefault();
+            this.#removeSelectedFile(path);
+            this.#inputEl.focus();
+          }
+        }, ["×"])
+      ]);
+      this.#attachmentListEl.appendChild(chip);
+    });
   }
   #renderContentBlock(block) {
     if (block.type === "text") {
@@ -2240,7 +2577,9 @@ class ChatView {
           const btn = h("button", {
             class: "perm-option-btn",
             onclick: () => {
-              this.#callbacks.onSendPrompt(opt.label, this.#fullAccess);
+              const selectedFiles = this.#selectedFiles.slice();
+              this.#callbacks.onSendPrompt(opt.label, this.#fullAccess, selectedFiles);
+              this.#clearSelectedFiles();
               dialog.querySelectorAll("button").forEach((b) => b.disabled = true);
               dialog.classList.add("responded");
             }
@@ -2289,7 +2628,11 @@ class ChatView {
     const bubble = h("div", {
       class: `chat-bubble ${isUser ? "user" : "assistant"}`
     });
-    bubble.innerHTML = renderMarkdown(msg.content);
+    if (isUser) {
+      bubble.innerHTML = this.#renderUserMessageHtml(msg.content, []);
+    } else {
+      bubble.innerHTML = renderMarkdown(msg.content);
+    }
     this.#messagesEl.appendChild(bubble);
   }
   #appendSystemInfo(text) {
@@ -2305,14 +2648,92 @@ class ChatView {
   #showStatus(text) {
     this.#statusEl.textContent = text;
     this.#statusEl.hidden = false;
+    this.#syncComposerInset();
   }
   #hideStatus() {
     this.#statusEl.hidden = true;
+    this.#syncComposerInset();
   }
   #scrollToBottom() {
+    this.#cancelScrollAnimation();
     requestAnimationFrame(() => {
+      this.#isProgrammaticScroll = true;
       this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
+      this.#updateScrollToBottomButton();
+      requestAnimationFrame(() => {
+        this.#isProgrammaticScroll = false;
+      });
     });
+  }
+  #scrollToBottomAnimated(durationMs) {
+    this.#cancelScrollAnimation();
+    const maxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+    const startTop = this.#messagesEl.scrollTop;
+    if (maxScrollTop <= startTop) {
+      this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
+      this.#updateScrollToBottomButton();
+      return;
+    }
+    let startTime = 0;
+    this.#isProgrammaticScroll = true;
+    const step = (time) => {
+      if (startTime === 0)
+        startTime = time;
+      const elapsed = time - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      const easedProgress = easeInOutCubic(progress);
+      const currentMaxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+      this.#messagesEl.scrollTop = startTop + (currentMaxScrollTop - startTop) * easedProgress;
+      this.#updateScrollToBottomButton();
+      if (progress < 1) {
+        this.#scrollAnimationFrame = requestAnimationFrame(step);
+        return;
+      }
+      this.#messagesEl.scrollTop = this.#messagesEl.scrollHeight;
+      this.#hasUserScrolledUp = false;
+      this.#updateScrollToBottomButton();
+      this.#scrollAnimationFrame = null;
+      requestAnimationFrame(() => {
+        this.#isProgrammaticScroll = false;
+      });
+    };
+    this.#scrollAnimationFrame = requestAnimationFrame(step);
+  }
+  #cancelScrollAnimation() {
+    if (this.#scrollAnimationFrame === null)
+      return;
+    cancelAnimationFrame(this.#scrollAnimationFrame);
+    this.#scrollAnimationFrame = null;
+  }
+  #onMessagesScroll(event) {
+    if (this.#isProgrammaticScroll) {
+      this.#updateScrollToBottomButton();
+      return;
+    }
+    const maxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+    if (maxScrollTop <= 0) {
+      this.#hasUserScrolledUp = false;
+      this.#updateScrollToBottomButton();
+      return;
+    }
+    const distanceFromBottom = maxScrollTop - this.#messagesEl.scrollTop;
+    const threshold = Math.max(2, maxScrollTop * 0.05);
+    if (distanceFromBottom <= threshold) {
+      this.#hasUserScrolledUp = false;
+    } else if (event.isTrusted) {
+      this.#hasUserScrolledUp = true;
+    }
+    this.#updateScrollToBottomButton();
+  }
+  #updateScrollToBottomButton() {
+    const maxScrollTop = this.#messagesEl.scrollHeight - this.#messagesEl.clientHeight;
+    if (maxScrollTop <= 0) {
+      this.#scrollToBottomBtn.hidden = true;
+      return;
+    }
+    const distanceFromBottom = maxScrollTop - this.#messagesEl.scrollTop;
+    const threshold = Math.max(2, maxScrollTop * 0.05);
+    this.#scrollToBottomBtn.hidden = distanceFromBottom <= threshold || !this.#hasUserScrolledUp;
   }
   #setPermission(fullAccess) {
     this.#fullAccess = fullAccess;
@@ -2321,6 +2742,28 @@ class ChatView {
     this.#permDefaultBtn.classList.toggle("selected", !fullAccess);
     this.#permFullBtn.classList.toggle("selected", fullAccess);
     this.#permDetailsEl.open = false;
+  }
+  #syncComposerInset() {
+    const composerHeight = this.#composerEl.offsetHeight;
+    if (composerHeight <= 0)
+      return;
+    const clearance = Math.max(170, composerHeight + 26);
+    this.#messagesEl.style.paddingBottom = `${clearance}px`;
+    this.#messagesEl.style.scrollPaddingBottom = `${clearance}px`;
+  }
+  #renderUserMessageHtml(rawText, selectedFiles) {
+    const parsed = parseAttachedFilesDirective(rawText);
+    const files = uniqueFiles([...selectedFiles, ...parsed.files]);
+    const cleanedText = parsed.text.trim();
+    const parts = [];
+    if (files.length > 0) {
+      const fileTags = files.map((path) => `<span class="chat-file-chip-inline">${escapeHtml(basename(path))}</span>`).join(" ");
+      parts.push(`<div class="chat-user-files"><span class="chat-user-files-label">Attached files:</span>${fileTags}</div>`);
+    }
+    if (cleanedText) {
+      parts.push(escapeHtml(cleanedText).replace(/\n/g, "<br>"));
+    }
+    return parts.join("");
   }
   get element() {
     return this.#el;
@@ -2338,6 +2781,122 @@ function toolIcon(toolName) {
     WebFetch: "↗"
   };
   return icons[toolName] ?? "•";
+}
+function findMentionToken(text, cursor) {
+  const clampedCursor = clamp(cursor, 0, text.length);
+  const beforeCursor = text.slice(0, clampedCursor);
+  const atIndex = beforeCursor.lastIndexOf("@");
+  if (atIndex < 0)
+    return null;
+  if (atIndex > 0 && !/\s/.test(text[atIndex - 1])) {
+    return null;
+  }
+  const token = text.slice(atIndex + 1, clampedCursor);
+  if (/\s/.test(token))
+    return null;
+  return {
+    start: atIndex,
+    end: clampedCursor,
+    query: token
+  };
+}
+function splitPath(path) {
+  const parts = path.split("/");
+  const name = parts.pop() || path;
+  return {
+    name,
+    dir: parts.join("/")
+  };
+}
+function fileIcon(name) {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "ts" || ext === "tsx")
+    return "TS";
+  if (ext === "js" || ext === "jsx" || ext === "mjs" || ext === "cjs")
+    return "JS";
+  if (ext === "json" || ext === "yaml" || ext === "yml" || ext === "toml")
+    return "{}";
+  if (ext === "md")
+    return "MD";
+  return "·";
+}
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function easeInOutCubic(progress) {
+  return progress < 0.5 ? 4 * progress * progress * progress : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+function normalizePercent(value) {
+  if (value === null || value === undefined)
+    return null;
+  const number = Number(value);
+  if (!Number.isFinite(number))
+    return null;
+  return clamp(number, 0, 100);
+}
+function inferContextWindow(model) {
+  if (!model)
+    return null;
+  const normalized = model.toLowerCase();
+  if (normalized.includes("claude") || normalized.includes("sonnet") || normalized.includes("opus") || normalized.includes("haiku")) {
+    return 200000;
+  }
+  return null;
+}
+function formatTokens(value) {
+  if (value >= 1e6) {
+    return `${(value / 1e6).toFixed(1)}M`;
+  }
+  if (value >= 1000) {
+    return `${Math.round(value / 1000)}k`;
+  }
+  return `${Math.round(value)}`;
+}
+function parseAttachedFilesDirective(text) {
+  const files = [];
+  const directivePattern = /<attached_files>\s*([\s\S]*?)<\/attached_files>/gi;
+  const cleaned = text.replace(directivePattern, (_match, block) => {
+    for (const rawLine of String(block).split(`
+`)) {
+      const line = rawLine.trim();
+      if (!line.startsWith("-"))
+        continue;
+      const parsed = parseAttachedFileLine(line);
+      if (parsed)
+        files.push(parsed);
+    }
+    return "";
+  });
+  return {
+    text: cleaned.replace(/\n{3,}/g, `
+
+`),
+    files: uniqueFiles(files)
+  };
+}
+function parseAttachedFileLine(line) {
+  const match = line.match(/^-+\s+(.+?)(?:\s+\(workspace:\s*(.+?)\))?$/);
+  if (!match)
+    return null;
+  const workspacePath = match[2]?.trim();
+  if (workspacePath)
+    return workspacePath;
+  const absolutePath = match[1]?.trim();
+  if (!absolutePath)
+    return null;
+  return basename(absolutePath);
+}
+function uniqueFiles(files) {
+  const out = [];
+  const seen = new Set;
+  for (const file of files) {
+    const normalized = file.trim();
+    if (!normalized || seen.has(normalized))
+      continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
 }
 function summarizeToolInput(toolName, input) {
   if (!input)
@@ -4834,12 +5393,24 @@ Prism.languages.sql = {
 class DiffView {
   #el;
   #toolbarEl;
+  #bodyEl;
   #contentEl;
+  #filesHostEl;
+  #filesToggleBtn;
   #files = [];
   #activeFile = null;
   #fileExpanded = new Map;
   #viewMode = "unified";
+  #filesPanelVisible = false;
   constructor(container) {
+    this.#filesToggleBtn = h("button", {
+      class: "dv-icon-btn",
+      title: "Toggle files changed",
+      onclick: () => this.toggleFilesPanel(),
+      innerHTML: `<svg class="dv-icon-folder" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M1.5 4.25C1.5 3.55964 2.05964 3 2.75 3h3.02c.31 0 .61.115.84.322l.89.807c.23.208.53.321.84.321h4.91c.69 0 1.25.56 1.25 1.25V11.5c0 .69-.56 1.25-1.25 1.25H2.75c-.69 0-1.25-.56-1.25-1.25V4.25Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>`
+    });
     this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
       h("span", { class: "dv-file-label" }, [""]),
       h("span", { class: "dv-toolbar-spacer" }),
@@ -4852,13 +5423,20 @@ class DiffView {
         class: "dv-toggle",
         dataset: { view: "split" },
         onclick: () => this.#setViewMode("split")
-      }, ["Split"])
+      }, ["Split"]),
+      this.#filesToggleBtn
     ]);
     this.#contentEl = h("div", { class: "dv-content" });
+    this.#filesHostEl = h("aside", { class: "dv-files-host", hidden: true });
+    this.#bodyEl = h("div", { class: "dv-body" }, [
+      this.#contentEl,
+      this.#filesHostEl
+    ]);
     this.#el = h("div", { class: "diff-view" }, [
       this.#toolbarEl,
-      this.#contentEl
+      this.#bodyEl
     ]);
+    this.setFilesPanelVisible(false);
     container.appendChild(this.#el);
   }
   setFiles(files) {
@@ -5020,6 +5598,18 @@ class DiffView {
         return;
       target.scrollIntoView({ block: "nearest" });
     });
+  }
+  setFilesPanelVisible(visible) {
+    this.#filesPanelVisible = visible;
+    this.#el.classList.toggle("files-visible", visible);
+    this.#filesHostEl.hidden = !visible;
+    this.#filesToggleBtn.classList.toggle("active", visible);
+  }
+  toggleFilesPanel() {
+    this.setFilesPanelVisible(!this.#filesPanelVisible);
+  }
+  get filesPanelHost() {
+    return this.#filesHostEl;
   }
   get element() {
     return this.#el;
@@ -5310,11 +5900,13 @@ var rpc = Electroview.defineRPC({
         sessionId,
         event
       }) => {
+        updateSessionUsageEstimate(sessionId, event);
         const state = appState.get();
         if (state.activeSessionId === sessionId && chatView) {
           chatView.appendStreamEvent(event);
         }
         if (state.activeSessionId === sessionId && state.activeWorkspace && (event.type === "result" || isDiffMutationEvent(event))) {
+          workspaceFileCache.delete(state.activeWorkspace);
           scheduleDiffRefresh(state.activeWorkspace, state.diffScope, event.type === "result" ? 0 : 120);
         }
       },
@@ -5355,6 +5947,7 @@ var rpc = Electroview.defineRPC({
         exitCode
       }) => {
         console.log(`Session ${sessionId} ended with code ${exitCode}`);
+        sessionUsageEstimates.delete(sessionId);
         const state = appState.get();
         const live = new Set(state.liveSessions);
         live.delete(sessionId);
@@ -5384,18 +5977,19 @@ var chatView;
 var diffView;
 var filesPanel;
 var diffRefreshTimer = null;
+var WORKSPACE_FILE_CACHE_MS = 30000;
+var workspaceFileCache = new Map;
+var sessionUsageEstimates = new Map;
 function init() {
   const panelsContainer = qs("#panels");
   panelLayout = new PanelLayout(panelsContainer, [
     { id: "workspaces", minWidth: 200, defaultWidth: 0, hidden: true },
-    { id: "chat", minWidth: 280, defaultWidth: 30 },
-    { id: "diff", minWidth: 300, defaultWidth: 50 },
-    { id: "files", minWidth: 140, defaultWidth: 20 }
+    { id: "chat", minWidth: 280, defaultWidth: 35 },
+    { id: "diff", minWidth: 320, defaultWidth: 65 }
   ]);
   const wsPanel = panelLayout.getPanel("workspaces");
   const chatPanel = panelLayout.getPanel("chat");
   const diffPanel = panelLayout.getPanel("diff");
-  const filesP = panelLayout.getPanel("files");
   sidebar = new Sidebar(wsPanel, {
     onSelectSession: (sessionId, workspacePath) => {
       appState.update((s) => ({
@@ -5502,7 +6096,7 @@ function init() {
         console.error("Failed to kill session:", err);
       }
     },
-    onSendPrompt: async (prompt, fullAccess) => {
+    onSendPrompt: async (prompt, fullAccess, selectedFiles) => {
       const state = appState.get();
       const cwd = state.activeWorkspace;
       if (!cwd) {
@@ -5515,14 +6109,16 @@ function init() {
           await rpc.request.sendFollowUp({
             sessionId: state.activeSessionId,
             text: prompt,
-            fullAccess
+            fullAccess,
+            selectedFiles
           });
         } else {
           const { sessionId } = await rpc.request.sendPrompt({
             prompt,
             cwd,
             fullAccess,
-            sessionId: state.activeSessionId ?? undefined
+            sessionId: state.activeSessionId ?? undefined,
+            selectedFiles
           });
           const live = new Set(state.liveSessions);
           live.add(sessionId);
@@ -5538,10 +6134,16 @@ function init() {
       } catch (err) {
         console.error("Failed to open Finder:", err);
       }
+    },
+    onSearchFiles: async (query) => {
+      const cwd = appState.get().activeWorkspace;
+      if (!cwd)
+        return [];
+      return searchWorkspaceFiles(cwd, query, 30);
     }
   });
   diffView = new DiffView(diffPanel);
-  filesPanel = new FilesPanel(filesP, {
+  filesPanel = new FilesPanel(diffView.filesPanelHost, {
     onSelectFile: (path) => {
       diffView.showFile(path);
     },
@@ -5585,6 +6187,8 @@ function init() {
     sidebar.render(wsData);
     sidebar.setActiveSession(state.activeSessionId);
     chatView.setHeader(resolveActiveSessionTitle(state), state.activeWorkspace);
+    const contextInfo = resolveActiveContextUsage(state);
+    chatView.setContextUsage(contextInfo?.contextPercentage ?? null, contextInfo?.model ?? null, contextInfo?.activity ?? null, contextInfo?.promptTokens ?? null);
   });
   loadWorkspaces();
   loadSessionNames();
@@ -5724,6 +6328,7 @@ async function openWorkspace() {
 async function removeWorkspace(path) {
   try {
     await rpc.request.removeWorkspace({ path });
+    workspaceFileCache.delete(path);
     appState.update((s) => {
       const workspaces = s.workspaces.filter((w) => w !== path);
       const expanded = new Set(s.expandedWorkspaces);
@@ -5738,6 +6343,42 @@ async function removeWorkspace(path) {
   } catch (err) {
     console.error("Failed to remove workspace:", err);
   }
+}
+async function searchWorkspaceFiles(cwd, query, limit) {
+  const cached = workspaceFileCache.get(cwd);
+  let files = cached?.files;
+  const cacheAgeMs = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
+  if (!files || cacheAgeMs > WORKSPACE_FILE_CACHE_MS) {
+    const loaded = await rpc.request.getWorkspaceFiles({ cwd });
+    files = Array.isArray(loaded) ? loaded : [];
+    workspaceFileCache.set(cwd, { files, loadedAt: Date.now() });
+  }
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return files.slice(0, limit);
+  }
+  return files.map((path) => ({ path, score: scoreWorkspaceFile(path, normalizedQuery) })).filter((entry) => entry.score > 0).sort((a, b) => {
+    if (a.score !== b.score)
+      return b.score - a.score;
+    return a.path.localeCompare(b.path);
+  }).slice(0, limit).map((entry) => entry.path);
+}
+function scoreWorkspaceFile(path, query) {
+  const normalizedPath = path.toLowerCase();
+  const fileName = path.split("/").pop()?.toLowerCase() ?? normalizedPath;
+  if (fileName === query)
+    return 500;
+  if (fileName.startsWith(query))
+    return 400 - Math.min(fileName.length, 200);
+  if (normalizedPath.startsWith(query))
+    return 320 - Math.min(normalizedPath.length, 200);
+  const nameIdx = fileName.indexOf(query);
+  if (nameIdx >= 0)
+    return 260 - Math.min(nameIdx, 120);
+  const pathIdx = normalizedPath.indexOf(query);
+  if (pathIdx >= 0)
+    return 200 - Math.min(pathIdx, 120);
+  return 0;
 }
 function buildWorkspaceData(state) {
   const liveSessions = state.snapshot ? buildSessionList(state.snapshot) : [];
@@ -5833,6 +6474,59 @@ function resolveActiveSessionTitle(state) {
     break;
   }
   return "Session";
+}
+function resolveActiveContextUsage(state) {
+  const activeSessionId = state.activeSessionId;
+  if (!activeSessionId || !state.snapshot)
+    return null;
+  const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);
+  if (!live)
+    return null;
+  const estimate = sessionUsageEstimates.get(activeSessionId);
+  return {
+    contextPercentage: live.contextPercentage,
+    model: live.model ?? estimate?.model ?? null,
+    activity: live.activity,
+    promptTokens: estimate?.promptTokens ?? null
+  };
+}
+function updateSessionUsageEstimate(sessionId, event) {
+  const ev = event;
+  if (ev?.type === "system" && ev?.subtype === "init") {
+    const model2 = typeof ev.model === "string" ? ev.model : null;
+    const current2 = sessionUsageEstimates.get(sessionId);
+    sessionUsageEstimates.set(sessionId, {
+      promptTokens: current2?.promptTokens ?? null,
+      model: model2 ?? current2?.model ?? null
+    });
+    return;
+  }
+  if (ev?.type !== "assistant")
+    return;
+  const usage = ev?.message?.usage;
+  const promptTokens = extractPromptTokenUsage(usage);
+  const model = typeof ev?.message?.model === "string" ? ev.message.model : null;
+  const current = sessionUsageEstimates.get(sessionId);
+  sessionUsageEstimates.set(sessionId, {
+    promptTokens: promptTokens ?? current?.promptTokens ?? null,
+    model: model ?? current?.model ?? null
+  });
+}
+function extractPromptTokenUsage(usage) {
+  if (!usage || typeof usage !== "object")
+    return null;
+  const bag = usage;
+  const input = asFiniteNumber(bag.input_tokens ?? bag.inputTokens) ?? 0;
+  const cacheRead = asFiniteNumber(bag.cache_read_input_tokens ?? bag.cacheReadInputTokens) ?? 0;
+  const cacheCreate = asFiniteNumber(bag.cache_creation_input_tokens ?? bag.cacheCreationInputTokens) ?? 0;
+  const total = input + cacheRead + cacheCreate;
+  return total > 0 ? total : null;
+}
+function asFiniteNumber(value) {
+  if (value === null || value === undefined || value === "")
+    return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);

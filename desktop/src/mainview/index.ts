@@ -35,6 +35,7 @@ const rpc = Electroview.defineRPC<any>({
         sessionId: string;
         event: ClaudeStreamEvent;
       }) => {
+        updateSessionUsageEstimate(sessionId, event);
         const state = appState.get();
         if (state.activeSessionId === sessionId && chatView) {
           chatView.appendStreamEvent(event);
@@ -44,6 +45,7 @@ const rpc = Electroview.defineRPC<any>({
           && state.activeWorkspace
           && ((event as any).type === "result" || isDiffMutationEvent(event))
         ) {
+          workspaceFileCache.delete(state.activeWorkspace);
           scheduleDiffRefresh(
             state.activeWorkspace,
             state.diffScope,
@@ -95,6 +97,7 @@ const rpc = Electroview.defineRPC<any>({
         exitCode: number;
       }) => {
         console.log(`Session ${sessionId} ended with code ${exitCode}`);
+        sessionUsageEstimates.delete(sessionId);
         const state = appState.get();
         const live = new Set(state.liveSessions);
         live.delete(sessionId);
@@ -125,6 +128,11 @@ type AppState = {
   customSessionNames: Record<string, string>; // sessionId → custom name
 };
 
+type SessionUsageEstimate = {
+  promptTokens: number | null;
+  model: string | null;
+};
+
 const appState = new Store<AppState>({
   snapshot: null,
   workspaces: [],
@@ -145,22 +153,26 @@ let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const WORKSPACE_FILE_CACHE_MS = 30_000;
+const workspaceFileCache = new Map<string, {
+  files: string[];
+  loadedAt: number;
+}>();
+const sessionUsageEstimates = new Map<string, SessionUsageEstimate>();
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
 
-  // Create 4-column panel layout
+  // Create 3-column panel layout
   panelLayout = new PanelLayout(panelsContainer, [
     { id: "workspaces", minWidth: 200, defaultWidth: 0, hidden: true },
-    { id: "chat", minWidth: 280, defaultWidth: 30 },
-    { id: "diff", minWidth: 300, defaultWidth: 50 },
-    { id: "files", minWidth: 140, defaultWidth: 20 },
+    { id: "chat", minWidth: 280, defaultWidth: 35 },
+    { id: "diff", minWidth: 320, defaultWidth: 65 },
   ]);
 
   const wsPanel = panelLayout.getPanel("workspaces")!;
   const chatPanel = panelLayout.getPanel("chat")!;
   const diffPanel = panelLayout.getPanel("diff")!;
-  const filesP = panelLayout.getPanel("files")!;
 
   // Sidebar (workspaces panel)
   sidebar = new Sidebar(wsPanel, {
@@ -278,7 +290,7 @@ function init(): void {
         console.error("Failed to kill session:", err);
       }
     },
-    onSendPrompt: async (prompt, fullAccess) => {
+    onSendPrompt: async (prompt, fullAccess, selectedFiles) => {
       const state = appState.get();
       const cwd = state.activeWorkspace;
       if (!cwd) {
@@ -295,6 +307,7 @@ function init(): void {
             sessionId: state.activeSessionId,
             text: prompt,
             fullAccess,
+            selectedFiles,
           });
         } else {
           // New session or resume a historical/finished session
@@ -303,6 +316,7 @@ function init(): void {
             cwd,
             fullAccess,
             sessionId: state.activeSessionId ?? undefined, // resume if set
+            selectedFiles,
           });
           const live = new Set(state.liveSessions);
           live.add(sessionId);
@@ -319,13 +333,18 @@ function init(): void {
         console.error("Failed to open Finder:", err);
       }
     },
+    onSearchFiles: async (query) => {
+      const cwd = appState.get().activeWorkspace;
+      if (!cwd) return [];
+      return searchWorkspaceFiles(cwd, query, 30);
+    },
   });
 
   // Diff panel
   diffView = new DiffView(diffPanel);
 
-  // Files panel
-  filesPanel = new FilesPanel(filesP, {
+  // Files panel (embedded inside diff panel)
+  filesPanel = new FilesPanel(diffView.filesPanelHost, {
     onSelectFile: (path) => {
       diffView.showFile(path);
     },
@@ -383,6 +402,13 @@ function init(): void {
     chatView.setHeader(
       resolveActiveSessionTitle(state),
       state.activeWorkspace
+    );
+    const contextInfo = resolveActiveContextUsage(state);
+    chatView.setContextUsage(
+      contextInfo?.contextPercentage ?? null,
+      contextInfo?.model ?? null,
+      contextInfo?.activity ?? null,
+      contextInfo?.promptTokens ?? null
     );
   });
 
@@ -549,6 +575,7 @@ async function openWorkspace(): Promise<void> {
 async function removeWorkspace(path: string): Promise<void> {
   try {
     await (rpc as any).request.removeWorkspace({ path });
+    workspaceFileCache.delete(path);
     appState.update((s) => {
       const workspaces = s.workspaces.filter((w) => w !== path);
       const expanded = new Set(s.expandedWorkspaces);
@@ -565,6 +592,53 @@ async function removeWorkspace(path: string): Promise<void> {
   } catch (err) {
     console.error("Failed to remove workspace:", err);
   }
+}
+
+async function searchWorkspaceFiles(
+  cwd: string,
+  query: string,
+  limit: number
+): Promise<string[]> {
+  const cached = workspaceFileCache.get(cwd);
+  let files = cached?.files;
+  const cacheAgeMs = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
+  if (!files || cacheAgeMs > WORKSPACE_FILE_CACHE_MS) {
+    const loaded = await (rpc as any).request.getWorkspaceFiles({ cwd });
+    files = Array.isArray(loaded) ? loaded : [];
+    workspaceFileCache.set(cwd, { files, loadedAt: Date.now() });
+  }
+
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return files.slice(0, limit);
+  }
+
+  return files
+    .map((path) => ({ path, score: scoreWorkspaceFile(path, normalizedQuery) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      return a.path.localeCompare(b.path);
+    })
+    .slice(0, limit)
+    .map((entry) => entry.path);
+}
+
+function scoreWorkspaceFile(path: string, query: string): number {
+  const normalizedPath = path.toLowerCase();
+  const fileName = path.split("/").pop()?.toLowerCase() ?? normalizedPath;
+
+  if (fileName === query) return 500;
+  if (fileName.startsWith(query)) return 400 - Math.min(fileName.length, 200);
+  if (normalizedPath.startsWith(query)) return 320 - Math.min(normalizedPath.length, 200);
+
+  const nameIdx = fileName.indexOf(query);
+  if (nameIdx >= 0) return 260 - Math.min(nameIdx, 120);
+
+  const pathIdx = normalizedPath.indexOf(query);
+  if (pathIdx >= 0) return 200 - Math.min(pathIdx, 120);
+
+  return 0;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -678,6 +752,75 @@ function resolveActiveSessionTitle(state: AppState): string {
   }
 
   return "Session";
+}
+
+function resolveActiveContextUsage(
+  state: AppState
+): {
+  contextPercentage: number | null;
+  model: string | null;
+  activity: Activity | null;
+  promptTokens: number | null;
+} | null {
+  const activeSessionId = state.activeSessionId;
+  if (!activeSessionId || !state.snapshot) return null;
+
+  const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);
+  if (!live) return null;
+  const estimate = sessionUsageEstimates.get(activeSessionId);
+
+  return {
+    contextPercentage: live.contextPercentage,
+    model: live.model ?? estimate?.model ?? null,
+    activity: live.activity,
+    promptTokens: estimate?.promptTokens ?? null,
+  };
+}
+
+function updateSessionUsageEstimate(sessionId: string, event: ClaudeStreamEvent): void {
+  const ev = event as any;
+  if (ev?.type === "system" && ev?.subtype === "init") {
+    const model = typeof ev.model === "string" ? ev.model : null;
+    const current = sessionUsageEstimates.get(sessionId);
+    sessionUsageEstimates.set(sessionId, {
+      promptTokens: current?.promptTokens ?? null,
+      model: model ?? current?.model ?? null,
+    });
+    return;
+  }
+
+  if (ev?.type !== "assistant") return;
+
+  const usage = ev?.message?.usage;
+  const promptTokens = extractPromptTokenUsage(usage);
+  const model = typeof ev?.message?.model === "string" ? ev.message.model : null;
+
+  const current = sessionUsageEstimates.get(sessionId);
+  sessionUsageEstimates.set(sessionId, {
+    promptTokens: promptTokens ?? current?.promptTokens ?? null,
+    model: model ?? current?.model ?? null,
+  });
+}
+
+function extractPromptTokenUsage(usage: unknown): number | null {
+  if (!usage || typeof usage !== "object") return null;
+  const bag = usage as Record<string, unknown>;
+  const input = asFiniteNumber(bag.input_tokens ?? bag.inputTokens) ?? 0;
+  const cacheRead = asFiniteNumber(
+    bag.cache_read_input_tokens ?? bag.cacheReadInputTokens
+  ) ?? 0;
+  const cacheCreate = asFiniteNumber(
+    bag.cache_creation_input_tokens ?? bag.cacheCreationInputTokens
+  ) ?? 0;
+
+  const total = input + cacheRead + cacheCreate;
+  return total > 0 ? total : null;
+}
+
+function asFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────

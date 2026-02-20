@@ -30,13 +30,26 @@ import "prismjs/components/prism-php";
 export class DiffView {
   #el: HTMLElement;
   #toolbarEl: HTMLElement;
+  #bodyEl: HTMLElement;
   #contentEl: HTMLElement;
+  #filesHostEl: HTMLElement;
+  #filesToggleBtn: HTMLButtonElement;
   #files: DiffFile[] = [];
   #activeFile: string | null = null;
   #fileExpanded = new Map<string, boolean>();
   #viewMode: "unified" | "split" = "unified";
+  #filesPanelVisible = false;
 
   constructor(container: HTMLElement) {
+    this.#filesToggleBtn = h("button", {
+      class: "dv-icon-btn",
+      title: "Toggle files changed",
+      onclick: () => this.toggleFilesPanel(),
+      innerHTML: `<svg class="dv-icon-folder" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M1.5 4.25C1.5 3.55964 2.05964 3 2.75 3h3.02c.31 0 .61.115.84.322l.89.807c.23.208.53.321.84.321h4.91c.69 0 1.25.56 1.25 1.25V11.5c0 .69-.56 1.25-1.25 1.25H2.75c-.69 0-1.25-.56-1.25-1.25V4.25Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>`,
+    }) as HTMLButtonElement;
+
     this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
       h("span", { class: "dv-file-label" }, [""]),
       h("span", { class: "dv-toolbar-spacer" }),
@@ -50,15 +63,22 @@ export class DiffView {
         dataset: { view: "split" },
         onclick: () => this.#setViewMode("split"),
       }, ["Split"]),
+      this.#filesToggleBtn,
     ]);
 
     this.#contentEl = h("div", { class: "dv-content" });
+    this.#filesHostEl = h("aside", { class: "dv-files-host", hidden: true });
+    this.#bodyEl = h("div", { class: "dv-body" }, [
+      this.#contentEl,
+      this.#filesHostEl,
+    ]);
 
     this.#el = h("div", { class: "diff-view" }, [
       this.#toolbarEl,
-      this.#contentEl,
+      this.#bodyEl,
     ]);
 
+    this.setFilesPanelVisible(false);
     container.appendChild(this.#el);
   }
 
@@ -262,6 +282,21 @@ export class DiffView {
       if (!target) return;
       target.scrollIntoView({ block: "nearest" });
     });
+  }
+
+  setFilesPanelVisible(visible: boolean): void {
+    this.#filesPanelVisible = visible;
+    this.#el.classList.toggle("files-visible", visible);
+    this.#filesHostEl.hidden = !visible;
+    this.#filesToggleBtn.classList.toggle("active", visible);
+  }
+
+  toggleFilesPanel(): void {
+    this.setFilesPanelVisible(!this.#filesPanelVisible);
+  }
+
+  get filesPanelHost(): HTMLElement {
+    return this.#filesHostEl;
   }
 
   get element(): HTMLElement {

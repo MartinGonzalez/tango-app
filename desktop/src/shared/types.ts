@@ -223,11 +223,22 @@ export type AppRPC = {
         response: TranscriptMessage[];
       };
       sendPrompt: {
-        params: { prompt: string; cwd: string; fullAccess?: boolean; sessionId?: string };
+        params: {
+          prompt: string;
+          cwd: string;
+          fullAccess?: boolean;
+          sessionId?: string;
+          selectedFiles?: string[];
+        };
         response: { sessionId: string };
       };
       sendFollowUp: {
-        params: { sessionId: string; text: string; fullAccess?: boolean };
+        params: {
+          sessionId: string;
+          text: string;
+          fullAccess?: boolean;
+          selectedFiles?: string[];
+        };
         response: void;
       };
       respondPermission: {
@@ -265,6 +276,10 @@ export type AppRPC = {
       getSessionNames: {
         params: {};
         response: Record<string, string>;
+      };
+      getWorkspaceFiles: {
+        params: { cwd: string };
+        response: string[];
       };
       addWorkspace: {
         params: { path: string };

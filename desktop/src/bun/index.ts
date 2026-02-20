@@ -15,6 +15,10 @@ import { WorkspaceStore } from "./workspace-store.ts";
 import { ApprovalServer } from "./approval-server.ts";
 import { installApprovalHook } from "./hook-installer.ts";
 import { SessionNamesStore } from "./session-names-store.ts";
+import {
+  getWorkspaceFiles,
+  invalidateWorkspaceFilesCache,
+} from "./workspace-files.ts";
 import type { AppRPC, SessionInfo, Snapshot, Activity } from "../shared/types.ts";
 
 console.log("Claude Sessions starting...");
@@ -128,11 +132,35 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return readTranscript(path);
       },
 
-      sendPrompt: async ({ prompt, cwd, fullAccess, sessionId: resumeId }) => {
+      sendPrompt: async ({
+        prompt,
+        cwd,
+        fullAccess,
+        sessionId: resumeId,
+        selectedFiles,
+      }: {
+        prompt: string;
+        cwd: string;
+        fullAccess?: boolean;
+        sessionId?: string;
+        selectedFiles?: string[];
+      }) => {
         try {
+          console.log("[rpc] sendPrompt", {
+            cwd,
+            resumeId: resumeId ?? null,
+            selectedFiles: selectedFiles ?? [],
+            prompt,
+          });
           // Capture per-turn baseline before sending prompt.
           await beginTurnDiff(cwd).catch(() => {});
-          const sessionId = await sessions.spawn(prompt, cwd, fullAccess ?? true, resumeId);
+          const sessionId = await sessions.spawn(
+            prompt,
+            cwd,
+            fullAccess ?? true,
+            resumeId,
+            selectedFiles ?? []
+          );
           // Register the tempId immediately (will be updated to realId on resolve)
           approvals.registerSession(sessionId, fullAccess ?? true);
           sessionCwds.set(sessionId, cwd);
@@ -149,11 +177,18 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         sessionId,
         text,
         fullAccess,
+        selectedFiles,
       }: {
         sessionId: string;
         text: string;
         fullAccess?: boolean;
+        selectedFiles?: string[];
       }) => {
+        console.log("[rpc] sendFollowUp", {
+          sessionId,
+          selectedFiles: selectedFiles ?? [],
+          text,
+        });
         const cwd = resolveSessionCwd(sessionId);
         if (cwd) {
           await beginTurnDiff(cwd).catch(() => {});
@@ -161,7 +196,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         if (typeof fullAccess === "boolean") {
           approvals.setSessionFullAccess(sessionId, fullAccess);
         }
-        await sessions.sendMessage(sessionId, text);
+        await sessions.sendMessage(sessionId, text, selectedFiles ?? []);
       },
 
       respondPermission: async ({
@@ -246,12 +281,19 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return sessionNames.getAll();
       },
 
+      getWorkspaceFiles: async ({ cwd }: { cwd: string }) => {
+        if (!cwd) return [];
+        return getWorkspaceFiles(cwd);
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
+        invalidateWorkspaceFilesCache(path);
       },
 
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
+        invalidateWorkspaceFilesCache(path);
       },
 
       openInFinder: async ({ path }: { path: string }) => {

@@ -4284,7 +4284,7 @@ await __promiseAll([
 
 // src/bun/index.ts
 import { unlink } from "fs/promises";
-import { join as join10 } from "path";
+import { join as join12 } from "path";
 import { homedir as homedir7 } from "os";
 
 // src/bun/watcher-client.ts
@@ -4347,6 +4347,8 @@ class WatcherClient {
 }
 
 // src/bun/session-manager.ts
+import { join as join5 } from "path";
+
 class SessionManager {
   #sessions = new Map;
   #onEvent = null;
@@ -4369,7 +4371,7 @@ class SessionManager {
     this.#onError = cb;
     return this;
   }
-  async spawn(prompt, cwd, fullAccess = true, resumeSessionId) {
+  async spawn(prompt, cwd, fullAccess = true, resumeSessionId, selectedFiles = []) {
     const args = [
       "-p",
       "--input-format",
@@ -4406,27 +4408,31 @@ class SessionManager {
     this.#sessions.set(tempId, session);
     this.#readStream(tempId, proc);
     this.#readStderr(tempId, proc);
-    await this.#writeToProc(proc, {
+    const outbound = {
       type: "user",
       message: {
         role: "user",
-        content: [{ type: "text", text: prompt }]
+        content: buildUserMessageContent(prompt, selectedFiles, cwd)
       }
-    });
+    };
+    console.log(`[session-manager] outbound user message (spawn ${tempId})`, safeStringify(outbound));
+    await this.#writeToProc(proc, outbound);
     return tempId;
   }
-  async sendMessage(sessionId, text) {
+  async sendMessage(sessionId, text, selectedFiles = []) {
     const session = this.#sessions.get(sessionId);
     if (!session) {
       throw new Error(`No active session: ${sessionId}`);
     }
-    await this.#writeToProc(session.proc, {
+    const outbound = {
       type: "user",
       message: {
         role: "user",
-        content: [{ type: "text", text }]
+        content: buildUserMessageContent(text, selectedFiles, session.cwd)
       }
-    });
+    };
+    console.log(`[session-manager] outbound user message (follow-up ${sessionId})`, safeStringify(outbound));
+    await this.#writeToProc(session.proc, outbound);
   }
   async respondPermission(sessionId, toolUseId, allow) {
     const session = this.#sessions.get(sessionId);
@@ -4538,6 +4544,48 @@ function safeStringify(value) {
     const message = error instanceof Error ? error.message : String(error);
     return `{"error":"failed_to_serialize","message":${JSON.stringify(message)}}`;
   }
+}
+function buildUserMessageContent(text, selectedFiles, cwd) {
+  const normalized = normalizeSelectedFiles(selectedFiles);
+  if (normalized.length === 0) {
+    return [{ type: "text", text }];
+  }
+  const absoluteFiles = normalized.map((rel) => join5(cwd, rel));
+  const fileLines = absoluteFiles.map((abs, index) => {
+    const rel = normalized[index];
+    return `- ${abs} (workspace: ${rel})`;
+  });
+  const attachmentHeader = [
+    "<attached_files>",
+    ...fileLines,
+    "</attached_files>"
+  ].join(`
+`);
+  if (text.trim().length === 0) {
+    return [{ type: "text", text: attachmentHeader }];
+  }
+  return [{
+    type: "text",
+    text: `${attachmentHeader}
+
+${text}`
+  }];
+}
+function normalizeSelectedFiles(paths2) {
+  const out = [];
+  const seen = new Set;
+  for (const raw of paths2) {
+    const value = String(raw ?? "").trim().replace(/\\/g, "/");
+    if (!value)
+      continue;
+    if (value.startsWith("/") || value.startsWith(".."))
+      continue;
+    if (seen.has(value))
+      continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 // src/bun/transcript-reader.ts
@@ -4715,7 +4763,7 @@ function parseFileSection(section) {
 
 // src/bun/diff-provider.ts
 import { readdir, readFile as readFile2, stat } from "fs/promises";
-import { join as join5, relative } from "path";
+import { join as join6, relative } from "path";
 var snapshotState = new Map;
 var IGNORE_DIRS = new Set([
   "node_modules",
@@ -4790,7 +4838,7 @@ async function getDiff(cwd, scope = "all") {
 }
 async function hasGit(cwd) {
   try {
-    const s = await stat(join5(cwd, ".git"));
+    const s = await stat(join6(cwd, ".git"));
     return s.isDirectory();
   } catch {
     return false;
@@ -4859,7 +4907,7 @@ async function walkDir(root, dir, files) {
   for (const entry of entries) {
     if (IGNORE_DIRS.has(entry.name))
       continue;
-    const fullPath = join5(dir, entry.name);
+    const fullPath = join6(dir, entry.name);
     if (entry.isDirectory()) {
       await walkDir(root, fullPath, files);
     } else if (entry.isFile()) {
@@ -5056,14 +5104,14 @@ function myersDiff(oldLines, newLines) {
 
 // src/bun/session-history.ts
 import { readdir as readdir2, readFile as readFile3 } from "fs/promises";
-import { join as join6, basename } from "path";
+import { join as join7, basename } from "path";
 import { homedir as homedir3 } from "os";
-var CLAUDE_PROJECTS_DIR = join6(homedir3(), ".claude", "projects");
+var CLAUDE_PROJECTS_DIR = join7(homedir3(), ".claude", "projects");
 function encodeProjectPath(cwd) {
   return cwd.replace(/\//g, "-");
 }
 async function listSessionsForWorkspace(cwd) {
-  const projectDir = join6(CLAUDE_PROJECTS_DIR, encodeProjectPath(cwd));
+  const projectDir = join7(CLAUDE_PROJECTS_DIR, encodeProjectPath(cwd));
   let entries;
   try {
     entries = await readdir2(projectDir);
@@ -5074,7 +5122,7 @@ async function listSessionsForWorkspace(cwd) {
   const sessions = [];
   const promises = jsonlFiles.slice(0, 200).map(async (file) => {
     const sessionId = basename(file, ".jsonl");
-    const filePath = join6(projectDir, file);
+    const filePath = join7(projectDir, file);
     try {
       return await parseTranscriptMeta(sessionId, filePath);
     } catch {
@@ -5172,8 +5220,8 @@ async function parseTranscriptMeta(sessionId, filePath) {
 // src/bun/workspace-store.ts
 import { readFile as readFile4, writeFile, mkdir } from "fs/promises";
 import { homedir as homedir4 } from "os";
-import { join as join7, dirname as dirname2 } from "path";
-var DEFAULT_FILE = join7(homedir4(), ".claude-sessions", "workspaces.json");
+import { join as join8, dirname as dirname2 } from "path";
+var DEFAULT_FILE = join8(homedir4(), ".claude-sessions", "workspaces.json");
 var MAX_WORKSPACES = 20;
 
 class WorkspaceStore {
@@ -5359,11 +5407,11 @@ function safeStringify2(value) {
 
 // src/bun/hook-installer.ts
 import { readFile as readFile5, writeFile as writeFile2, mkdir as mkdir2 } from "fs/promises";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 import { homedir as homedir5 } from "os";
-var HOOKS_DIR = join8(homedir5(), ".claude-sessions", "hooks");
+var HOOKS_DIR = join9(homedir5(), ".claude-sessions", "hooks");
 var HOOK_SCRIPT_NAME = "pre-tool-use.sh";
-var CLAUDE_SETTINGS_PATH = join8(homedir5(), ".claude", "settings.json");
+var CLAUDE_SETTINGS_PATH = join9(homedir5(), ".claude", "settings.json");
 var HOOK_SCRIPT = `#!/bin/bash
 # PreToolUse hook for Claude Sessions app.
 # Blocks until the user approves/denies the tool in the app UI.
@@ -5427,7 +5475,7 @@ EOF
 fi
 `;
 async function installApprovalHook() {
-  const destPath = join8(HOOKS_DIR, HOOK_SCRIPT_NAME);
+  const destPath = join9(HOOKS_DIR, HOOK_SCRIPT_NAME);
   await mkdir2(HOOKS_DIR, { recursive: true });
   await writeFile2(destPath, HOOK_SCRIPT, { mode: 493 });
   await addHookToSettings(destPath);
@@ -5467,9 +5515,9 @@ async function addHookToSettings(hookPath) {
 
 // src/bun/session-names-store.ts
 import { readFile as readFile6, writeFile as writeFile3, mkdir as mkdir3 } from "fs/promises";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 import { homedir as homedir6 } from "os";
-var STORE_PATH = join9(homedir6(), ".claude-sessions", "session-names.json");
+var STORE_PATH = join10(homedir6(), ".claude-sessions", "session-names.json");
 
 class SessionNamesStore {
   #names = {};
@@ -5496,8 +5544,74 @@ class SessionNamesStore {
     await this.#save();
   }
   async#save() {
-    await mkdir3(join9(homedir6(), ".claude-sessions"), { recursive: true });
+    await mkdir3(join10(homedir6(), ".claude-sessions"), { recursive: true });
     await writeFile3(STORE_PATH, JSON.stringify(this.#names, null, 2));
+  }
+}
+
+// src/bun/workspace-files.ts
+import { readdir as readdir3 } from "fs/promises";
+import { join as join11, relative as relative2 } from "path";
+var CACHE_TTL_MS = 30000;
+var MAX_FILES = 12000;
+var IGNORE_DIRS2 = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".cache",
+  "__pycache__",
+  ".venv",
+  "venv",
+  ".tox"
+]);
+var cache = new Map;
+async function getWorkspaceFiles(cwd) {
+  const now = Date.now();
+  const cached = cache.get(cwd);
+  if (cached && now - cached.scannedAt < CACHE_TTL_MS) {
+    return cached.files;
+  }
+  const files = [];
+  await walk(cwd, cwd, files);
+  files.sort((a, b) => a.localeCompare(b));
+  cache.set(cwd, {
+    files,
+    scannedAt: now
+  });
+  return files;
+}
+function invalidateWorkspaceFilesCache(cwd) {
+  if (cwd) {
+    cache.delete(cwd);
+    return;
+  }
+  cache.clear();
+}
+async function walk(root, dir, out) {
+  if (out.length >= MAX_FILES)
+    return;
+  let entries;
+  try {
+    entries = await readdir3(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (out.length >= MAX_FILES)
+      break;
+    const fullPath = join11(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (IGNORE_DIRS2.has(entry.name))
+        continue;
+      await walk(root, fullPath, out);
+      continue;
+    }
+    if (!entry.isFile())
+      continue;
+    const relPath = relative2(root, fullPath);
+    if (!relPath || relPath.startsWith(".."))
+      continue;
+    out.push(relPath);
   }
 }
 
@@ -5583,10 +5697,22 @@ var rpc = BrowserView.defineRPC({
           return [];
         return readTranscript(path);
       },
-      sendPrompt: async ({ prompt, cwd, fullAccess, sessionId: resumeId }) => {
+      sendPrompt: async ({
+        prompt,
+        cwd,
+        fullAccess,
+        sessionId: resumeId,
+        selectedFiles
+      }) => {
         try {
+          console.log("[rpc] sendPrompt", {
+            cwd,
+            resumeId: resumeId ?? null,
+            selectedFiles: selectedFiles ?? [],
+            prompt
+          });
           await beginTurnDiff(cwd).catch(() => {});
-          const sessionId = await sessions.spawn(prompt, cwd, fullAccess ?? true, resumeId);
+          const sessionId = await sessions.spawn(prompt, cwd, fullAccess ?? true, resumeId, selectedFiles ?? []);
           approvals.registerSession(sessionId, fullAccess ?? true);
           sessionCwds.set(sessionId, cwd);
           await workspaces.add(cwd);
@@ -5600,8 +5726,14 @@ var rpc = BrowserView.defineRPC({
       sendFollowUp: async ({
         sessionId,
         text,
-        fullAccess
+        fullAccess,
+        selectedFiles
       }) => {
+        console.log("[rpc] sendFollowUp", {
+          sessionId,
+          selectedFiles: selectedFiles ?? [],
+          text
+        });
         const cwd = resolveSessionCwd(sessionId);
         if (cwd) {
           await beginTurnDiff(cwd).catch(() => {});
@@ -5609,7 +5741,7 @@ var rpc = BrowserView.defineRPC({
         if (typeof fullAccess === "boolean") {
           approvals.setSessionFullAccess(sessionId, fullAccess);
         }
-        await sessions.sendMessage(sessionId, text);
+        await sessions.sendMessage(sessionId, text, selectedFiles ?? []);
       },
       respondPermission: async ({
         sessionId,
@@ -5666,11 +5798,18 @@ var rpc = BrowserView.defineRPC({
       getSessionNames: async () => {
         return sessionNames.getAll();
       },
+      getWorkspaceFiles: async ({ cwd }) => {
+        if (!cwd)
+          return [];
+        return getWorkspaceFiles(cwd);
+      },
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
+        invalidateWorkspaceFilesCache(path);
       },
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
+        invalidateWorkspaceFilesCache(path);
       },
       openInFinder: async ({ path }) => {
         if (!path)
@@ -5737,7 +5876,7 @@ function resolveSessionCwd(sessionId) {
 }
 function guessTranscriptPath(cwd, sessionId) {
   const encoded = cwd.replace(/\//g, "-");
-  return join10(homedir7(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
+  return join12(homedir7(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
 }
 exports_ApplicationMenu.setApplicationMenu([
   {
