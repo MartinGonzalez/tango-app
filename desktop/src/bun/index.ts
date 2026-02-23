@@ -26,7 +26,7 @@ import {
 } from "./slash-commands.ts";
 import type { AppRPC, SessionInfo, Snapshot, Activity } from "../shared/types.ts";
 
-console.log("Claude Sessions starting...");
+console.log("Claudex starting...");
 
 // ── Services ─────────────────────────────────────────────────────
 
@@ -397,7 +397,7 @@ function guessTranscriptPath(cwd: string, sessionId: string): string {
 ApplicationMenu.setApplicationMenu([
   {
     submenu: [
-      { label: "About Claude Sessions", role: "about" as any },
+      { label: "About Claudex", role: "about" as any },
       { type: "separator" },
       { label: "Quit", role: "quit" },
     ],
@@ -450,7 +450,7 @@ ApplicationMenu.setApplicationMenu([
 ]);
 
 const mainWindow = new BrowserWindow({
-  title: "Claude Sessions",
+  title: "Claudex",
   url: "views://mainview/index.html",
   frame: {
     width: 1200,
@@ -490,7 +490,7 @@ installApprovalHook().catch((err) => {
   console.warn("Failed to install approval hook:", err);
 });
 
-console.log("Claude Sessions initialized");
+console.log("Claudex initialized");
 
 // ── Helpers ──────────────────────────────────────────────────────
 

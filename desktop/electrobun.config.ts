@@ -2,7 +2,7 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "Claude Sessions",
+    name: "Claudex",
     identifier: "dev.claude-sessions.app",
     version: "0.1.0",
   },

@@ -1,5 +1,5 @@
 #!/bin/bash
-# PreToolUse hook for Claude Sessions app.
+# PreToolUse hook for Claudex app.
 # Blocks until the user approves/denies the tool in the app UI.
 # Falls back to allowing if the app is not running.
 
@@ -35,7 +35,7 @@ if [ "$ALLOW" = "true" ]; then
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "allow",
-    "permissionDecisionReason": "User approved in Claude Sessions app"
+    "permissionDecisionReason": "User approved in Claudex app"
   }
 }
 EOF
@@ -47,7 +47,7 @@ else
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
-    "permissionDecisionReason": "User denied this tool in Claude Sessions app"
+    "permissionDecisionReason": "User denied this tool in Claudex app"
   }
 }
 EOF
