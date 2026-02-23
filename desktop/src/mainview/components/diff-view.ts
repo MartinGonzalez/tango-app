@@ -118,8 +118,8 @@ export class DiffView {
         dataset: { view: "split" },
         onclick: () => this.#setViewMode("split"),
       }, ["Split"]),
-      this.#branchToggleBtn,
       this.#filesToggleBtn,
+      this.#branchToggleBtn,
     ]);
 
     this.#contentEl = h("div", { class: "dv-content" });

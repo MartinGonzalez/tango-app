@@ -21,6 +21,7 @@
   --titlebar-height: 38px;
   --panel-header-height: 52px;
   --panel-header-padding-x: 16px;
+  --dv-sidepanel-width: 15%;
 
   --font-sans: "Anthropic Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
@@ -164,13 +165,23 @@ button {
 }
 
 .panel-handle {
-  width: 4px;
+  width: 1px;
   flex-shrink: 0;
   cursor: col-resize;
   background: #4A4A46;
+  box-shadow: none;
   position: relative;
   z-index: 10;
   transition: background 100ms ease;
+}
+
+.panel-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
 }
 
 .panel-handle:hover,
@@ -182,7 +193,8 @@ button {
 
 .panel-workspaces {
   background: #262624;
-  border-right: 1px solid #4A4A46;
+  border-right: none;
+  box-shadow: none;
 }
 
 .sidebar {
@@ -2648,7 +2660,8 @@ button {
 
 .panel-diff {
   background: #30302E;
-  border-left: 1px solid #4A4A46;
+  border-left: none;
+  box-shadow: none;
 }
 
 .diff-view {
@@ -2704,7 +2717,7 @@ button {
 
 .dv-toggle.active {
   color: #FAF9F5;
-  background: var(--bg-active);
+  background: #141413;
 }
 
 .dv-icon-btn {
@@ -2755,22 +2768,16 @@ button {
   min-width: 0;
 }
 
-.dv-files-host {
-  width: 320px;
-  min-width: 220px;
-  max-width: 42%;
-  border-left: 1px solid var(--border);
-  background: var(--bg-secondary);
-  overflow: hidden;
-}
-
+.dv-files-host,
 .dv-branch-host {
-  width: 340px;
-  min-width: 240px;
-  max-width: 46%;
+  flex: 0 0 var(--dv-sidepanel-width);
+  width: var(--dv-sidepanel-width);
+  min-width: var(--dv-sidepanel-width);
+  max-width: var(--dv-sidepanel-width);
   border-left: 1px solid var(--border);
   background: #262624;
   overflow: hidden;
+  resize: none;
 }
 
 .dv-empty {
@@ -3115,6 +3122,7 @@ button {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: #262624;
 }
 
 .fp-header {
