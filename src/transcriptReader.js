@@ -60,7 +60,12 @@ function extractText(content) {
 }
 
 function deriveTopic(prompt) {
-  let text = prompt.split("\n")[0].trim();
+  const commandName = extractCommandName(prompt);
+  if (commandName) {
+    return commandName;
+  }
+
+  let text = extractFirstMeaningfulLine(prompt);
 
   // Remove common filler phrases at the start
   const fillers = [
@@ -90,4 +95,46 @@ function deriveTopic(prompt) {
   }
 
   return text;
+}
+
+function extractCommandName(prompt) {
+  const commandNameMatch = prompt.match(
+    /<command-name>\s*([^<\n]+?)\s*<\/command-name>/i
+  );
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+
+  const commandMessageMatch = prompt.match(
+    /<command-message>\s*([\s\S]*?)\s*<\/command-message>/i
+  );
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+
+  return null;
+}
+
+function normalizeCommandName(value) {
+  const text = collapseWhitespace(value);
+  if (!text) return null;
+  return text.startsWith("/") ? text : `/${text}`;
+}
+
+function extractFirstMeaningfulLine(prompt) {
+  const cleaned = prompt
+    .replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, "\n")
+    .replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, "\n")
+    .replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, "\n");
+
+  for (const rawLine of cleaned.split("\n")) {
+    const line = collapseWhitespace(rawLine);
+    if (line) return line;
+  }
+
+  return "";
+}
+
+function collapseWhitespace(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }

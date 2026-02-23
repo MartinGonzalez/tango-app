@@ -169,4 +169,43 @@ describe("readTranscript", () => {
     const result = await readTranscript(path);
     expect(result[0].timestamp).toBe("2024-01-01T00:00:00Z");
   });
+
+  test("skips user entries marked as isMeta", async () => {
+    const path = join(tempDir, "test.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        isMeta: true,
+        message: { content: [{ type: "text", text: "meta prompt expansion" }] },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: { content: "real message" },
+      }),
+    ].join("\n");
+    await writeFile(path, `${lines}\n`);
+
+    const result = await readTranscript(path);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("assistant");
+    expect(result[0].content).toBe("real message");
+  });
+
+  test("normalizes wrapped slash command user messages", async () => {
+    const path = join(tempDir, "test.jsonl");
+    await writeFile(
+      path,
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: "<command-message>ping</command-message>\n<command-name>/ping</command-name>",
+        },
+      }) + "\n"
+    );
+
+    const result = await readTranscript(path);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+    expect(result[0].content).toBe("/ping");
+  });
 });

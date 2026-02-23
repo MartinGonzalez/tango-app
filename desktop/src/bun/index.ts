@@ -10,6 +10,7 @@ import {
   beginTurnDiff,
   finalizeTurnDiff,
 } from "./diff-provider.ts";
+import { getBranchHistory } from "./branch-history.ts";
 import { listSessionsForWorkspace } from "./session-history.ts";
 import { WorkspaceStore } from "./workspace-store.ts";
 import { ApprovalServer } from "./approval-server.ts";
@@ -19,6 +20,10 @@ import {
   getWorkspaceFiles,
   invalidateWorkspaceFilesCache,
 } from "./workspace-files.ts";
+import {
+  getSlashCommands,
+  invalidateSlashCommandsCache,
+} from "./slash-commands.ts";
 import type { AppRPC, SessionInfo, Snapshot, Activity } from "../shared/types.ts";
 
 console.log("Claude Sessions starting...");
@@ -272,6 +277,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getDiff(cwd, scope ?? "all");
       },
 
+      getBranchHistory: async ({
+        cwd,
+        limit,
+      }: {
+        cwd: string;
+        limit?: number;
+      }) => {
+        return getBranchHistory(cwd, limit);
+      },
+
       getWorkspaces: async () => {
         await workspaces.load();
         return workspaces.getAll();
@@ -286,14 +301,21 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getWorkspaceFiles(cwd);
       },
 
+      getSlashCommands: async ({ cwd }: { cwd: string }) => {
+        if (!cwd) return [];
+        return getSlashCommands(cwd);
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
+        invalidateSlashCommandsCache(path);
       },
 
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
         invalidateWorkspaceFilesCache(path);
+        invalidateSlashCommandsCache(path);
       },
 
       openInFinder: async ({ path }: { path: string }) => {

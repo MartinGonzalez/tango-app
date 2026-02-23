@@ -4284,8 +4284,8 @@ await __promiseAll([
 
 // src/bun/index.ts
 import { unlink } from "fs/promises";
-import { join as join12 } from "path";
-import { homedir as homedir7 } from "os";
+import { join as join14 } from "path";
+import { homedir as homedir8 } from "os";
 
 // src/bun/watcher-client.ts
 var DEFAULT_URL = "http://localhost:4242";
@@ -4623,6 +4623,8 @@ function parseEntry(entry) {
   const role = entry.type;
   if (!["user", "assistant", "system"].includes(role))
     return null;
+  if (entry.isMeta === true)
+    return null;
   let hasToolResult = false;
   if (entry.message?.content && Array.isArray(entry.message.content)) {
     hasToolResult = entry.message.content.some((b) => b.type === "tool_result");
@@ -4630,9 +4632,14 @@ function parseEntry(entry) {
   if (role === "user" && hasToolResult) {
     return null;
   }
-  const content = extractContent(entry.message?.content);
+  let content = extractContent(entry.message?.content);
   if (content === null)
     return null;
+  if (role === "user") {
+    content = normalizeUserMessageContent(content);
+    if (content === null)
+      return null;
+  }
   const msg = {
     role,
     content
@@ -4665,6 +4672,30 @@ function extractContent(content) {
 `) : null;
   }
   return null;
+}
+function normalizeUserMessageContent(content) {
+  const commandName = extractCommandName(content);
+  if (commandName)
+    return commandName;
+  const normalized = content.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+function extractCommandName(content) {
+  const commandNameMatch = content.match(/<command-name>\s*([^<\n]+?)\s*<\/command-name>/i);
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+  const commandMessageMatch = content.match(/<command-message>\s*([\s\S]*?)\s*<\/command-message>/i);
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+  return null;
+}
+function normalizeCommandName(value) {
+  const normalized = String(value).replace(/\s+/g, " ").trim();
+  if (!normalized)
+    return null;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
 // src/mainview/components/diff-parser.ts
@@ -5102,16 +5133,111 @@ function myersDiff(oldLines, newLines) {
   return edits;
 }
 
+// src/bun/branch-history.ts
+import { stat as stat2 } from "fs/promises";
+import { join as join7 } from "path";
+var DEFAULT_LIMIT = 80;
+var MAX_LIMIT = 300;
+var FIELD_SEP = "\x1F";
+async function getBranchHistory(cwd, limit = DEFAULT_LIMIT) {
+  if (!await hasGit2(cwd))
+    return [];
+  const safeLimit = normalizeLimit(limit);
+  const pretty = `%H%x1f%h%x1f%an%x1f%ar%x1f%D%x1f%s`;
+  try {
+    const proc = Bun.spawn([
+      "git",
+      "log",
+      "--decorate=short",
+      `--max-count=${safeLimit}`,
+      `--pretty=format:${pretty}`
+    ], {
+      cwd,
+      stdout: "pipe",
+      stderr: "ignore"
+    });
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0 || !output.trim())
+      return [];
+    const commits = [];
+    for (const line of output.split(`
+`)) {
+      if (!line.trim())
+        continue;
+      const parsed = parseLogLine(line);
+      if (parsed)
+        commits.push(parsed);
+    }
+    return commits;
+  } catch {
+    return [];
+  }
+}
+function parseLogLine(line) {
+  const [hash2, shortHash, author, relativeTime, decorate, ...subjectParts] = line.split(FIELD_SEP);
+  if (!hash2 || !shortHash || !author || !relativeTime)
+    return null;
+  const subject = subjectParts.join(FIELD_SEP).trim() || "(no subject)";
+  const refs = parseRefs(decorate ?? "");
+  return {
+    hash: hash2,
+    shortHash,
+    subject,
+    author,
+    relativeTime,
+    refs,
+    isHead: refs.some((ref) => ref.kind === "head")
+  };
+}
+function parseRefs(rawRefs) {
+  if (!rawRefs.trim())
+    return [];
+  const refs = [];
+  for (const token of rawRefs.split(",")) {
+    const refLabel = token.trim();
+    if (!refLabel)
+      continue;
+    if (refLabel.startsWith("HEAD -> ")) {
+      const name = refLabel.slice("HEAD -> ".length).trim() || "HEAD";
+      refs.push({ name, label: refLabel, kind: "head" });
+      continue;
+    }
+    if (refLabel.startsWith("tag: ")) {
+      const name = refLabel.slice("tag: ".length).trim();
+      refs.push({ name: name || refLabel, label: refLabel, kind: "tag" });
+      continue;
+    }
+    const slashIndex = refLabel.indexOf("/");
+    const kind = slashIndex > 0 ? "remote" : "branch";
+    refs.push({ name: refLabel, label: refLabel, kind });
+  }
+  return refs;
+}
+function normalizeLimit(limit) {
+  if (!Number.isFinite(limit))
+    return DEFAULT_LIMIT;
+  return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit)));
+}
+async function hasGit2(cwd) {
+  try {
+    const s = await stat2(join7(cwd, ".git"));
+    return s.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // src/bun/session-history.ts
 import { readdir as readdir2, readFile as readFile3 } from "fs/promises";
-import { join as join7, basename } from "path";
+import { join as join8, basename } from "path";
 import { homedir as homedir3 } from "os";
-var CLAUDE_PROJECTS_DIR = join7(homedir3(), ".claude", "projects");
+var CLAUDE_PROJECTS_DIR = join8(homedir3(), ".claude", "projects");
 function encodeProjectPath(cwd) {
   return cwd.replace(/\//g, "-");
 }
 async function listSessionsForWorkspace(cwd) {
-  const projectDir = join7(CLAUDE_PROJECTS_DIR, encodeProjectPath(cwd));
+  const projectDir = join8(CLAUDE_PROJECTS_DIR, encodeProjectPath(cwd));
   let entries;
   try {
     entries = await readdir2(projectDir);
@@ -5122,7 +5248,7 @@ async function listSessionsForWorkspace(cwd) {
   const sessions = [];
   const promises = jsonlFiles.slice(0, 200).map(async (file) => {
     const sessionId = basename(file, ".jsonl");
-    const filePath = join7(projectDir, file);
+    const filePath = join8(projectDir, file);
     try {
       return await parseTranscriptMeta(sessionId, filePath);
     } catch {
@@ -5202,8 +5328,7 @@ async function parseTranscriptMeta(sessionId, filePath) {
   }
   if (!prompt)
     return null;
-  const firstLine = prompt.split(`
-`)[0].trim();
+  const firstLine = extractTopicLine(prompt);
   const topic = firstLine.length > 80 ? firstLine.slice(0, 77) + "..." : firstLine;
   return {
     sessionId,
@@ -5216,12 +5341,48 @@ async function parseTranscriptMeta(sessionId, filePath) {
     transcriptPath: filePath
   };
 }
+function extractTopicLine(prompt) {
+  const commandName = extractCommandName2(prompt);
+  if (commandName)
+    return commandName;
+  const cleaned = prompt.replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, `
+`).replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, `
+`).replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, `
+`);
+  for (const rawLine of cleaned.split(`
+`)) {
+    const line = collapseWhitespace(rawLine);
+    if (line)
+      return line;
+  }
+  return "Claude session";
+}
+function extractCommandName2(prompt) {
+  const commandNameMatch = prompt.match(/<command-name>\s*([^<\n]+?)\s*<\/command-name>/i);
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName2(commandNameMatch[1]);
+  }
+  const commandMessageMatch = prompt.match(/<command-message>\s*([\s\S]*?)\s*<\/command-message>/i);
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName2(commandMessageMatch[1]);
+  }
+  return null;
+}
+function normalizeCommandName2(value) {
+  const text = collapseWhitespace(value);
+  if (!text)
+    return null;
+  return text.startsWith("/") ? text : `/${text}`;
+}
+function collapseWhitespace(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
 
 // src/bun/workspace-store.ts
 import { readFile as readFile4, writeFile, mkdir } from "fs/promises";
 import { homedir as homedir4 } from "os";
-import { join as join8, dirname as dirname2 } from "path";
-var DEFAULT_FILE = join8(homedir4(), ".claude-sessions", "workspaces.json");
+import { join as join9, dirname as dirname2 } from "path";
+var DEFAULT_FILE = join9(homedir4(), ".claude-sessions", "workspaces.json");
 var MAX_WORKSPACES = 20;
 
 class WorkspaceStore {
@@ -5407,11 +5568,11 @@ function safeStringify2(value) {
 
 // src/bun/hook-installer.ts
 import { readFile as readFile5, writeFile as writeFile2, mkdir as mkdir2 } from "fs/promises";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 import { homedir as homedir5 } from "os";
-var HOOKS_DIR = join9(homedir5(), ".claude-sessions", "hooks");
+var HOOKS_DIR = join10(homedir5(), ".claude-sessions", "hooks");
 var HOOK_SCRIPT_NAME = "pre-tool-use.sh";
-var CLAUDE_SETTINGS_PATH = join9(homedir5(), ".claude", "settings.json");
+var CLAUDE_SETTINGS_PATH = join10(homedir5(), ".claude", "settings.json");
 var HOOK_SCRIPT = `#!/bin/bash
 # PreToolUse hook for Claude Sessions app.
 # Blocks until the user approves/denies the tool in the app UI.
@@ -5475,7 +5636,7 @@ EOF
 fi
 `;
 async function installApprovalHook() {
-  const destPath = join9(HOOKS_DIR, HOOK_SCRIPT_NAME);
+  const destPath = join10(HOOKS_DIR, HOOK_SCRIPT_NAME);
   await mkdir2(HOOKS_DIR, { recursive: true });
   await writeFile2(destPath, HOOK_SCRIPT, { mode: 493 });
   await addHookToSettings(destPath);
@@ -5515,9 +5676,9 @@ async function addHookToSettings(hookPath) {
 
 // src/bun/session-names-store.ts
 import { readFile as readFile6, writeFile as writeFile3, mkdir as mkdir3 } from "fs/promises";
-import { join as join10 } from "path";
+import { join as join11 } from "path";
 import { homedir as homedir6 } from "os";
-var STORE_PATH = join10(homedir6(), ".claude-sessions", "session-names.json");
+var STORE_PATH = join11(homedir6(), ".claude-sessions", "session-names.json");
 
 class SessionNamesStore {
   #names = {};
@@ -5544,14 +5705,14 @@ class SessionNamesStore {
     await this.#save();
   }
   async#save() {
-    await mkdir3(join10(homedir6(), ".claude-sessions"), { recursive: true });
+    await mkdir3(join11(homedir6(), ".claude-sessions"), { recursive: true });
     await writeFile3(STORE_PATH, JSON.stringify(this.#names, null, 2));
   }
 }
 
 // src/bun/workspace-files.ts
 import { readdir as readdir3 } from "fs/promises";
-import { join as join11, relative as relative2 } from "path";
+import { join as join12, relative as relative2 } from "path";
 var CACHE_TTL_MS = 30000;
 var MAX_FILES = 12000;
 var IGNORE_DIRS2 = new Set([
@@ -5599,7 +5760,7 @@ async function walk(root, dir, out) {
   for (const entry of entries) {
     if (out.length >= MAX_FILES)
       break;
-    const fullPath = join11(dir, entry.name);
+    const fullPath = join12(dir, entry.name);
     if (entry.isDirectory()) {
       if (IGNORE_DIRS2.has(entry.name))
         continue;
@@ -5613,6 +5774,106 @@ async function walk(root, dir, out) {
       continue;
     out.push(relPath);
   }
+}
+
+// src/bun/slash-commands.ts
+import { readdir as readdir4 } from "fs/promises";
+import { homedir as homedir7 } from "os";
+import { join as join13, relative as relative3 } from "path";
+var CACHE_TTL_MS2 = 15000;
+var MAX_COMMAND_FILES = 2000;
+var cache2 = new Map;
+async function getSlashCommands(cwd) {
+  const normalizedCwd = cwd.trim();
+  if (!normalizedCwd)
+    return [];
+  const cached = cache2.get(normalizedCwd);
+  const age = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
+  if (cached && age < CACHE_TTL_MS2) {
+    return cached.commands;
+  }
+  const projectDir = join13(normalizedCwd, ".claude", "commands");
+  const userDir = join13(homedir7(), ".claude", "commands");
+  const [projectCommands, userCommands] = await Promise.all([
+    scanCommands(projectDir, "project"),
+    scanCommands(userDir, "user")
+  ]);
+  const deduped = dedupeCommands(projectCommands, userCommands);
+  cache2.set(normalizedCwd, {
+    commands: deduped,
+    loadedAt: Date.now()
+  });
+  return deduped;
+}
+function invalidateSlashCommandsCache(cwd) {
+  if (!cwd) {
+    cache2.clear();
+    return;
+  }
+  cache2.delete(cwd);
+}
+async function scanCommands(root, source) {
+  const out = [];
+  await walkCommands(root, root, source, out);
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+async function walkCommands(root, dir, source, out) {
+  if (out.length >= MAX_COMMAND_FILES)
+    return;
+  let entries;
+  try {
+    entries = await readdir4(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (out.length >= MAX_COMMAND_FILES)
+      return;
+    if (entry.name.startsWith("."))
+      continue;
+    const fullPath = join13(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkCommands(root, fullPath, source, out);
+      continue;
+    }
+    if (!entry.isFile())
+      continue;
+    if (!entry.name.toLowerCase().endsWith(".md"))
+      continue;
+    const relativePath = relative3(root, fullPath);
+    const commandName = toCommandName(relativePath);
+    if (!commandName)
+      continue;
+    out.push({
+      name: commandName,
+      source
+    });
+  }
+}
+function toCommandName(relativePath) {
+  const normalized = relativePath.replace(/\\/g, "/");
+  if (!normalized || normalized.startsWith("../"))
+    return null;
+  if (!normalized.toLowerCase().endsWith(".md"))
+    return null;
+  const withoutExtension = normalized.slice(0, -3);
+  const segments = withoutExtension.split("/").map((segment) => segment.trim()).filter(Boolean);
+  if (segments.length === 0)
+    return null;
+  return segments.join("/");
+}
+function dedupeCommands(projectCommands, userCommands) {
+  const byName = new Map;
+  for (const command of projectCommands) {
+    byName.set(command.name, command);
+  }
+  for (const command of userCommands) {
+    if (!byName.has(command.name)) {
+      byName.set(command.name, command);
+    }
+  }
+  return [...byName.values()];
 }
 
 // src/bun/index.ts
@@ -5791,6 +6052,12 @@ var rpc = BrowserView.defineRPC({
       getDiff: async ({ cwd, scope }) => {
         return getDiff(cwd, scope ?? "all");
       },
+      getBranchHistory: async ({
+        cwd,
+        limit
+      }) => {
+        return getBranchHistory(cwd, limit);
+      },
       getWorkspaces: async () => {
         await workspaces.load();
         return workspaces.getAll();
@@ -5803,13 +6070,20 @@ var rpc = BrowserView.defineRPC({
           return [];
         return getWorkspaceFiles(cwd);
       },
+      getSlashCommands: async ({ cwd }) => {
+        if (!cwd)
+          return [];
+        return getSlashCommands(cwd);
+      },
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
+        invalidateSlashCommandsCache(path);
       },
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
         invalidateWorkspaceFilesCache(path);
+        invalidateSlashCommandsCache(path);
       },
       openInFinder: async ({ path }) => {
         if (!path)
@@ -5876,7 +6150,7 @@ function resolveSessionCwd(sessionId) {
 }
 function guessTranscriptPath(cwd, sessionId) {
   const encoded = cwd.replace(/\//g, "-");
-  return join12(homedir7(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
+  return join14(homedir8(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
 }
 exports_ApplicationMenu.setApplicationMenu([
   {

@@ -40,6 +40,7 @@ function parseEntry(entry: any): TranscriptMessage | null {
 
   const role = entry.type as string;
   if (!["user", "assistant", "system"].includes(role)) return null;
+  if (entry.isMeta === true) return null;
 
   // Check if this message contains a tool_result block (Claude sends these as "user" role)
   let hasToolResult = false;
@@ -53,8 +54,13 @@ function parseEntry(entry: any): TranscriptMessage | null {
     return null;
   }
 
-  const content = extractContent(entry.message?.content);
+  let content = extractContent(entry.message?.content);
   if (content === null) return null;
+
+  if (role === "user") {
+    content = normalizeUserMessageContent(content);
+    if (content === null) return null;
+  }
 
   const msg: TranscriptMessage = {
     role: role as TranscriptMessage["role"],
@@ -96,4 +102,36 @@ function extractContent(content: unknown): string | null {
   }
 
   return null;
+}
+
+function normalizeUserMessageContent(content: string): string | null {
+  const commandName = extractCommandName(content);
+  if (commandName) return commandName;
+
+  const normalized = content.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractCommandName(content: string): string | null {
+  const commandNameMatch = content.match(
+    /<command-name>\s*([^<\n]+?)\s*<\/command-name>/i
+  );
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+
+  const commandMessageMatch = content.match(
+    /<command-message>\s*([\s\S]*?)\s*<\/command-message>/i
+  );
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+
+  return null;
+}
+
+function normalizeCommandName(value: string): string | null {
+  const normalized = String(value).replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }

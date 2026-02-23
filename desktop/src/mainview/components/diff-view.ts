@@ -23,6 +23,10 @@ import "prismjs/components/prism-css";
 import "prismjs/components/prism-sql";
 import "prismjs/components/prism-php";
 
+export type DiffViewCallbacks = {
+  onBranchPanelToggle?: (visible: boolean) => void;
+};
+
 /**
  * Diff content panel — renders all changed files.
  * Each file can be collapsed/expanded independently.
@@ -33,20 +37,38 @@ export class DiffView {
   #bodyEl: HTMLElement;
   #contentEl: HTMLElement;
   #filesHostEl: HTMLElement;
+  #branchHostEl: HTMLElement;
   #filesToggleBtn: HTMLButtonElement;
+  #branchToggleBtn: HTMLButtonElement;
+  #callbacks: DiffViewCallbacks;
   #files: DiffFile[] = [];
   #activeFile: string | null = null;
   #fileExpanded = new Map<string, boolean>();
   #viewMode: "unified" | "split" = "unified";
   #filesPanelVisible = false;
+  #branchPanelVisible = false;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, callbacks: DiffViewCallbacks = {}) {
+    this.#callbacks = callbacks;
+
     this.#filesToggleBtn = h("button", {
       class: "dv-icon-btn",
       title: "Toggle files changed",
       onclick: () => this.toggleFilesPanel(),
       innerHTML: `<svg class="dv-icon-folder" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M1.5 4.25C1.5 3.55964 2.05964 3 2.75 3h3.02c.31 0 .61.115.84.322l.89.807c.23.208.53.321.84.321h4.91c.69 0 1.25.56 1.25 1.25V11.5c0 .69-.56 1.25-1.25 1.25H2.75c-.69 0-1.25-.56-1.25-1.25V4.25Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>`,
+    }) as HTMLButtonElement;
+
+    this.#branchToggleBtn = h("button", {
+      class: "dv-icon-btn",
+      title: "Toggle branch history",
+      onclick: () => this.toggleBranchPanel(),
+      innerHTML: `<svg class="dv-icon-branch" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="4" cy="3.25" r="1.8" stroke="currentColor" stroke-width="1.1"/>
+        <circle cx="12" cy="12.75" r="1.8" stroke="currentColor" stroke-width="1.1"/>
+        <circle cx="4" cy="12.75" r="1.8" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M4 5.2v5.75M4 7.8c0-2.7 1.85-4.55 4.5-4.55H10" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
       </svg>`,
     }) as HTMLButtonElement;
 
@@ -63,14 +85,17 @@ export class DiffView {
         dataset: { view: "split" },
         onclick: () => this.#setViewMode("split"),
       }, ["Split"]),
+      this.#branchToggleBtn,
       this.#filesToggleBtn,
     ]);
 
     this.#contentEl = h("div", { class: "dv-content" });
     this.#filesHostEl = h("aside", { class: "dv-files-host", hidden: true });
+    this.#branchHostEl = h("aside", { class: "dv-branch-host", hidden: true });
     this.#bodyEl = h("div", { class: "dv-body" }, [
       this.#contentEl,
       this.#filesHostEl,
+      this.#branchHostEl,
     ]);
 
     this.#el = h("div", { class: "diff-view" }, [
@@ -79,6 +104,7 @@ export class DiffView {
     ]);
 
     this.setFilesPanelVisible(false);
+    this.setBranchPanelVisible(false, false);
     container.appendChild(this.#el);
   }
 
@@ -285,6 +311,10 @@ export class DiffView {
   }
 
   setFilesPanelVisible(visible: boolean): void {
+    if (visible && this.#branchPanelVisible) {
+      this.setBranchPanelVisible(false);
+    }
+
     this.#filesPanelVisible = visible;
     this.#el.classList.toggle("files-visible", visible);
     this.#filesHostEl.hidden = !visible;
@@ -295,8 +325,35 @@ export class DiffView {
     this.setFilesPanelVisible(!this.#filesPanelVisible);
   }
 
+  setBranchPanelVisible(visible: boolean, notify = true): void {
+    if (visible && this.#filesPanelVisible) {
+      this.setFilesPanelVisible(false);
+    }
+
+    this.#branchPanelVisible = visible;
+    this.#el.classList.toggle("branch-visible", visible);
+    this.#branchHostEl.hidden = !visible;
+    this.#branchToggleBtn.classList.toggle("active", visible);
+
+    if (notify) {
+      this.#callbacks.onBranchPanelToggle?.(visible);
+    }
+  }
+
+  toggleBranchPanel(): void {
+    this.setBranchPanelVisible(!this.#branchPanelVisible);
+  }
+
   get filesPanelHost(): HTMLElement {
     return this.#filesHostEl;
+  }
+
+  get branchPanelHost(): HTMLElement {
+    return this.#branchHostEl;
+  }
+
+  get isBranchPanelVisible(): boolean {
+    return this.#branchPanelVisible;
   }
 
   get element(): HTMLElement {

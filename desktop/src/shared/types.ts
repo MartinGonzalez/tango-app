@@ -131,6 +131,26 @@ export type DiffLine = {
 
 export type DiffScope = "last_turn" | "all";
 
+// ── Branch history types ────────────────────────────────────────
+
+export type BranchRefKind = "head" | "branch" | "remote" | "tag" | "other";
+
+export type BranchRef = {
+  name: string;
+  label: string;
+  kind: BranchRefKind;
+};
+
+export type BranchCommit = {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  relativeTime: string;
+  refs: BranchRef[];
+  isHead: boolean;
+};
+
 // ── Stream event types (claude -p --output-format stream-json --verbose) ──
 // These match the real output of `claude -p --output-format stream-json --verbose`
 
@@ -209,6 +229,13 @@ export type ToolApprovalRequest = {
   sessionId: string;
 };
 
+export type SlashCommandSource = "project" | "user";
+
+export type SlashCommandEntry = {
+  name: string;
+  source: SlashCommandSource;
+};
+
 // ── RPC contract ─────────────────────────────────────────────────
 
 export type AppRPC = {
@@ -269,6 +296,10 @@ export type AppRPC = {
         params: { cwd: string; scope?: DiffScope };
         response: DiffFile[];
       };
+      getBranchHistory: {
+        params: { cwd: string; limit?: number };
+        response: BranchCommit[];
+      };
       getWorkspaces: {
         params: {};
         response: string[];
@@ -280,6 +311,10 @@ export type AppRPC = {
       getWorkspaceFiles: {
         params: { cwd: string };
         response: string[];
+      };
+      getSlashCommands: {
+        params: { cwd: string };
+        response: SlashCommandEntry[];
       };
       addWorkspace: {
         params: { path: string };

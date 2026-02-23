@@ -162,8 +162,7 @@ export class Sidebar {
 
   #renderSession(session: SessionInfo, workspacePath: string): HTMLElement {
     const dot = ACTIVITY_DOTS[session.activity] ?? ACTIVITY_DOTS.idle;
-    const label =
-      session.topic ?? session.prompt?.slice(0, 40) ?? "Claude session";
+    const label = formatSessionLabel(session.topic, session.prompt);
     const isActive = session.sessionId === this.#activeSessionId;
     const isHistorical = session.activity === "finished" && !session.isAppSpawned;
 
@@ -301,6 +300,70 @@ export class Sidebar {
   get element(): HTMLElement {
     return this.#el;
   }
+}
+
+function formatSessionLabel(topic: string | null, prompt: string | null): string {
+  const preferred = collapseWhitespace(topic ?? "");
+  if (preferred) {
+    return simplifyLabel(preferred);
+  }
+
+  const fromPrompt = extractPromptLabel(prompt ?? "");
+  if (fromPrompt) {
+    return simplifyLabel(fromPrompt);
+  }
+
+  return "Claude session";
+}
+
+function simplifyLabel(text: string): string {
+  const cleaned = collapseWhitespace(text);
+  if (!cleaned) return "Claude session";
+  return cleaned.length > 80 ? `${cleaned.slice(0, 77)}...` : cleaned;
+}
+
+function extractPromptLabel(prompt: string): string {
+  const command = extractCommandName(prompt);
+  if (command) return command;
+
+  const withoutDecorators = prompt
+    .replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, "\n")
+    .replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, "\n")
+    .replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, "\n");
+
+  for (const rawLine of withoutDecorators.split("\n")) {
+    const line = collapseWhitespace(rawLine);
+    if (line) return line;
+  }
+  return "";
+}
+
+function extractCommandName(prompt: string): string | null {
+  const commandNameMatch = prompt.match(
+    /<command-name>\s*([^<\n]+?)\s*<\/command-name>/i
+  );
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+
+  const commandMessageMatch = prompt.match(
+    /<command-message>\s*([\s\S]*?)\s*<\/command-message>/i
+  );
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+
+  return null;
+}
+
+function normalizeCommandName(value: string): string | null {
+  const normalized = collapseWhitespace(value);
+  if (!normalized) return null;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function collapseWhitespace(value: string): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function timeAgo(dateStr: string): string {

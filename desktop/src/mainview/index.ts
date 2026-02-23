@@ -6,6 +6,7 @@ import { Sidebar, type WorkspaceData } from "./components/sidebar.ts";
 import { ChatView } from "./components/chat-view.ts";
 import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel } from "./components/files-panel.ts";
+import { BranchPanel } from "./components/branch-panel.ts";
 import type {
   SessionInfo,
   Snapshot,
@@ -13,9 +14,11 @@ import type {
   TranscriptMessage,
   DiffFile,
   DiffScope,
+  BranchCommit,
   Activity,
   HistorySession,
   ToolApprovalRequest,
+  SlashCommandEntry,
 } from "../shared/types.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
@@ -105,6 +108,9 @@ const rpc = Electroview.defineRPC<any>({
         // Refresh diff when a session ends (changes may have been made)
         if (state.activeWorkspace) {
           loadDiff(state.activeWorkspace);
+          if (diffView.isBranchPanelVisible) {
+            void loadBranchHistory(state.activeWorkspace, true);
+          }
         }
       },
     },
@@ -123,6 +129,8 @@ type AppState = {
   activeWorkspace: string | null;
   activeSessionId: string | null;
   diffScope: DiffScope;
+  branchHistory: Record<string, BranchCommit[]>; // workspace path → commit history
+  loadedBranchHistory: Set<string>; // workspace paths that have fetched branch history
   historySessions: Record<string, HistorySession[]>; // workspace path → history
   liveSessions: Set<string>; // session IDs with running processes
   customSessionNames: Record<string, string>; // sessionId → custom name
@@ -140,6 +148,8 @@ const appState = new Store<AppState>({
   activeWorkspace: null,
   activeSessionId: null,
   diffScope: "last_turn",
+  branchHistory: {},
+  loadedBranchHistory: new Set(),
   historySessions: {},
   liveSessions: new Set(),
   customSessionNames: {},
@@ -152,13 +162,22 @@ let sidebar: Sidebar;
 let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
+let branchPanel: BranchPanel;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FILE_CACHE_MS = 30_000;
 const workspaceFileCache = new Map<string, {
   files: string[];
   loadedAt: number;
 }>();
+const SLASH_COMMAND_CACHE_MS = 15_000;
+const slashCommandCache = new Map<string, {
+  commands: SlashCommandEntry[];
+  loadedAt: number;
+}>();
 const sessionUsageEstimates = new Map<string, SessionUsageEstimate>();
+const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
+let prevBranchWorkspace: string | null = null;
+let prevBranchCommits: BranchCommit[] | null = null;
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
@@ -184,6 +203,7 @@ function init(): void {
       }));
       loadSessionTranscript(sessionId);
       loadDiff(workspacePath);
+      ensureBranchHistory(workspacePath);
     },
     onNewSession: (workspacePath) => {
       appState.update((s) => ({
@@ -194,6 +214,7 @@ function init(): void {
       chatView.clear();
       chatView.focus();
       loadDiff(workspacePath);
+      ensureBranchHistory(workspacePath);
     },
     onAddWorkspace: () => openWorkspace(),
     onRemoveWorkspace: (path) => removeWorkspace(path),
@@ -338,10 +359,21 @@ function init(): void {
       if (!cwd) return [];
       return searchWorkspaceFiles(cwd, query, 30);
     },
+    onSearchCommands: async (query) => {
+      const cwd = appState.get().activeWorkspace;
+      if (!cwd) return [];
+      return searchSlashCommands(cwd, query, 30);
+    },
   });
 
   // Diff panel
-  diffView = new DiffView(diffPanel);
+  diffView = new DiffView(diffPanel, {
+    onBranchPanelToggle: (visible) => {
+      const activeWorkspace = appState.get().activeWorkspace;
+      if (!visible || !activeWorkspace) return;
+      void loadBranchHistory(activeWorkspace, true);
+    },
+  });
 
   // Files panel (embedded inside diff panel)
   filesPanel = new FilesPanel(diffView.filesPanelHost, {
@@ -356,6 +388,9 @@ function init(): void {
       }
     },
   });
+
+  // Branch panel (embedded inside diff panel)
+  branchPanel = new BranchPanel(diffView.branchPanelHost);
 
   // Toggle workspaces button
   qs("#btn-toggle-workspaces")?.addEventListener("click", () => {
@@ -410,6 +445,23 @@ function init(): void {
       contextInfo?.activity ?? null,
       contextInfo?.promptTokens ?? null
     );
+
+    const activeWorkspace = state.activeWorkspace;
+    const branchCommits = activeWorkspace
+      ? (state.branchHistory[activeWorkspace] ?? EMPTY_BRANCH_COMMITS)
+      : EMPTY_BRANCH_COMMITS;
+    if (
+      activeWorkspace !== prevBranchWorkspace
+      || branchCommits !== prevBranchCommits
+    ) {
+      if (activeWorkspace) {
+        branchPanel.render(branchCommits);
+      } else {
+        branchPanel.clear();
+      }
+      prevBranchWorkspace = activeWorkspace;
+      prevBranchCommits = branchCommits;
+    }
   });
 
   // Load initial data
@@ -452,6 +504,51 @@ async function loadSessionHistory(cwd: string): Promise<void> {
   } catch (err) {
     console.error("Failed to load session history:", err);
   }
+}
+
+async function loadBranchHistory(cwd: string, force = false): Promise<void> {
+  if (!cwd) return;
+
+  const state = appState.get();
+  const alreadyLoaded = state.loadedBranchHistory.has(cwd);
+  if (!force && alreadyLoaded) return;
+
+  try {
+    const commits: BranchCommit[] = await (rpc as any).request.getBranchHistory({
+      cwd,
+      limit: 120,
+    });
+    appState.update((s) => {
+      const loaded = new Set(s.loadedBranchHistory);
+      loaded.add(cwd);
+      return {
+        ...s,
+        branchHistory: {
+          ...s.branchHistory,
+          [cwd]: commits,
+        },
+        loadedBranchHistory: loaded,
+      };
+    });
+  } catch (err) {
+    console.error("Failed to load branch history:", err);
+    appState.update((s) => {
+      const loaded = new Set(s.loadedBranchHistory);
+      loaded.add(cwd);
+      return {
+        ...s,
+        branchHistory: {
+          ...s.branchHistory,
+          [cwd]: [],
+        },
+        loadedBranchHistory: loaded,
+      };
+    });
+  }
+}
+
+function ensureBranchHistory(cwd: string): void {
+  void loadBranchHistory(cwd, false);
 }
 
 async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
@@ -528,6 +625,7 @@ async function loadWorkspaces(): Promise<void> {
       // Load diff and history for first workspace
       loadDiff(workspaces[0], appState.get().diffScope);
       loadSessionHistory(workspaces[0]);
+      ensureBranchHistory(workspaces[0]);
     }
   } catch {
     // First run — no workspaces yet
@@ -567,6 +665,7 @@ async function openWorkspace(): Promise<void> {
     qs("#btn-toggle-workspaces")?.classList.add("active");
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
+    ensureBranchHistory(dir);
   } catch (err) {
     console.error("Failed to pick directory:", err);
   }
@@ -576,19 +675,31 @@ async function removeWorkspace(path: string): Promise<void> {
   try {
     await (rpc as any).request.removeWorkspace({ path });
     workspaceFileCache.delete(path);
+    slashCommandCache.delete(path);
     appState.update((s) => {
       const workspaces = s.workspaces.filter((w) => w !== path);
       const expanded = new Set(s.expandedWorkspaces);
+      const loadedBranchHistory = new Set(s.loadedBranchHistory);
       expanded.delete(path);
+      loadedBranchHistory.delete(path);
+      const branchHistory = { ...s.branchHistory };
+      delete branchHistory[path];
       return {
         ...s,
         workspaces,
         expandedWorkspaces: expanded,
+        branchHistory,
+        loadedBranchHistory,
         activeWorkspace: s.activeWorkspace === path
           ? (workspaces[0] ?? null)
           : s.activeWorkspace,
       };
     });
+
+    const nextWorkspace = appState.get().activeWorkspace;
+    if (nextWorkspace) {
+      ensureBranchHistory(nextWorkspace);
+    }
   } catch (err) {
     console.error("Failed to remove workspace:", err);
   }
@@ -624,6 +735,45 @@ async function searchWorkspaceFiles(
     .map((entry) => entry.path);
 }
 
+async function searchSlashCommands(
+  cwd: string,
+  query: string,
+  limit: number
+): Promise<SlashCommandEntry[]> {
+  const cached = slashCommandCache.get(cwd);
+  let commands = cached?.commands;
+  const cacheAgeMs = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
+  if (!commands || cacheAgeMs > SLASH_COMMAND_CACHE_MS) {
+    const loaded = await (rpc as any).request.getSlashCommands({ cwd });
+    commands = Array.isArray(loaded) ? loaded : [];
+    slashCommandCache.set(cwd, {
+      commands,
+      loadedAt: Date.now(),
+    });
+  }
+
+  const normalizedQuery = query.trim().replace(/^\/+/, "").toLowerCase();
+  if (!normalizedQuery) {
+    return commands
+      .slice()
+      .sort(compareSlashCommandEntries)
+      .slice(0, limit);
+  }
+
+  return commands
+    .map((command) => ({
+      command,
+      score: scoreSlashCommand(command, normalizedQuery),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      return compareSlashCommandEntries(a.command, b.command);
+    })
+    .slice(0, limit)
+    .map((entry) => entry.command);
+}
+
 function scoreWorkspaceFile(path: string, query: string): number {
   const normalizedPath = path.toLowerCase();
   const fileName = path.split("/").pop()?.toLowerCase() ?? normalizedPath;
@@ -639,6 +789,32 @@ function scoreWorkspaceFile(path: string, query: string): number {
   if (pathIdx >= 0) return 200 - Math.min(pathIdx, 120);
 
   return 0;
+}
+
+function scoreSlashCommand(command: SlashCommandEntry, query: string): number {
+  const name = command.name.toLowerCase();
+  const leaf = command.name.split("/").pop()?.toLowerCase() ?? name;
+  const sourceBoost = command.source === "project" ? 35 : 0;
+
+  if (name === query) return 500 + sourceBoost;
+  if (leaf === query) return 470 + sourceBoost;
+  if (name.startsWith(query)) return 420 + sourceBoost - Math.min(name.length, 180);
+  if (leaf.startsWith(query)) return 390 + sourceBoost - Math.min(leaf.length, 180);
+
+  const leafIndex = leaf.indexOf(query);
+  if (leafIndex >= 0) return 290 + sourceBoost - Math.min(leafIndex, 120);
+
+  const nameIndex = name.indexOf(query);
+  if (nameIndex >= 0) return 230 + sourceBoost - Math.min(nameIndex, 120);
+
+  return 0;
+}
+
+function compareSlashCommandEntries(a: SlashCommandEntry, b: SlashCommandEntry): number {
+  if (a.source !== b.source) {
+    return a.source === "project" ? -1 : 1;
+  }
+  return a.name.localeCompare(b.name);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -739,19 +915,65 @@ function resolveActiveSessionTitle(state: AppState): string {
 
   if (state.snapshot) {
     const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);
-    if (live?.topic?.trim()) return live.topic.trim();
-    if (live?.prompt?.trim()) return live.prompt.trim();
+    const liveTitle = resolvePromptTitle(live?.topic ?? null, live?.prompt ?? null);
+    if (liveTitle) return liveTitle;
   }
 
   for (const sessions of Object.values(state.historySessions)) {
     const found = sessions.find((s) => s.sessionId === activeSessionId);
     if (!found) continue;
-    if (found.topic?.trim()) return found.topic.trim();
-    if (found.prompt?.trim()) return found.prompt.trim();
+    const historyTitle = resolvePromptTitle(found.topic, found.prompt);
+    if (historyTitle) return historyTitle;
     break;
   }
 
   return "Session";
+}
+
+function resolvePromptTitle(topic: string | null, prompt: string | null): string | null {
+  const cleanTopic = collapseWhitespace(topic ?? "");
+  if (cleanTopic) return cleanTopic;
+
+  const command = extractCommandName(prompt ?? "");
+  if (command) return command;
+
+  const cleanPrompt = collapseWhitespace(
+    String(prompt ?? "")
+      .replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, "\n")
+      .replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, "\n")
+      .replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, "\n")
+      .split("\n")
+      .find((line) => collapseWhitespace(line).length > 0) ?? ""
+  );
+  return cleanPrompt || null;
+}
+
+function extractCommandName(prompt: string): string | null {
+  const commandNameMatch = prompt.match(
+    /<command-name>\s*([^<\n]+?)\s*<\/command-name>/i
+  );
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+
+  const commandMessageMatch = prompt.match(
+    /<command-message>\s*([\s\S]*?)\s*<\/command-message>/i
+  );
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+
+  return null;
+}
+
+function normalizeCommandName(value: string): string | null {
+  const normalized = collapseWhitespace(value);
+  if (!normalized) return null;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function collapseWhitespace(value: string): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function resolveActiveContextUsage(

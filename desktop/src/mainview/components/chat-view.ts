@@ -5,6 +5,7 @@ import type {
   ContentBlock,
   ToolApprovalRequest,
   Activity,
+  SlashCommandEntry,
 } from "../../shared/types.ts";
 
 export type ChatCallbacks = {
@@ -16,6 +17,17 @@ export type ChatCallbacks = {
   onStopSession?: () => void;
   onOpenInFinder?: (path: string) => void;
   onSearchFiles?: (query: string) => Promise<string[]>;
+  onSearchCommands?: (query: string) => Promise<SlashCommandEntry[]>;
+};
+
+type MentionMode = "file" | "command";
+
+type MentionSuggestion = {
+  label: string;
+  detail: string;
+  icon: string;
+  kind: MentionMode;
+  value: string;
 };
 
 export class ChatView {
@@ -32,6 +44,7 @@ export class ChatView {
   #inputWrapEl: HTMLElement;
   #attachmentStripEl: HTMLElement;
   #attachmentListEl: HTMLElement;
+  #addFileBtn: HTMLButtonElement;
   #sendBtn: HTMLElement;
   #stopBtn: HTMLElement;
   #mentionMenuEl: HTMLElement;
@@ -52,9 +65,10 @@ export class ChatView {
   #isWaiting: boolean = false;
   #workspacePath: string | null = null;
   #mentionVisible: boolean = false;
+  #mentionMode: MentionMode | null = null;
   #mentionSelection: number = 0;
   #mentionRequestId: number = 0;
-  #mentionSuggestions: string[] = [];
+  #mentionSuggestions: MentionSuggestion[] = [];
   #selectedFiles: string[] = [];
   #hasUserScrolledUp: boolean = false;
   #isProgrammaticScroll: boolean = false;
@@ -150,7 +164,7 @@ export class ChatView {
 
     this.#inputEl = document.createElement("textarea");
     this.#inputEl.className = "chat-input";
-    this.#inputEl.placeholder = "Ask Claude something...";
+    this.#inputEl.placeholder = "Type / for commands";
     this.#inputEl.rows = 1;
     this.#inputEl.addEventListener("keydown", (e) => this.#onInputKeyDown(e));
     this.#inputEl.addEventListener("input", () => {
@@ -170,23 +184,44 @@ export class ChatView {
       }
     });
 
+    this.#addFileBtn = h("button", {
+      type: "button",
+      class: "chat-add-btn",
+      title: "Attach file",
+      "aria-label": "Attach file",
+      onclick: () => {
+        this.#insertAttachToken();
+      },
+    }, ["+"]) as HTMLButtonElement;
+
     this.#sendBtn = h(
       "button",
-      { class: "chat-send-btn", onclick: () => this.#send() },
-      ["Send"]
+      {
+        class: "chat-send-btn",
+        title: "Send",
+        "aria-label": "Send",
+        onclick: () => this.#send(),
+      },
+      ["\u2191"]
     );
 
     this.#stopBtn = h(
       "button",
-      { class: "chat-stop-btn", onclick: () => this.#stop(), hidden: true },
-      ["Stop"]
+      {
+        class: "chat-stop-btn",
+        title: "Stop",
+        "aria-label": "Stop",
+        onclick: () => this.#stop(),
+        hidden: true,
+      },
+      ["\u25A0"]
     );
 
     this.#mentionListEl = h("div", { class: "chat-mention-list" });
     this.#mentionEmptyEl = h("div", {
       class: "chat-mention-empty",
       hidden: true,
-    }, ["No matching files"]);
+    }, ["No matches"]);
     this.#mentionMenuEl = h("div", {
       class: "chat-mention-menu",
       hidden: true,
@@ -262,16 +297,20 @@ export class ChatView {
     ]) as HTMLDetailsElement;
 
     const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [
-      this.#permDetailsEl,
-      h("div", { class: "chat-footer-spacer" }),
-      this.#contextDetailsEl,
+      h("div", { class: "chat-controls-left" }, [
+        this.#addFileBtn,
+        this.#permDetailsEl,
+      ]),
+      h("div", { class: "chat-controls-right" }, [
+        this.#contextDetailsEl,
+        this.#stopBtn,
+        this.#sendBtn,
+      ]),
     ]);
     this.#setPermission(true);
 
     const inputRow = h("div", { class: "chat-input-row" }, [
       this.#inputWrapEl,
-      this.#stopBtn,
-      this.#sendBtn,
     ]);
 
     const composerEl = h("div", { class: "chat-composer" }, [
@@ -637,11 +676,13 @@ export class ChatView {
   #showStopButton(): void {
     this.#sendBtn.hidden = true;
     this.#stopBtn.hidden = false;
+    this.#syncComposerInset();
   }
 
   #hideStopButton(): void {
     this.#stopBtn.hidden = true;
     this.#sendBtn.hidden = false;
+    this.#syncComposerInset();
   }
 
   #resizeInput(): void {
@@ -651,25 +692,69 @@ export class ChatView {
   }
 
   async #updateMentionSuggestions(): Promise<void> {
-    const provider = this.#callbacks.onSearchFiles;
-    if (!provider) {
-      this.#hideMentionMenu();
-      return;
-    }
-
     const cursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
-    const token = findMentionToken(this.#inputEl.value, cursor);
-    if (!token) {
+    const text = this.#inputEl.value;
+    const fileToken = findMentionToken(text, cursor);
+    const commandToken = findSlashCommandToken(text, cursor);
+    const requestId = ++this.#mentionRequestId;
+
+    let mode: MentionMode | null = null;
+    let token: { start: number; end: number; query: string } | null = null;
+    let suggestions: MentionSuggestion[] = [];
+
+    if (fileToken) {
+      const provider = this.#callbacks.onSearchFiles;
+      if (!provider) {
+        this.#hideMentionMenu();
+        return;
+      }
+      mode = "file";
+      token = fileToken;
+      try {
+        const fileSuggestions = await provider(fileToken.query);
+        suggestions = fileSuggestions.slice(0, 30).map((path) => {
+          const { name, dir } = splitPath(path);
+          return {
+            kind: "file",
+            value: path,
+            label: name,
+            detail: dir || "./",
+            icon: fileIcon(name),
+          };
+        });
+      } catch (error) {
+        console.error("Failed to load @file suggestions:", error);
+        this.#hideMentionMenu();
+        return;
+      }
+    } else if (commandToken) {
+      const provider = this.#callbacks.onSearchCommands;
+      if (!provider) {
+        this.#hideMentionMenu();
+        return;
+      }
+      mode = "command";
+      token = commandToken;
+      try {
+        const commandSuggestions = await provider(commandToken.query);
+        suggestions = commandSuggestions.slice(0, 30).map((command) => ({
+          kind: "command",
+          value: command.name,
+          label: `/${command.name}`,
+          detail: command.source === "project" ? "Project command" : "User command",
+          icon: "/",
+        }));
+      } catch (error) {
+        console.error("Failed to load slash command suggestions:", error);
+        this.#hideMentionMenu();
+        return;
+      }
+    } else {
       this.#hideMentionMenu();
       return;
     }
 
-    const requestId = ++this.#mentionRequestId;
-    let suggestions: string[] = [];
-    try {
-      suggestions = await provider(token.query);
-    } catch (error) {
-      console.error("Failed to load @file suggestions:", error);
+    if (!mode || !token) {
       this.#hideMentionMenu();
       return;
     }
@@ -677,15 +762,25 @@ export class ChatView {
     if (requestId !== this.#mentionRequestId) return;
 
     const latestCursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
-    const latestToken = findMentionToken(this.#inputEl.value, latestCursor);
+    const latestToken = mode === "file"
+      ? findMentionToken(this.#inputEl.value, latestCursor)
+      : findSlashCommandToken(this.#inputEl.value, latestCursor);
     if (!latestToken) {
       this.#hideMentionMenu();
       return;
     }
+    if (latestToken.start !== token.start) {
+      this.#hideMentionMenu();
+      return;
+    }
 
-    this.#mentionSuggestions = suggestions.slice(0, 30);
+    this.#mentionMode = mode;
+    this.#mentionSuggestions = suggestions;
     if (this.#mentionSuggestions.length === 0) {
       clearChildren(this.#mentionListEl);
+      this.#mentionEmptyEl.textContent = mode === "file"
+        ? "No matching files"
+        : "No matching commands";
       this.#mentionEmptyEl.hidden = false;
       this.#mentionMenuEl.hidden = false;
       this.#mentionVisible = true;
@@ -712,15 +807,14 @@ export class ChatView {
   #renderMentionSuggestions(): void {
     clearChildren(this.#mentionListEl);
 
-    this.#mentionSuggestions.forEach((path, index) => {
-      const { name, dir } = splitPath(path);
+    this.#mentionSuggestions.forEach((suggestion, index) => {
       const option = h("button", {
         type: "button",
         class: `chat-mention-option${index === this.#mentionSelection ? " active" : ""}`,
       }, [
-        h("span", { class: "chat-mention-icon" }, [fileIcon(name)]),
-        h("span", { class: "chat-mention-name" }, [name]),
-        h("span", { class: "chat-mention-dir" }, [dir || "./"]),
+        h("span", { class: "chat-mention-icon" }, [suggestion.icon]),
+        h("span", { class: "chat-mention-name" }, [suggestion.label]),
+        h("span", { class: "chat-mention-dir" }, [suggestion.detail]),
       ]) as HTMLButtonElement;
 
       option.addEventListener("mousedown", (event) => {
@@ -740,6 +834,12 @@ export class ChatView {
   }
 
   #applyMentionSelection(): void {
+    const mode = this.#mentionMode;
+    if (!mode) {
+      this.#hideMentionMenu();
+      return;
+    }
+
     if (this.#mentionSuggestions.length === 0) {
       this.#hideMentionMenu();
       return;
@@ -753,21 +853,36 @@ export class ChatView {
 
     const value = this.#inputEl.value;
     const cursor = this.#inputEl.selectionStart ?? value.length;
-    const token = findMentionToken(value, cursor);
+    const token = mode === "file"
+      ? findMentionToken(value, cursor)
+      : findSlashCommandToken(value, cursor);
     if (!token) {
       this.#hideMentionMenu();
       return;
     }
 
-    const before = value.slice(0, token.start);
-    const after = value.slice(token.end);
-    const needsSingleSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(after);
-    const inserted = `${before}${needsSingleSpace ? " " : ""}${after}`;
+    if (mode === "file") {
+      const before = value.slice(0, token.start);
+      const after = value.slice(token.end);
+      const needsSingleSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(after);
+      const inserted = `${before}${needsSingleSpace ? " " : ""}${after}`;
 
-    this.#inputEl.value = inserted;
-    const nextCursor = before.length + (needsSingleSpace ? 1 : 0);
-    this.#inputEl.setSelectionRange(nextCursor, nextCursor);
-    this.#addSelectedFile(selected);
+      this.#inputEl.value = inserted;
+      const nextCursor = before.length + (needsSingleSpace ? 1 : 0);
+      this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+      this.#addSelectedFile(selected.value);
+    } else {
+      const before = value.slice(0, token.start);
+      const after = value.slice(token.end);
+      const commandText = `/${selected.value}`;
+      const needsTrailingSpace = after.length === 0 || !/^\s/.test(after);
+      const inserted = `${before}${commandText}${needsTrailingSpace ? " " : ""}${after}`;
+      const nextCursor = before.length + commandText.length + (needsTrailingSpace ? 1 : 0);
+
+      this.#inputEl.value = inserted;
+      this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+    }
+
     this.#resizeInput();
     this.#hideMentionMenu();
     this.#inputEl.focus();
@@ -775,6 +890,7 @@ export class ChatView {
 
   #hideMentionMenu(): void {
     this.#mentionVisible = false;
+    this.#mentionMode = null;
     this.#mentionSuggestions = [];
     this.#mentionSelection = 0;
     this.#mentionMenuEl.hidden = true;
@@ -1116,6 +1232,22 @@ export class ChatView {
     this.#messagesEl.style.scrollPaddingBottom = `${clearance}px`;
   }
 
+  #insertAttachToken(): void {
+    const value = this.#inputEl.value;
+    const cursor = this.#inputEl.selectionStart ?? value.length;
+    const before = value.slice(0, cursor);
+    const after = value.slice(cursor);
+    const needsSpace = before.length > 0 && !/\s$/.test(before);
+    const inserted = `${before}${needsSpace ? " " : ""}@${after}`;
+    const nextCursor = before.length + (needsSpace ? 2 : 1);
+
+    this.#inputEl.value = inserted;
+    this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+    this.#inputEl.focus();
+    this.#resizeInput();
+    void this.#updateMentionSuggestions();
+  }
+
   #renderUserMessageHtml(rawText: string, selectedFiles: string[]): string {
     const parsed = parseAttachedFilesDirective(rawText);
     const files = uniqueFiles([...selectedFiles, ...parsed.files]);
@@ -1176,6 +1308,29 @@ function findMentionToken(
 
   return {
     start: atIndex,
+    end: clampedCursor,
+    query: token,
+  };
+}
+
+function findSlashCommandToken(
+  text: string,
+  cursor: number
+): { start: number; end: number; query: string } | null {
+  const clampedCursor = clamp(cursor, 0, text.length);
+  const beforeCursor = text.slice(0, clampedCursor);
+  const slashIndex = beforeCursor.lastIndexOf("/");
+  if (slashIndex < 0) return null;
+
+  if (slashIndex > 0 && !/\s/.test(text[slashIndex - 1])) {
+    return null;
+  }
+
+  const token = text.slice(slashIndex + 1, clampedCursor);
+  if (/\s/.test(token)) return null;
+
+  return {
+    start: slashIndex,
     end: clampedCursor,
     query: token,
   };

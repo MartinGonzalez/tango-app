@@ -207,8 +207,8 @@ async function parseTranscriptMeta(
 
   if (!prompt) return null;
 
-  // Derive topic from prompt (first line, truncated)
-  const firstLine = prompt.split("\n")[0].trim();
+  // Derive topic from prompt (skip metadata wrappers, then truncate)
+  const firstLine = extractTopicLine(prompt);
   const topic = firstLine.length > 80 ? firstLine.slice(0, 77) + "..." : firstLine;
 
   return {
@@ -221,4 +221,49 @@ async function parseTranscriptMeta(
     lastActiveAt,
     transcriptPath: filePath,
   };
+}
+
+function extractTopicLine(prompt: string): string {
+  const commandName = extractCommandName(prompt);
+  if (commandName) return commandName;
+
+  const cleaned = prompt
+    .replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, "\n")
+    .replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, "\n")
+    .replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, "\n");
+
+  for (const rawLine of cleaned.split("\n")) {
+    const line = collapseWhitespace(rawLine);
+    if (line) return line;
+  }
+
+  return "Claude session";
+}
+
+function extractCommandName(prompt: string): string | null {
+  const commandNameMatch = prompt.match(
+    /<command-name>\s*([^<\n]+?)\s*<\/command-name>/i
+  );
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+
+  const commandMessageMatch = prompt.match(
+    /<command-message>\s*([\s\S]*?)\s*<\/command-message>/i
+  );
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+
+  return null;
+}
+
+function normalizeCommandName(value: string): string | null {
+  const text = collapseWhitespace(value);
+  if (!text) return null;
+  return text.startsWith("/") ? text : `/${text}`;
+}
+
+function collapseWhitespace(value: string): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }

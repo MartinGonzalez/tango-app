@@ -1732,7 +1732,7 @@ class Sidebar {
   }
   #renderSession(session, workspacePath) {
     const dot = ACTIVITY_DOTS[session.activity] ?? ACTIVITY_DOTS.idle;
-    const label = session.topic ?? session.prompt?.slice(0, 40) ?? "Claude session";
+    const label = formatSessionLabel(session.topic, session.prompt);
     const isActive = session.sessionId === this.#activeSessionId;
     const isHistorical = session.activity === "finished" && !session.isAppSpawned;
     const subtitle = isHistorical ? timeAgo(session.updatedAt || session.startedAt) : session.activity.replace(/_/g, " ");
@@ -1846,6 +1846,59 @@ class Sidebar {
     return this.#el;
   }
 }
+function formatSessionLabel(topic, prompt) {
+  const preferred = collapseWhitespace(topic ?? "");
+  if (preferred) {
+    return simplifyLabel(preferred);
+  }
+  const fromPrompt = extractPromptLabel(prompt ?? "");
+  if (fromPrompt) {
+    return simplifyLabel(fromPrompt);
+  }
+  return "Claude session";
+}
+function simplifyLabel(text) {
+  const cleaned = collapseWhitespace(text);
+  if (!cleaned)
+    return "Claude session";
+  return cleaned.length > 80 ? `${cleaned.slice(0, 77)}...` : cleaned;
+}
+function extractPromptLabel(prompt) {
+  const command = extractCommandName(prompt);
+  if (command)
+    return command;
+  const withoutDecorators = prompt.replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, `
+`).replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, `
+`).replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, `
+`);
+  for (const rawLine of withoutDecorators.split(`
+`)) {
+    const line = collapseWhitespace(rawLine);
+    if (line)
+      return line;
+  }
+  return "";
+}
+function extractCommandName(prompt) {
+  const commandNameMatch = prompt.match(/<command-name>\s*([^<\n]+?)\s*<\/command-name>/i);
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName(commandNameMatch[1]);
+  }
+  const commandMessageMatch = prompt.match(/<command-message>\s*([\s\S]*?)\s*<\/command-message>/i);
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName(commandMessageMatch[1]);
+  }
+  return null;
+}
+function normalizeCommandName(value) {
+  const normalized = collapseWhitespace(value);
+  if (!normalized)
+    return null;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+function collapseWhitespace(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
 function timeAgo(dateStr) {
   if (!dateStr)
     return "finished";
@@ -1879,6 +1932,7 @@ class ChatView {
   #inputWrapEl;
   #attachmentStripEl;
   #attachmentListEl;
+  #addFileBtn;
   #sendBtn;
   #stopBtn;
   #mentionMenuEl;
@@ -1899,6 +1953,7 @@ class ChatView {
   #isWaiting = false;
   #workspacePath = null;
   #mentionVisible = false;
+  #mentionMode = null;
   #mentionSelection = 0;
   #mentionRequestId = 0;
   #mentionSuggestions = [];
@@ -1988,7 +2043,7 @@ class ChatView {
     this.#statusEl = h("div", { class: "chat-status", hidden: true });
     this.#inputEl = document.createElement("textarea");
     this.#inputEl.className = "chat-input";
-    this.#inputEl.placeholder = "Ask Claude something...";
+    this.#inputEl.placeholder = "Type / for commands";
     this.#inputEl.rows = 1;
     this.#inputEl.addEventListener("keydown", (e) => this.#onInputKeyDown(e));
     this.#inputEl.addEventListener("input", () => {
@@ -2003,13 +2058,33 @@ class ChatView {
         this.#updateMentionSuggestions();
       }
     });
-    this.#sendBtn = h("button", { class: "chat-send-btn", onclick: () => this.#send() }, ["Send"]);
-    this.#stopBtn = h("button", { class: "chat-stop-btn", onclick: () => this.#stop(), hidden: true }, ["Stop"]);
+    this.#addFileBtn = h("button", {
+      type: "button",
+      class: "chat-add-btn",
+      title: "Attach file",
+      "aria-label": "Attach file",
+      onclick: () => {
+        this.#insertAttachToken();
+      }
+    }, ["+"]);
+    this.#sendBtn = h("button", {
+      class: "chat-send-btn",
+      title: "Send",
+      "aria-label": "Send",
+      onclick: () => this.#send()
+    }, ["↑"]);
+    this.#stopBtn = h("button", {
+      class: "chat-stop-btn",
+      title: "Stop",
+      "aria-label": "Stop",
+      onclick: () => this.#stop(),
+      hidden: true
+    }, ["■"]);
     this.#mentionListEl = h("div", { class: "chat-mention-list" });
     this.#mentionEmptyEl = h("div", {
       class: "chat-mention-empty",
       hidden: true
-    }, ["No matching files"]);
+    }, ["No matches"]);
     this.#mentionMenuEl = h("div", {
       class: "chat-mention-menu",
       hidden: true
@@ -2081,15 +2156,19 @@ class ChatView {
       ])
     ]);
     const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [
-      this.#permDetailsEl,
-      h("div", { class: "chat-footer-spacer" }),
-      this.#contextDetailsEl
+      h("div", { class: "chat-controls-left" }, [
+        this.#addFileBtn,
+        this.#permDetailsEl
+      ]),
+      h("div", { class: "chat-controls-right" }, [
+        this.#contextDetailsEl,
+        this.#stopBtn,
+        this.#sendBtn
+      ])
     ]);
     this.#setPermission(true);
     const inputRow = h("div", { class: "chat-input-row" }, [
-      this.#inputWrapEl,
-      this.#stopBtn,
-      this.#sendBtn
+      this.#inputWrapEl
     ]);
     const composerEl = h("div", { class: "chat-composer" }, [
       this.#scrollToBottomBtn,
@@ -2367,47 +2446,98 @@ class ChatView {
   #showStopButton() {
     this.#sendBtn.hidden = true;
     this.#stopBtn.hidden = false;
+    this.#syncComposerInset();
   }
   #hideStopButton() {
     this.#stopBtn.hidden = true;
     this.#sendBtn.hidden = false;
+    this.#syncComposerInset();
   }
   #resizeInput() {
     this.#inputEl.style.height = "auto";
     this.#inputEl.style.height = Math.min(this.#inputEl.scrollHeight, 150) + "px";
   }
   async#updateMentionSuggestions() {
-    const provider = this.#callbacks.onSearchFiles;
-    if (!provider) {
-      this.#hideMentionMenu();
-      return;
-    }
     const cursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
-    const token = findMentionToken(this.#inputEl.value, cursor);
-    if (!token) {
+    const text = this.#inputEl.value;
+    const fileToken = findMentionToken(text, cursor);
+    const commandToken = findSlashCommandToken(text, cursor);
+    const requestId = ++this.#mentionRequestId;
+    let mode = null;
+    let token = null;
+    let suggestions = [];
+    if (fileToken) {
+      const provider = this.#callbacks.onSearchFiles;
+      if (!provider) {
+        this.#hideMentionMenu();
+        return;
+      }
+      mode = "file";
+      token = fileToken;
+      try {
+        const fileSuggestions = await provider(fileToken.query);
+        suggestions = fileSuggestions.slice(0, 30).map((path) => {
+          const { name, dir } = splitPath(path);
+          return {
+            kind: "file",
+            value: path,
+            label: name,
+            detail: dir || "./",
+            icon: fileIcon(name)
+          };
+        });
+      } catch (error) {
+        console.error("Failed to load @file suggestions:", error);
+        this.#hideMentionMenu();
+        return;
+      }
+    } else if (commandToken) {
+      const provider = this.#callbacks.onSearchCommands;
+      if (!provider) {
+        this.#hideMentionMenu();
+        return;
+      }
+      mode = "command";
+      token = commandToken;
+      try {
+        const commandSuggestions = await provider(commandToken.query);
+        suggestions = commandSuggestions.slice(0, 30).map((command) => ({
+          kind: "command",
+          value: command.name,
+          label: `/${command.name}`,
+          detail: command.source === "project" ? "Project command" : "User command",
+          icon: "/"
+        }));
+      } catch (error) {
+        console.error("Failed to load slash command suggestions:", error);
+        this.#hideMentionMenu();
+        return;
+      }
+    } else {
       this.#hideMentionMenu();
       return;
     }
-    const requestId = ++this.#mentionRequestId;
-    let suggestions = [];
-    try {
-      suggestions = await provider(token.query);
-    } catch (error) {
-      console.error("Failed to load @file suggestions:", error);
+    if (!mode || !token) {
       this.#hideMentionMenu();
       return;
     }
     if (requestId !== this.#mentionRequestId)
       return;
     const latestCursor = this.#inputEl.selectionStart ?? this.#inputEl.value.length;
-    const latestToken = findMentionToken(this.#inputEl.value, latestCursor);
+    const latestToken = mode === "file" ? findMentionToken(this.#inputEl.value, latestCursor) : findSlashCommandToken(this.#inputEl.value, latestCursor);
     if (!latestToken) {
       this.#hideMentionMenu();
       return;
     }
-    this.#mentionSuggestions = suggestions.slice(0, 30);
+    if (latestToken.start !== token.start) {
+      this.#hideMentionMenu();
+      return;
+    }
+    this.#mentionMode = mode;
+    this.#mentionSuggestions = suggestions;
     if (this.#mentionSuggestions.length === 0) {
       clearChildren(this.#mentionListEl);
+      this.#mentionEmptyEl.textContent = mode === "file" ? "No matching files" : "No matching commands";
       this.#mentionEmptyEl.hidden = false;
       this.#mentionMenuEl.hidden = false;
       this.#mentionVisible = true;
@@ -2428,15 +2558,14 @@ class ChatView {
   }
   #renderMentionSuggestions() {
     clearChildren(this.#mentionListEl);
-    this.#mentionSuggestions.forEach((path, index) => {
-      const { name, dir } = splitPath(path);
+    this.#mentionSuggestions.forEach((suggestion, index) => {
       const option = h("button", {
         type: "button",
         class: `chat-mention-option${index === this.#mentionSelection ? " active" : ""}`
       }, [
-        h("span", { class: "chat-mention-icon" }, [fileIcon(name)]),
-        h("span", { class: "chat-mention-name" }, [name]),
-        h("span", { class: "chat-mention-dir" }, [dir || "./"])
+        h("span", { class: "chat-mention-icon" }, [suggestion.icon]),
+        h("span", { class: "chat-mention-name" }, [suggestion.label]),
+        h("span", { class: "chat-mention-dir" }, [suggestion.detail])
       ]);
       option.addEventListener("mousedown", (event) => {
         event.preventDefault();
@@ -2452,6 +2581,11 @@ class ChatView {
     active?.scrollIntoView({ block: "nearest" });
   }
   #applyMentionSelection() {
+    const mode = this.#mentionMode;
+    if (!mode) {
+      this.#hideMentionMenu();
+      return;
+    }
     if (this.#mentionSuggestions.length === 0) {
       this.#hideMentionMenu();
       return;
@@ -2463,25 +2597,37 @@ class ChatView {
     }
     const value = this.#inputEl.value;
     const cursor = this.#inputEl.selectionStart ?? value.length;
-    const token = findMentionToken(value, cursor);
+    const token = mode === "file" ? findMentionToken(value, cursor) : findSlashCommandToken(value, cursor);
     if (!token) {
       this.#hideMentionMenu();
       return;
     }
-    const before = value.slice(0, token.start);
-    const after = value.slice(token.end);
-    const needsSingleSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(after);
-    const inserted = `${before}${needsSingleSpace ? " " : ""}${after}`;
-    this.#inputEl.value = inserted;
-    const nextCursor = before.length + (needsSingleSpace ? 1 : 0);
-    this.#inputEl.setSelectionRange(nextCursor, nextCursor);
-    this.#addSelectedFile(selected);
+    if (mode === "file") {
+      const before = value.slice(0, token.start);
+      const after = value.slice(token.end);
+      const needsSingleSpace = before.length > 0 && !/\s$/.test(before) && !/^\s/.test(after);
+      const inserted = `${before}${needsSingleSpace ? " " : ""}${after}`;
+      this.#inputEl.value = inserted;
+      const nextCursor = before.length + (needsSingleSpace ? 1 : 0);
+      this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+      this.#addSelectedFile(selected.value);
+    } else {
+      const before = value.slice(0, token.start);
+      const after = value.slice(token.end);
+      const commandText = `/${selected.value}`;
+      const needsTrailingSpace = after.length === 0 || !/^\s/.test(after);
+      const inserted = `${before}${commandText}${needsTrailingSpace ? " " : ""}${after}`;
+      const nextCursor = before.length + commandText.length + (needsTrailingSpace ? 1 : 0);
+      this.#inputEl.value = inserted;
+      this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+    }
     this.#resizeInput();
     this.#hideMentionMenu();
     this.#inputEl.focus();
   }
   #hideMentionMenu() {
     this.#mentionVisible = false;
+    this.#mentionMode = null;
     this.#mentionSuggestions = [];
     this.#mentionSelection = 0;
     this.#mentionMenuEl.hidden = true;
@@ -2751,6 +2897,20 @@ class ChatView {
     this.#messagesEl.style.paddingBottom = `${clearance}px`;
     this.#messagesEl.style.scrollPaddingBottom = `${clearance}px`;
   }
+  #insertAttachToken() {
+    const value = this.#inputEl.value;
+    const cursor = this.#inputEl.selectionStart ?? value.length;
+    const before = value.slice(0, cursor);
+    const after = value.slice(cursor);
+    const needsSpace = before.length > 0 && !/\s$/.test(before);
+    const inserted = `${before}${needsSpace ? " " : ""}@${after}`;
+    const nextCursor = before.length + (needsSpace ? 2 : 1);
+    this.#inputEl.value = inserted;
+    this.#inputEl.setSelectionRange(nextCursor, nextCursor);
+    this.#inputEl.focus();
+    this.#resizeInput();
+    this.#updateMentionSuggestions();
+  }
   #renderUserMessageHtml(rawText, selectedFiles) {
     const parsed = parseAttachedFilesDirective(rawText);
     const files = uniqueFiles([...selectedFiles, ...parsed.files]);
@@ -2796,6 +2956,24 @@ function findMentionToken(text, cursor) {
     return null;
   return {
     start: atIndex,
+    end: clampedCursor,
+    query: token
+  };
+}
+function findSlashCommandToken(text, cursor) {
+  const clampedCursor = clamp(cursor, 0, text.length);
+  const beforeCursor = text.slice(0, clampedCursor);
+  const slashIndex = beforeCursor.lastIndexOf("/");
+  if (slashIndex < 0)
+    return null;
+  if (slashIndex > 0 && !/\s/.test(text[slashIndex - 1])) {
+    return null;
+  }
+  const token = text.slice(slashIndex + 1, clampedCursor);
+  if (/\s/.test(token))
+    return null;
+  return {
+    start: slashIndex,
     end: clampedCursor,
     query: token
   };
@@ -5396,19 +5574,35 @@ class DiffView {
   #bodyEl;
   #contentEl;
   #filesHostEl;
+  #branchHostEl;
   #filesToggleBtn;
+  #branchToggleBtn;
+  #callbacks;
   #files = [];
   #activeFile = null;
   #fileExpanded = new Map;
   #viewMode = "unified";
   #filesPanelVisible = false;
-  constructor(container) {
+  #branchPanelVisible = false;
+  constructor(container, callbacks = {}) {
+    this.#callbacks = callbacks;
     this.#filesToggleBtn = h("button", {
       class: "dv-icon-btn",
       title: "Toggle files changed",
       onclick: () => this.toggleFilesPanel(),
       innerHTML: `<svg class="dv-icon-folder" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M1.5 4.25C1.5 3.55964 2.05964 3 2.75 3h3.02c.31 0 .61.115.84.322l.89.807c.23.208.53.321.84.321h4.91c.69 0 1.25.56 1.25 1.25V11.5c0 .69-.56 1.25-1.25 1.25H2.75c-.69 0-1.25-.56-1.25-1.25V4.25Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+      </svg>`
+    });
+    this.#branchToggleBtn = h("button", {
+      class: "dv-icon-btn",
+      title: "Toggle branch history",
+      onclick: () => this.toggleBranchPanel(),
+      innerHTML: `<svg class="dv-icon-branch" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="4" cy="3.25" r="1.8" stroke="currentColor" stroke-width="1.1"/>
+        <circle cx="12" cy="12.75" r="1.8" stroke="currentColor" stroke-width="1.1"/>
+        <circle cx="4" cy="12.75" r="1.8" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M4 5.2v5.75M4 7.8c0-2.7 1.85-4.55 4.5-4.55H10" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
       </svg>`
     });
     this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
@@ -5424,19 +5618,23 @@ class DiffView {
         dataset: { view: "split" },
         onclick: () => this.#setViewMode("split")
       }, ["Split"]),
+      this.#branchToggleBtn,
       this.#filesToggleBtn
     ]);
     this.#contentEl = h("div", { class: "dv-content" });
     this.#filesHostEl = h("aside", { class: "dv-files-host", hidden: true });
+    this.#branchHostEl = h("aside", { class: "dv-branch-host", hidden: true });
     this.#bodyEl = h("div", { class: "dv-body" }, [
       this.#contentEl,
-      this.#filesHostEl
+      this.#filesHostEl,
+      this.#branchHostEl
     ]);
     this.#el = h("div", { class: "diff-view" }, [
       this.#toolbarEl,
       this.#bodyEl
     ]);
     this.setFilesPanelVisible(false);
+    this.setBranchPanelVisible(false, false);
     container.appendChild(this.#el);
   }
   setFiles(files) {
@@ -5600,6 +5798,9 @@ class DiffView {
     });
   }
   setFilesPanelVisible(visible) {
+    if (visible && this.#branchPanelVisible) {
+      this.setBranchPanelVisible(false);
+    }
     this.#filesPanelVisible = visible;
     this.#el.classList.toggle("files-visible", visible);
     this.#filesHostEl.hidden = !visible;
@@ -5608,8 +5809,29 @@ class DiffView {
   toggleFilesPanel() {
     this.setFilesPanelVisible(!this.#filesPanelVisible);
   }
+  setBranchPanelVisible(visible, notify = true) {
+    if (visible && this.#filesPanelVisible) {
+      this.setFilesPanelVisible(false);
+    }
+    this.#branchPanelVisible = visible;
+    this.#el.classList.toggle("branch-visible", visible);
+    this.#branchHostEl.hidden = !visible;
+    this.#branchToggleBtn.classList.toggle("active", visible);
+    if (notify) {
+      this.#callbacks.onBranchPanelToggle?.(visible);
+    }
+  }
+  toggleBranchPanel() {
+    this.setBranchPanelVisible(!this.#branchPanelVisible);
+  }
   get filesPanelHost() {
     return this.#filesHostEl;
+  }
+  get branchPanelHost() {
+    return this.#branchHostEl;
+  }
+  get isBranchPanelVisible() {
+    return this.#branchPanelVisible;
   }
   get element() {
     return this.#el;
@@ -5887,6 +6109,81 @@ function countFileChanges2(file) {
   return { adds, dels };
 }
 
+// src/mainview/components/branch-panel.ts
+class BranchPanel {
+  #el;
+  #listEl;
+  #countEl;
+  #commits = [];
+  constructor(container) {
+    this.#countEl = h("span", { class: "bp-count" }, ["0"]);
+    const header = h("div", { class: "bp-header" }, [
+      h("div", { class: "bp-header-left" }, [
+        h("span", { class: "bp-title" }, ["Branch"]),
+        this.#countEl
+      ])
+    ]);
+    this.#listEl = h("div", { class: "bp-list" });
+    this.#el = h("div", { class: "branch-panel" }, [
+      header,
+      this.#listEl
+    ]);
+    container.appendChild(this.#el);
+  }
+  render(commits) {
+    this.#commits = commits;
+    this.#countEl.textContent = String(commits.length);
+    clearChildren(this.#listEl);
+    if (commits.length === 0) {
+      this.#listEl.appendChild(h("div", { class: "bp-empty" }, ["No git history"]));
+      return;
+    }
+    for (let i = 0;i < commits.length; i++) {
+      this.#listEl.appendChild(this.#renderCommit(commits[i], i, commits.length));
+    }
+  }
+  clear() {
+    this.#commits = [];
+    this.#countEl.textContent = "0";
+    clearChildren(this.#listEl);
+    this.#listEl.appendChild(h("div", { class: "bp-empty" }, ["No git history"]));
+  }
+  #renderCommit(commit, index, total) {
+    const refs = commit.refs.slice(0, 4);
+    const hiddenRefs = Math.max(0, commit.refs.length - refs.length);
+    return h("div", { class: "bp-item" }, [
+      h("div", { class: "bp-graph" }, [
+        h("span", {
+          class: `bp-node${commit.isHead ? " is-head" : ""}`
+        }),
+        index < total - 1 ? h("span", { class: "bp-tail" }) : h("span", { class: "bp-tail bp-tail-end" })
+      ]),
+      h("div", { class: "bp-main" }, [
+        h("div", { class: "bp-title-row" }, [
+          h("span", { class: "bp-subject", title: commit.subject }, [commit.subject]),
+          ...refs.map((ref) => this.#renderRef(ref)),
+          hiddenRefs > 0 ? h("span", { class: "bp-ref bp-ref-more" }, [`+${hiddenRefs}`]) : null
+        ].filter(Boolean)),
+        h("div", { class: "bp-meta" }, [
+          h("span", { class: "bp-author" }, [commit.author]),
+          h("span", { class: "bp-dot" }, ["•"]),
+          h("span", { class: "bp-time" }, [commit.relativeTime]),
+          h("code", { class: "bp-hash" }, [commit.shortHash])
+        ])
+      ])
+    ]);
+  }
+  #renderRef(ref) {
+    return h("span", {
+      class: `bp-ref bp-ref-${ref.kind}`,
+      title: ref.label
+    }, [ref.label]);
+  }
+  get element() {
+    return this.#el;
+  }
+}
+
 // src/mainview/index.ts
 var rpc = Electroview.defineRPC({
   maxRequestTime: 30000,
@@ -5954,6 +6251,9 @@ var rpc = Electroview.defineRPC({
         appState.update((s) => ({ ...s, liveSessions: live }));
         if (state.activeWorkspace) {
           loadDiff(state.activeWorkspace);
+          if (diffView.isBranchPanelVisible) {
+            loadBranchHistory(state.activeWorkspace, true);
+          }
         }
       }
     }
@@ -5967,6 +6267,8 @@ var appState = new Store({
   activeWorkspace: null,
   activeSessionId: null,
   diffScope: "last_turn",
+  branchHistory: {},
+  loadedBranchHistory: new Set,
   historySessions: {},
   liveSessions: new Set,
   customSessionNames: {}
@@ -5976,10 +6278,16 @@ var sidebar;
 var chatView;
 var diffView;
 var filesPanel;
+var branchPanel;
 var diffRefreshTimer = null;
 var WORKSPACE_FILE_CACHE_MS = 30000;
 var workspaceFileCache = new Map;
+var SLASH_COMMAND_CACHE_MS = 15000;
+var slashCommandCache = new Map;
 var sessionUsageEstimates = new Map;
+var EMPTY_BRANCH_COMMITS = [];
+var prevBranchWorkspace = null;
+var prevBranchCommits = null;
 function init() {
   const panelsContainer = qs("#panels");
   panelLayout = new PanelLayout(panelsContainer, [
@@ -5999,6 +6307,7 @@ function init() {
       }));
       loadSessionTranscript(sessionId);
       loadDiff(workspacePath);
+      ensureBranchHistory(workspacePath);
     },
     onNewSession: (workspacePath) => {
       appState.update((s) => ({
@@ -6009,6 +6318,7 @@ function init() {
       chatView.clear();
       chatView.focus();
       loadDiff(workspacePath);
+      ensureBranchHistory(workspacePath);
     },
     onAddWorkspace: () => openWorkspace(),
     onRemoveWorkspace: (path) => removeWorkspace(path),
@@ -6140,9 +6450,22 @@ function init() {
       if (!cwd)
         return [];
       return searchWorkspaceFiles(cwd, query, 30);
+    },
+    onSearchCommands: async (query) => {
+      const cwd = appState.get().activeWorkspace;
+      if (!cwd)
+        return [];
+      return searchSlashCommands(cwd, query, 30);
     }
   });
-  diffView = new DiffView(diffPanel);
+  diffView = new DiffView(diffPanel, {
+    onBranchPanelToggle: (visible) => {
+      const activeWorkspace = appState.get().activeWorkspace;
+      if (!visible || !activeWorkspace)
+        return;
+      loadBranchHistory(activeWorkspace, true);
+    }
+  });
   filesPanel = new FilesPanel(diffView.filesPanelHost, {
     onSelectFile: (path) => {
       diffView.showFile(path);
@@ -6155,6 +6478,7 @@ function init() {
       }
     }
   });
+  branchPanel = new BranchPanel(diffView.branchPanelHost);
   qs("#btn-toggle-workspaces")?.addEventListener("click", () => {
     panelLayout.togglePanel("workspaces");
     qs("#btn-toggle-workspaces")?.classList.toggle("active", panelLayout.isPanelVisible("workspaces"));
@@ -6189,6 +6513,17 @@ function init() {
     chatView.setHeader(resolveActiveSessionTitle(state), state.activeWorkspace);
     const contextInfo = resolveActiveContextUsage(state);
     chatView.setContextUsage(contextInfo?.contextPercentage ?? null, contextInfo?.model ?? null, contextInfo?.activity ?? null, contextInfo?.promptTokens ?? null);
+    const activeWorkspace = state.activeWorkspace;
+    const branchCommits = activeWorkspace ? state.branchHistory[activeWorkspace] ?? EMPTY_BRANCH_COMMITS : EMPTY_BRANCH_COMMITS;
+    if (activeWorkspace !== prevBranchWorkspace || branchCommits !== prevBranchCommits) {
+      if (activeWorkspace) {
+        branchPanel.render(branchCommits);
+      } else {
+        branchPanel.clear();
+      }
+      prevBranchWorkspace = activeWorkspace;
+      prevBranchCommits = branchCommits;
+    }
   });
   loadWorkspaces();
   loadSessionNames();
@@ -6224,6 +6559,49 @@ async function loadSessionHistory(cwd) {
   } catch (err) {
     console.error("Failed to load session history:", err);
   }
+}
+async function loadBranchHistory(cwd, force = false) {
+  if (!cwd)
+    return;
+  const state = appState.get();
+  const alreadyLoaded = state.loadedBranchHistory.has(cwd);
+  if (!force && alreadyLoaded)
+    return;
+  try {
+    const commits = await rpc.request.getBranchHistory({
+      cwd,
+      limit: 120
+    });
+    appState.update((s) => {
+      const loaded = new Set(s.loadedBranchHistory);
+      loaded.add(cwd);
+      return {
+        ...s,
+        branchHistory: {
+          ...s.branchHistory,
+          [cwd]: commits
+        },
+        loadedBranchHistory: loaded
+      };
+    });
+  } catch (err) {
+    console.error("Failed to load branch history:", err);
+    appState.update((s) => {
+      const loaded = new Set(s.loadedBranchHistory);
+      loaded.add(cwd);
+      return {
+        ...s,
+        branchHistory: {
+          ...s.branchHistory,
+          [cwd]: []
+        },
+        loadedBranchHistory: loaded
+      };
+    });
+  }
+}
+function ensureBranchHistory(cwd) {
+  loadBranchHistory(cwd, false);
 }
 async function loadDiff(cwd, scope) {
   try {
@@ -6288,6 +6666,7 @@ async function loadWorkspaces() {
       qs("#btn-toggle-workspaces")?.classList.add("active");
       loadDiff(workspaces[0], appState.get().diffScope);
       loadSessionHistory(workspaces[0]);
+      ensureBranchHistory(workspaces[0]);
     }
   } catch {}
 }
@@ -6321,6 +6700,7 @@ async function openWorkspace() {
     qs("#btn-toggle-workspaces")?.classList.add("active");
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
+    ensureBranchHistory(dir);
   } catch (err) {
     console.error("Failed to pick directory:", err);
   }
@@ -6329,17 +6709,28 @@ async function removeWorkspace(path) {
   try {
     await rpc.request.removeWorkspace({ path });
     workspaceFileCache.delete(path);
+    slashCommandCache.delete(path);
     appState.update((s) => {
       const workspaces = s.workspaces.filter((w) => w !== path);
       const expanded = new Set(s.expandedWorkspaces);
+      const loadedBranchHistory = new Set(s.loadedBranchHistory);
       expanded.delete(path);
+      loadedBranchHistory.delete(path);
+      const branchHistory = { ...s.branchHistory };
+      delete branchHistory[path];
       return {
         ...s,
         workspaces,
         expandedWorkspaces: expanded,
+        branchHistory,
+        loadedBranchHistory,
         activeWorkspace: s.activeWorkspace === path ? workspaces[0] ?? null : s.activeWorkspace
       };
     });
+    const nextWorkspace = appState.get().activeWorkspace;
+    if (nextWorkspace) {
+      ensureBranchHistory(nextWorkspace);
+    }
   } catch (err) {
     console.error("Failed to remove workspace:", err);
   }
@@ -6363,6 +6754,31 @@ async function searchWorkspaceFiles(cwd, query, limit) {
     return a.path.localeCompare(b.path);
   }).slice(0, limit).map((entry) => entry.path);
 }
+async function searchSlashCommands(cwd, query, limit) {
+  const cached = slashCommandCache.get(cwd);
+  let commands = cached?.commands;
+  const cacheAgeMs = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
+  if (!commands || cacheAgeMs > SLASH_COMMAND_CACHE_MS) {
+    const loaded = await rpc.request.getSlashCommands({ cwd });
+    commands = Array.isArray(loaded) ? loaded : [];
+    slashCommandCache.set(cwd, {
+      commands,
+      loadedAt: Date.now()
+    });
+  }
+  const normalizedQuery = query.trim().replace(/^\/+/, "").toLowerCase();
+  if (!normalizedQuery) {
+    return commands.slice().sort(compareSlashCommandEntries).slice(0, limit);
+  }
+  return commands.map((command) => ({
+    command,
+    score: scoreSlashCommand(command, normalizedQuery)
+  })).filter((entry) => entry.score > 0).sort((a, b) => {
+    if (a.score !== b.score)
+      return b.score - a.score;
+    return compareSlashCommandEntries(a.command, b.command);
+  }).slice(0, limit).map((entry) => entry.command);
+}
 function scoreWorkspaceFile(path, query) {
   const normalizedPath = path.toLowerCase();
   const fileName = path.split("/").pop()?.toLowerCase() ?? normalizedPath;
@@ -6379,6 +6795,32 @@ function scoreWorkspaceFile(path, query) {
   if (pathIdx >= 0)
     return 200 - Math.min(pathIdx, 120);
   return 0;
+}
+function scoreSlashCommand(command, query) {
+  const name = command.name.toLowerCase();
+  const leaf = command.name.split("/").pop()?.toLowerCase() ?? name;
+  const sourceBoost = command.source === "project" ? 35 : 0;
+  if (name === query)
+    return 500 + sourceBoost;
+  if (leaf === query)
+    return 470 + sourceBoost;
+  if (name.startsWith(query))
+    return 420 + sourceBoost - Math.min(name.length, 180);
+  if (leaf.startsWith(query))
+    return 390 + sourceBoost - Math.min(leaf.length, 180);
+  const leafIndex = leaf.indexOf(query);
+  if (leafIndex >= 0)
+    return 290 + sourceBoost - Math.min(leafIndex, 120);
+  const nameIndex = name.indexOf(query);
+  if (nameIndex >= 0)
+    return 230 + sourceBoost - Math.min(nameIndex, 120);
+  return 0;
+}
+function compareSlashCommandEntries(a, b) {
+  if (a.source !== b.source) {
+    return a.source === "project" ? -1 : 1;
+  }
+  return a.name.localeCompare(b.name);
 }
 function buildWorkspaceData(state) {
   const liveSessions = state.snapshot ? buildSessionList(state.snapshot) : [];
@@ -6458,22 +6900,54 @@ function resolveActiveSessionTitle(state) {
     return custom;
   if (state.snapshot) {
     const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);
-    if (live?.topic?.trim())
-      return live.topic.trim();
-    if (live?.prompt?.trim())
-      return live.prompt.trim();
+    const liveTitle = resolvePromptTitle(live?.topic ?? null, live?.prompt ?? null);
+    if (liveTitle)
+      return liveTitle;
   }
   for (const sessions of Object.values(state.historySessions)) {
     const found = sessions.find((s) => s.sessionId === activeSessionId);
     if (!found)
       continue;
-    if (found.topic?.trim())
-      return found.topic.trim();
-    if (found.prompt?.trim())
-      return found.prompt.trim();
+    const historyTitle = resolvePromptTitle(found.topic, found.prompt);
+    if (historyTitle)
+      return historyTitle;
     break;
   }
   return "Session";
+}
+function resolvePromptTitle(topic, prompt) {
+  const cleanTopic = collapseWhitespace2(topic ?? "");
+  if (cleanTopic)
+    return cleanTopic;
+  const command = extractCommandName2(prompt ?? "");
+  if (command)
+    return command;
+  const cleanPrompt = collapseWhitespace2(String(prompt ?? "").replace(/<attached_files>\s*[\s\S]*?<\/attached_files>/gi, `
+`).replace(/<command-message>\s*[\s\S]*?<\/command-message>/gi, `
+`).replace(/<command-name>\s*[\s\S]*?<\/command-name>/gi, `
+`).split(`
+`).find((line) => collapseWhitespace2(line).length > 0) ?? "");
+  return cleanPrompt || null;
+}
+function extractCommandName2(prompt) {
+  const commandNameMatch = prompt.match(/<command-name>\s*([^<\n]+?)\s*<\/command-name>/i);
+  if (commandNameMatch?.[1]) {
+    return normalizeCommandName2(commandNameMatch[1]);
+  }
+  const commandMessageMatch = prompt.match(/<command-message>\s*([\s\S]*?)\s*<\/command-message>/i);
+  if (commandMessageMatch?.[1]) {
+    return normalizeCommandName2(commandMessageMatch[1]);
+  }
+  return null;
+}
+function normalizeCommandName2(value) {
+  const normalized = collapseWhitespace2(value);
+  if (!normalized)
+    return null;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+function collapseWhitespace2(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 function resolveActiveContextUsage(state) {
   const activeSessionId = state.activeSessionId;

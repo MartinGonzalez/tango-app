@@ -102,7 +102,54 @@ test("handles content as array of content blocks", async () => {
   const result = await readPromptFromTranscript(filePath);
 
   assert.equal(result.prompt, "Refactor the database module Use connection pooling");
-  assert.equal(result.topic, "Refactor the database module Use connection pooling");
+  assert.equal(result.topic, "Refactor the database module Use connection poolin...");
+});
+
+test("derives command topic from wrapped command metadata", async () => {
+  const filePath = path.join(fixtureDir, "command-wrapper.jsonl");
+  const lines = [
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: "<command-message>ping</command-message>\n<command-name>/ping</command-name>"
+      },
+      uuid: "u1",
+      timestamp: "2026-02-20T13:36:10.904Z"
+    })
+  ];
+  await writeFile(filePath, lines.join("\n") + "\n");
+
+  const result = await readPromptFromTranscript(filePath);
+
+  assert.equal(result.topic, "/ping");
+});
+
+test("ignores attached_files metadata when deriving topic", async () => {
+  const filePath = path.join(fixtureDir, "attached-files-topic.jsonl");
+  const prompt = [
+    "<attached_files>",
+    "- /Users/martingonzalez/Desktop/test-claude-workspace/Dog.cs (workspace: Dog.cs)",
+    "</attached_files>",
+    "",
+    "what file is this one?"
+  ].join("\n");
+  const lines = [
+    JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: prompt
+      },
+      uuid: "u1",
+      timestamp: "2026-02-20T09:51:43.573Z"
+    })
+  ];
+  await writeFile(filePath, lines.join("\n") + "\n");
+
+  const result = await readPromptFromTranscript(filePath);
+
+  assert.equal(result.topic, "What file is this one?");
 });
 
 test("returns null for missing file", async () => {
