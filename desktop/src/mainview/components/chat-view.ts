@@ -1,4 +1,5 @@
 import { h, qs, clearChildren } from "../lib/dom.ts";
+import { menuDotsIcon } from "../lib/icons.ts";
 import type {
   TranscriptMessage,
   ClaudeStreamEvent,
@@ -58,7 +59,8 @@ export class ChatView {
   #headerEl: HTMLElement;
   #headerTitleEl: HTMLElement;
   #headerWorkspaceEl: HTMLElement;
-  #headerMenuEl: HTMLDetailsElement;
+  #headerMenuEl: HTMLElement;
+  #headerMenuBtnEl: HTMLButtonElement;
   #headerOpenInFinderBtn: HTMLButtonElement;
   #messagesEl: HTMLElement;
   #composerEl: HTMLElement;
@@ -73,13 +75,15 @@ export class ChatView {
   #mentionMenuEl: HTMLElement;
   #mentionListEl: HTMLElement;
   #mentionEmptyEl: HTMLElement;
-  #contextDetailsEl: HTMLDetailsElement;
+  #contextDetailsEl: HTMLElement;
+  #contextToggleBtnEl: HTMLButtonElement;
   #contextSummaryValueEl: HTMLElement;
   #contextUsedEl: HTMLElement;
   #contextTokensEl: HTMLElement;
   #contextHintEl: HTMLElement;
   #statusEl: HTMLElement;
-  #permDetailsEl: HTMLDetailsElement;
+  #permDetailsEl: HTMLElement;
+  #permToggleBtnEl: HTMLButtonElement;
   #permLabelEl: HTMLElement;
   #permDefaultBtn: HTMLButtonElement;
   #permFullBtn: HTMLButtonElement;
@@ -95,30 +99,18 @@ export class ChatView {
   #selectedFiles: string[] = [];
   #hasUserScrolledUp: boolean = false;
   #isProgrammaticScroll: boolean = false;
-  #onGlobalPointerDown: (event: PointerEvent) => void;
+  #onGlobalPointerDown: (event: Event) => void;
   #onGlobalKeyDown: (event: KeyboardEvent) => void;
+  #onGlobalFocusIn: (event: FocusEvent) => void;
+  #onWindowBlur: () => void;
   #scrollAnimationFrame: number | null = null;
   #composerResizeObserver: ResizeObserver | null = null;
 
   constructor(container: HTMLElement, callbacks: ChatCallbacks) {
     this.#callbacks = callbacks;
-    this.#onGlobalPointerDown = (event: PointerEvent) => {
+    this.#onGlobalPointerDown = (event: Event) => {
       const target = event.target as Node | null;
-      if (this.#headerMenuEl.open) {
-        if (!(target && this.#headerMenuEl.contains(target))) {
-          this.#headerMenuEl.open = false;
-        }
-      }
-      if (this.#permDetailsEl?.open) {
-        if (!(target && this.#permDetailsEl.contains(target))) {
-          this.#permDetailsEl.open = false;
-        }
-      }
-      if (this.#contextDetailsEl?.open) {
-        if (!(target && this.#contextDetailsEl.contains(target))) {
-          this.#contextDetailsEl.open = false;
-        }
-      }
+      this.#closeFloatingMenusForTarget(target);
       if (
         this.#mentionVisible
         && !(target && this.#inputWrapEl.contains(target))
@@ -128,10 +120,18 @@ export class ChatView {
     };
     this.#onGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (this.#headerMenuEl.open) this.#headerMenuEl.open = false;
-      if (this.#permDetailsEl?.open) this.#permDetailsEl.open = false;
-      if (this.#contextDetailsEl?.open) this.#contextDetailsEl.open = false;
+      this.#setHeaderMenuOpen(false);
+      this.#setPermissionMenuOpen(false);
+      this.#setContextMenuOpen(false);
       if (this.#mentionVisible) this.#hideMentionMenu();
+    };
+    this.#onGlobalFocusIn = (event: FocusEvent) => {
+      this.#closeFloatingMenusForTarget(event.target as Node | null);
+    };
+    this.#onWindowBlur = () => {
+      this.#setHeaderMenuOpen(false);
+      this.#setPermissionMenuOpen(false);
+      this.#setContextMenuOpen(false);
     };
 
     this.#headerTitleEl = h("span", { class: "chat-header-title" }, ["New session"]);
@@ -142,24 +142,39 @@ export class ChatView {
     this.#headerOpenInFinderBtn = h(
       "button",
       {
+        type: "button",
         class: "chat-header-menu-item",
         onclick: (e: Event) => {
           e.preventDefault();
           const path = this.#workspacePath;
           if (!path) return;
           this.#callbacks.onOpenInFinder?.(path);
-          this.#headerMenuEl.open = false;
+          this.#setHeaderMenuOpen(false);
         },
       },
       ["Open in Finder"]
     ) as HTMLButtonElement;
 
-    this.#headerMenuEl = h("details", { class: "chat-header-menu" }, [
-      h("summary", { class: "chat-header-menu-btn", title: "More" }, ["⋯"]),
+    this.#headerMenuBtnEl = h("button", {
+      type: "button",
+      class: "chat-header-menu-btn",
+      title: "More",
+      "aria-label": "More",
+      "aria-haspopup": "menu",
+      "aria-expanded": "false",
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#setHeaderMenuOpen(!this.#isMenuOpen(this.#headerMenuEl));
+      },
+    }, [menuDotsIcon()]) as HTMLButtonElement;
+
+    this.#headerMenuEl = h("div", { class: "chat-header-menu" }, [
+      this.#headerMenuBtnEl,
       h("div", { class: "chat-header-menu-popover" }, [
         this.#headerOpenInFinderBtn,
       ]),
-    ]) as HTMLDetailsElement;
+    ]);
 
     this.#headerEl = h("div", { class: "chat-header" }, [
       h("div", { class: "chat-header-meta" }, [
@@ -198,9 +213,9 @@ export class ChatView {
       void this.#updateMentionSuggestions();
     });
     this.#inputEl.addEventListener("focus", () => {
-      if (this.#headerMenuEl.open) this.#headerMenuEl.open = false;
-      if (this.#permDetailsEl?.open) this.#permDetailsEl.open = false;
-      if (this.#contextDetailsEl?.open) this.#contextDetailsEl.open = false;
+      this.#setHeaderMenuOpen(false);
+      this.#setPermissionMenuOpen(false);
+      this.#setContextMenuOpen(false);
     });
     this.#inputEl.addEventListener("keyup", (event) => {
       if (
@@ -270,6 +285,7 @@ export class ChatView {
 
     this.#permLabelEl = h("span", { class: "perm-chip-text" }, ["Full access"]);
     this.#permDefaultBtn = h("button", {
+      type: "button",
       class: "perm-menu-option",
       onclick: (e: Event) => {
         e.preventDefault();
@@ -280,6 +296,7 @@ export class ChatView {
       h("span", { class: "perm-menu-check" }, ["\u2713"]),
     ]) as HTMLButtonElement;
     this.#permFullBtn = h("button", {
+      type: "button",
       class: "perm-menu-option",
       onclick: (e: Event) => {
         e.preventDefault();
@@ -290,27 +307,29 @@ export class ChatView {
       h("span", { class: "perm-menu-check" }, ["\u2713"]),
     ]) as HTMLButtonElement;
 
-    this.#permDetailsEl = h("details", { class: "perm-selector" }, [
-      h("summary", { class: "perm-chip" }, [
-        h("span", { class: "perm-chip-icon" }, ["\u26E8"]),
-        this.#permLabelEl,
-        h("span", { class: "perm-chip-caret" }, ["\u25BE"]),
-      ]),
-      h("div", { class: "perm-menu" }, [
+    this.#permToggleBtnEl = h("button", {
+      type: "button",
+      class: "perm-chip",
+      "aria-haspopup": "menu",
+      "aria-expanded": "false",
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#setPermissionMenuOpen(!this.#isMenuOpen(this.#permDetailsEl));
+      },
+    }, [
+      h("span", { class: "perm-chip-icon" }, ["\u26E8"]),
+      this.#permLabelEl,
+      h("span", { class: "perm-chip-caret" }, ["\u25BE"]),
+    ]) as HTMLButtonElement;
+
+    this.#permDetailsEl = h("div", { class: "perm-selector" }, [
+      this.#permToggleBtnEl,
+      h("div", { class: "perm-menu", role: "menu" }, [
         this.#permDefaultBtn,
         this.#permFullBtn,
       ]),
-    ]) as HTMLDetailsElement;
-    this.#permDetailsEl.addEventListener("focusout", (event: FocusEvent) => {
-      const next = event.relatedTarget as Node | null;
-      if (next && this.#permDetailsEl.contains(next)) return;
-      this.#permDetailsEl.open = false;
-    });
-    this.#permDetailsEl.addEventListener("toggle", () => {
-      if (!this.#permDetailsEl.open) return;
-      this.#headerMenuEl.open = false;
-      if (this.#contextDetailsEl?.open) this.#contextDetailsEl.open = false;
-    });
+    ]);
 
     this.#contextSummaryValueEl = h("span", { class: "context-meter-value" }, ["--"]);
     this.#contextUsedEl = h("div", { class: "context-meter-line" }, ["--"]);
@@ -318,21 +337,33 @@ export class ChatView {
     this.#contextHintEl = h("div", { class: "context-meter-hint" }, [
       "Claude may automatically compact its context.",
     ]);
-    this.#contextDetailsEl = h("details", {
+    this.#contextToggleBtnEl = h("button", {
+      type: "button",
+      class: "context-meter-btn",
+      title: "Context window usage",
+      "aria-haspopup": "menu",
+      "aria-expanded": "false",
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#setContextMenuOpen(!this.#isMenuOpen(this.#contextDetailsEl));
+      },
+    }, [
+      h("span", { class: "context-meter-spinner" }),
+      this.#contextSummaryValueEl,
+    ]) as HTMLButtonElement;
+    this.#contextDetailsEl = h("div", {
       class: "context-meter",
       hidden: true,
     }, [
-      h("summary", { class: "context-meter-btn", title: "Context window usage" }, [
-        h("span", { class: "context-meter-spinner" }),
-        this.#contextSummaryValueEl,
-      ]),
+      this.#contextToggleBtnEl,
       h("div", { class: "context-meter-popover" }, [
         h("div", { class: "context-meter-title" }, ["Context window"]),
         this.#contextUsedEl,
         this.#contextTokensEl,
         this.#contextHintEl,
       ]),
-    ]) as HTMLDetailsElement;
+    ]);
 
     const toggleRow = h("div", { class: "chat-perm-toggle-row" }, [
       h("div", { class: "chat-controls-left" }, [
@@ -376,7 +407,10 @@ export class ChatView {
     this.setHeader("New session", null);
     this.#updateScrollToBottomButton();
     document.addEventListener("pointerdown", this.#onGlobalPointerDown, true);
+    document.addEventListener("mousedown", this.#onGlobalPointerDown, true);
     document.addEventListener("keydown", this.#onGlobalKeyDown, true);
+    document.addEventListener("focusin", this.#onGlobalFocusIn, true);
+    window.addEventListener("blur", this.#onWindowBlur);
   }
 
   renderTranscript(messages: TranscriptMessage[]): void {
@@ -510,6 +544,9 @@ export class ChatView {
     this.#hasUserScrolledUp = false;
     this.#updateScrollToBottomButton();
     this.#isWaiting = false;
+    this.#setHeaderMenuOpen(false);
+    this.#setPermissionMenuOpen(false);
+    this.#setContextMenuOpen(false);
     this.#hideStatus();
     this.#hideMentionMenu();
     this.#clearSelectedFiles();
@@ -531,7 +568,7 @@ export class ChatView {
       this.#headerWorkspaceEl.removeAttribute("title");
       this.#headerWorkspaceEl.hidden = true;
       this.#headerOpenInFinderBtn.disabled = true;
-      this.#headerMenuEl.open = false;
+      this.#setHeaderMenuOpen(false);
     }
   }
 
@@ -545,7 +582,7 @@ export class ChatView {
     const hasAnySignal = normalized !== null || promptTokens !== null || model !== null || activity !== null;
     if (!hasAnySignal) {
       this.#contextDetailsEl.hidden = true;
-      this.#contextDetailsEl.open = false;
+      this.#setContextMenuOpen(false);
       return;
     }
 
@@ -1253,13 +1290,58 @@ export class ChatView {
       distanceFromBottom <= threshold || !this.#hasUserScrolledUp;
   }
 
+  #isMenuOpen(menuEl: HTMLElement): boolean {
+    return menuEl.classList.contains("open");
+  }
+
+  #setMenuOpen(menuEl: HTMLElement, toggleBtn: HTMLButtonElement, open: boolean): void {
+    menuEl.classList.toggle("open", open);
+    toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  #setHeaderMenuOpen(open: boolean): void {
+    if (open) {
+      this.#setPermissionMenuOpen(false);
+      this.#setContextMenuOpen(false);
+    }
+    this.#setMenuOpen(this.#headerMenuEl, this.#headerMenuBtnEl, open);
+  }
+
+  #setPermissionMenuOpen(open: boolean): void {
+    if (open) {
+      this.#setHeaderMenuOpen(false);
+      this.#setContextMenuOpen(false);
+    }
+    this.#setMenuOpen(this.#permDetailsEl, this.#permToggleBtnEl, open);
+  }
+
+  #setContextMenuOpen(open: boolean): void {
+    if (open) {
+      this.#setHeaderMenuOpen(false);
+      this.#setPermissionMenuOpen(false);
+    }
+    this.#setMenuOpen(this.#contextDetailsEl, this.#contextToggleBtnEl, open);
+  }
+
+  #closeFloatingMenusForTarget(target: Node | null): void {
+    if (this.#isMenuOpen(this.#headerMenuEl) && !(target && this.#headerMenuEl.contains(target))) {
+      this.#setHeaderMenuOpen(false);
+    }
+    if (this.#isMenuOpen(this.#permDetailsEl) && !(target && this.#permDetailsEl.contains(target))) {
+      this.#setPermissionMenuOpen(false);
+    }
+    if (this.#isMenuOpen(this.#contextDetailsEl) && !(target && this.#contextDetailsEl.contains(target))) {
+      this.#setContextMenuOpen(false);
+    }
+  }
+
   #setPermission(fullAccess: boolean): void {
     this.#fullAccess = fullAccess;
     this.#permLabelEl.textContent = fullAccess ? "Full access" : "Default permissions";
     this.#permDetailsEl.classList.toggle("full-access", fullAccess);
     this.#permDefaultBtn.classList.toggle("selected", !fullAccess);
     this.#permFullBtn.classList.toggle("selected", fullAccess);
-    this.#permDetailsEl.open = false;
+    this.#setPermissionMenuOpen(false);
   }
 
   #syncComposerInset(): void {

@@ -1,4 +1,5 @@
 import { h, clearChildren } from "../lib/dom.ts";
+import { menuDotsIcon } from "../lib/icons.ts";
 import type {
   DiffFile,
   DiffLine,
@@ -300,7 +301,7 @@ export class DiffView {
         event.stopPropagation();
         this.#toggleFileActionsMenu(file.path);
       },
-    }, ["..."]) as HTMLButtonElement;
+    }, [menuDotsIcon()]) as HTMLButtonElement;
 
     const actionButton = h("button", {
       class: "dv-file-actions-item",

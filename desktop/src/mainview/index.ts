@@ -1,6 +1,7 @@
 import Electrobun, { Electroview } from "electrobun/view";
 import { Store } from "./lib/state.ts";
 import { h, qs } from "./lib/dom.ts";
+import { pluginToolIcon } from "./lib/icons.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
 import { Sidebar, type WorkspaceData } from "./components/sidebar.ts";
 import {
@@ -255,7 +256,7 @@ function init(): void {
       void loadPlugins(true);
     },
   }, [
-    h("span", { class: "sidebar-primary-icon", "aria-hidden": "true" }, ["\u25A6"]),
+    pluginToolIcon("sidebar-primary-icon"),
     h("span", { class: "sidebar-primary-label" }, ["Plugins"]),
   ]) as HTMLButtonElement;
 
