@@ -25,6 +25,7 @@ import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-markdown";
 import "prismjs/components/prism-css";
 import "prismjs/components/prism-sql";
+import "prismjs/components/prism-markup-templating";
 import "prismjs/components/prism-php";
 
 export type DiffViewCallbacks = {

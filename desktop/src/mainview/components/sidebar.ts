@@ -12,6 +12,8 @@ const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
 export type WorkspaceData = {
   path: string;
   name: string;
+  branch: string | null;
+  active: boolean;
   sessions: SessionInfo[];
   expanded: boolean;
 };
@@ -92,10 +94,12 @@ export class Sidebar {
 
   #renderWorkspace(ws: WorkspaceData): HTMLElement {
     const chevron = ws.expanded ? "\u25BC" : "\u25B6";
-    const sessionCount = ws.sessions.length;
     const activeCount = ws.sessions.filter(
       (s) => s.activity === "working" || s.activity === "waiting_for_input"
     ).length;
+    const activeBadge = activeCount > 0
+      ? h("span", { class: "ws-active-badge" }, [String(activeCount)])
+      : null;
 
     const folderHeader = h(
       "div",
@@ -105,10 +109,11 @@ export class Sidebar {
       },
       [
         h("span", { class: "ws-chevron" }, [chevron]),
-        h("span", { class: "ws-folder-name" }, [ws.name]),
-        activeCount > 0
-          ? h("span", { class: "ws-active-badge" }, [String(activeCount)])
-          : h("span", { class: "ws-count" }, [String(sessionCount)]),
+        h("div", { class: "ws-folder-meta" }, [
+          h("span", { class: "ws-folder-name" }, [ws.name]),
+          h("span", { class: "ws-folder-branch" }, [ws.branch ?? "No branch"]),
+        ]),
+        ...(activeBadge ? [activeBadge] : []),
       ]
     );
 
@@ -125,6 +130,10 @@ export class Sidebar {
         class: "ws-action-btn ws-action-remove",
         onclick: (e: Event) => {
           e.stopPropagation();
+          const confirmed = window.confirm(
+            `Remove "${ws.name}" from the workspace list?`
+          );
+          if (!confirmed) return;
           this.#callbacks.onRemoveWorkspace(ws.path);
         },
         title: "Remove workspace",
@@ -137,7 +146,7 @@ export class Sidebar {
     ]);
 
     const folder = h("div", {
-      class: `ws-folder${ws.expanded ? " expanded" : ""}`,
+      class: `ws-folder${ws.expanded ? " expanded" : ""}${ws.active ? " active" : ""}`,
       dataset: { wsPath: ws.path },
     }, [headerRow]);
 

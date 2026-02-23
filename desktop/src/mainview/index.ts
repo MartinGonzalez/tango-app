@@ -1,8 +1,13 @@
 import Electrobun, { Electroview } from "electrobun/view";
 import { Store } from "./lib/state.ts";
-import { qs } from "./lib/dom.ts";
+import { h, qs } from "./lib/dom.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
 import { Sidebar, type WorkspaceData } from "./components/sidebar.ts";
+import {
+  PluginsSidebar,
+  type PluginSidebarSelection,
+} from "./components/plugins-sidebar.ts";
+import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ChatView } from "./components/chat-view.ts";
 import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel } from "./components/files-panel.ts";
@@ -19,6 +24,7 @@ import type {
   HistorySession,
   ToolApprovalRequest,
   SlashCommandEntry,
+  InstalledPlugin,
 } from "../shared/types.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
@@ -146,6 +152,7 @@ const _electrobun = new Electrobun.Electroview({ rpc });
 
 type AppState = {
   snapshot: Snapshot | null;
+  viewMode: "workspaces" | "plugins";
   workspaces: string[];
   expandedWorkspaces: Set<string>;
   activeWorkspace: string | null;
@@ -156,6 +163,9 @@ type AppState = {
   historySessions: Record<string, HistorySession[]>; // workspace path → history
   liveSessions: Set<string>; // session IDs with running processes
   customSessionNames: Record<string, string>; // sessionId → custom name
+  plugins: InstalledPlugin[];
+  pluginsLoading: boolean;
+  pluginSelection: PluginSidebarSelection | null;
 };
 
 type SessionUsageEstimate = {
@@ -165,6 +175,7 @@ type SessionUsageEstimate = {
 
 const appState = new Store<AppState>({
   snapshot: null,
+  viewMode: "workspaces",
   workspaces: [],
   expandedWorkspaces: new Set(),
   activeWorkspace: null,
@@ -175,16 +186,23 @@ const appState = new Store<AppState>({
   historySessions: {},
   liveSessions: new Set(),
   customSessionNames: {},
+  plugins: [],
+  pluginsLoading: false,
+  pluginSelection: null,
 });
 
 // ── Components ───────────────────────────────────────────────────
 
 let panelLayout: PanelLayout;
 let sidebar: Sidebar;
+let pluginsSidebar: PluginsSidebar;
+let pluginsPreview: PluginsPreview;
 let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
+let sidebarModeWorkspacesBtn: HTMLButtonElement | null = null;
+let sidebarModePluginsBtn: HTMLButtonElement | null = null;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FILE_CACHE_MS = 30_000;
@@ -202,6 +220,7 @@ const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
 let prevBranchWorkspace: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
 let activeCommitDiff: { cwd: string; hash: string } | null = null;
+let prevViewMode: AppState["viewMode"] | null = null;
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
@@ -217,8 +236,47 @@ function init(): void {
   const chatPanel = panelLayout.getPanel("chat")!;
   const diffPanel = panelLayout.getPanel("diff")!;
 
-  // Sidebar (workspaces panel)
-  sidebar = new Sidebar(wsPanel, {
+  const sidebarViews = h("div", { class: "sidebar-mode-views" });
+  const workspacesSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-workspaces",
+  });
+  const pluginsSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-plugins",
+    hidden: true,
+  });
+  sidebarViews.appendChild(workspacesSidebarHost);
+  sidebarViews.appendChild(pluginsSidebarHost);
+
+  sidebarModeWorkspacesBtn = h("button", {
+    class: "sidebar-mode-btn active",
+    onclick: () => {
+      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+    },
+  }, ["Workspaces"]) as HTMLButtonElement;
+
+  sidebarModePluginsBtn = h("button", {
+    class: "sidebar-mode-btn",
+    onclick: () => {
+      appState.update((s) => ({ ...s, viewMode: "plugins" }));
+      panelLayout.showPanel("workspaces");
+      qs("#btn-toggle-workspaces")?.classList.add("active");
+      void loadPlugins(true);
+    },
+  }, ["Plugins"]) as HTMLButtonElement;
+
+  const sidebarModeNav = h("div", { class: "sidebar-mode-nav" }, [
+    sidebarModeWorkspacesBtn,
+    sidebarModePluginsBtn,
+  ]);
+
+  const sidebarShell = h("div", { class: "sidebar-shell" }, [
+    sidebarModeNav,
+    sidebarViews,
+  ]);
+  wsPanel.appendChild(sidebarShell);
+
+  // Workspaces sidebar
+  sidebar = new Sidebar(workspacesSidebarHost, {
     onSelectSession: (sessionId, workspacePath) => {
       appState.update((s) => ({
         ...s,
@@ -322,6 +380,16 @@ function init(): void {
     },
   });
 
+  // Plugins sidebar
+  pluginsSidebar = new PluginsSidebar(pluginsSidebarHost, {
+    onSelect: (selection) => {
+      appState.update((s) => ({
+        ...s,
+        pluginSelection: selection,
+      }));
+    },
+  });
+
   // Chat panel
   chatView = new ChatView(chatPanel, {
     onStopSession: async () => {
@@ -369,6 +437,11 @@ function init(): void {
         }
       } catch (err) {
         console.error("Failed to send prompt:", err);
+        const message = err instanceof Error ? err.message : String(err);
+        chatView.appendStreamEvent({
+          type: "error",
+          error: { message },
+        });
       }
     },
     onOpenInFinder: async (path) => {
@@ -389,6 +462,7 @@ function init(): void {
       return searchSlashCommands(cwd, query, 30);
     },
   });
+  pluginsPreview = new PluginsPreview(chatPanel);
 
   // Diff panel
   diffView = new DiffView(diffPanel, {
@@ -482,9 +556,46 @@ function init(): void {
 
   // State subscription — rebuild sidebar on every snapshot or workspace change
   appState.subscribe((state) => {
+    const viewModeChanged = prevViewMode !== null && prevViewMode !== state.viewMode;
+    const sidebarWidthBeforeSwitch = viewModeChanged ? wsPanel.offsetWidth : 0;
+
     const wsData = buildWorkspaceData(state);
     sidebar.render(wsData);
     sidebar.setActiveSession(state.activeSessionId);
+
+    const pluginsSelection = resolvePluginSelection(
+      state.plugins,
+      state.pluginSelection
+    );
+    const isPluginsMode = state.viewMode === "plugins";
+
+    workspacesSidebarHost.hidden = isPluginsMode;
+    pluginsSidebarHost.hidden = !isPluginsMode;
+    sidebarModeWorkspacesBtn?.classList.toggle("active", !isPluginsMode);
+    sidebarModePluginsBtn?.classList.toggle("active", isPluginsMode);
+
+    pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
+    pluginsSidebar.setSelection(pluginsSelection);
+    pluginsPreview.render(state.plugins, pluginsSelection, {
+      loading: state.pluginsLoading,
+    });
+
+    chatView.element.hidden = isPluginsMode;
+    pluginsPreview.setVisible(isPluginsMode);
+    if (isPluginsMode) {
+      panelLayout.hidePanel("diff");
+      if (sidebarWidthBeforeSwitch > 0) {
+        panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
+      }
+      prevViewMode = state.viewMode;
+      return;
+    }
+    panelLayout.showPanel("diff");
+    if (sidebarWidthBeforeSwitch > 0) {
+      panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
+    }
+    prevViewMode = state.viewMode;
+
     chatView.setHeader(
       resolveActiveSessionTitle(state),
       state.activeWorkspace
@@ -522,6 +633,7 @@ function init(): void {
   // Load initial data
   loadWorkspaces();
   loadSessionNames();
+  loadPlugins();
 }
 
 // ── Actions ──────────────────────────────────────────────────────
@@ -772,7 +884,9 @@ async function loadWorkspaces(): Promise<void> {
       // Load diff and history for first workspace
       loadDiff(workspaces[0], appState.get().diffScope);
       loadSessionHistory(workspaces[0]);
-      ensureBranchHistory(workspaces[0]);
+      for (const wsPath of workspaces) {
+        ensureBranchHistory(wsPath);
+      }
     }
   } catch {
     // First run — no workspaces yet
@@ -788,6 +902,33 @@ async function loadSessionNames(): Promise<void> {
     }));
   } catch (err) {
     console.error("Failed to load session names:", err);
+  }
+}
+
+async function loadPlugins(force = false): Promise<void> {
+  const state = appState.get();
+  if (state.pluginsLoading) return;
+  if (!force && state.plugins.length > 0) return;
+
+  appState.update((s) => ({
+    ...s,
+    pluginsLoading: true,
+  }));
+
+  try {
+    const plugins: InstalledPlugin[] = await (rpc as any).request.getInstalledPlugins({});
+    appState.update((s) => ({
+      ...s,
+      plugins,
+      pluginsLoading: false,
+      pluginSelection: resolvePluginSelection(plugins, s.pluginSelection),
+    }));
+  } catch (err) {
+    console.error("Failed to load plugins:", err);
+    appState.update((s) => ({
+      ...s,
+      pluginsLoading: false,
+    }));
   }
 }
 
@@ -969,6 +1110,45 @@ function compareSlashCommandEntries(a: SlashCommandEntry, b: SlashCommandEntry):
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+function resolvePluginSelection(
+  plugins: InstalledPlugin[],
+  current: PluginSidebarSelection | null
+): PluginSidebarSelection | null {
+  if (plugins.length === 0) return null;
+  if (!current) {
+    return {
+      kind: "plugin",
+      pluginId: plugins[0].id,
+    };
+  }
+
+  const plugin = plugins.find((entry) => entry.id === current.pluginId);
+  if (!plugin) {
+    return {
+      kind: "plugin",
+      pluginId: plugins[0].id,
+    };
+  }
+
+  if (current.kind === "plugin") {
+    return current;
+  }
+
+  const list = current.kind === "command"
+    ? plugin.commands
+    : current.kind === "agent"
+      ? plugin.agents
+      : plugin.skills;
+
+  const found = list.some((item) => item.id === current.itemId);
+  if (found) return current;
+
+  return {
+    kind: "plugin",
+    pluginId: plugin.id,
+  };
+}
+
 function buildWorkspaceData(state: AppState): WorkspaceData[] {
   const liveSessions = state.snapshot
     ? buildSessionList(state.snapshot)
@@ -976,6 +1156,9 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
 
   return state.workspaces.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
+    const branch = resolveWorkspaceBranchName(
+      state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS
+    );
     // Live sessions for this workspace
     const wsLive = liveSessions.filter((s) => s.cwd === wsPath);
     const liveIds = new Set(wsLive.map((s) => s.sessionId));
@@ -994,10 +1177,33 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
     return {
       path: wsPath,
       name,
+      branch,
+      active: state.activeWorkspace === wsPath,
       sessions: allSessions,
       expanded: state.expandedWorkspaces.has(wsPath),
     };
   });
+}
+
+function resolveWorkspaceBranchName(commits: BranchCommit[]): string | null {
+  for (const commit of commits) {
+    const headRef = commit.refs.find((ref) => ref.kind === "head");
+    if (headRef?.name) return headRef.name;
+  }
+
+  for (const commit of commits) {
+    const branchRef = commit.refs.find(
+      (ref) => ref.kind === "branch" && ref.name !== "HEAD"
+    );
+    if (branchRef?.name) return branchRef.name;
+  }
+
+  for (const commit of commits) {
+    const isDetachedHead = commit.refs.some((ref) => ref.name === "HEAD");
+    if (isDetachedHead) return "detached HEAD";
+  }
+
+  return null;
 }
 
 /** Convert a HistorySession into a SessionInfo for the sidebar */

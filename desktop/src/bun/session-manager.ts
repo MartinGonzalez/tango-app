@@ -1,5 +1,7 @@
 import type { ClaudeStreamEvent } from "../shared/types.ts";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 export type SessionProcess = {
   sessionId: string | null;
@@ -52,6 +54,7 @@ export class SessionManager {
     resumeSessionId?: string,
     selectedFiles: string[] = []
   ): Promise<string> {
+    const claudeBin = resolveClaudeBinary();
     const args = [
       "-p",
       "--input-format", "stream-json",
@@ -69,8 +72,12 @@ export class SessionManager {
 
     let proc;
     try {
-      proc = Bun.spawn(["claude", ...args], {
+      proc = Bun.spawn([claudeBin, ...args], {
         cwd,
+        env: {
+          ...process.env,
+          PATH: buildSpawnPath(process.env.PATH, claudeBin),
+        },
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -311,4 +318,56 @@ function normalizeSelectedFiles(paths: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+const FALLBACK_CLAUDE_PATHS = [
+  "/opt/homebrew/bin/claude",
+  "/usr/local/bin/claude",
+  join(homedir(), ".local", "bin", "claude"),
+  join(homedir(), "bin", "claude"),
+];
+
+function resolveClaudeBinary(): string {
+  const envBin = process.env.CLAUDE_BIN?.trim();
+  if (envBin) {
+    return envBin;
+  }
+
+  const fromPath = Bun.which?.("claude");
+  if (fromPath) {
+    return fromPath;
+  }
+
+  const fallback = FALLBACK_CLAUDE_PATHS.find((candidate) => existsSync(candidate));
+  if (fallback) {
+    return fallback;
+  }
+
+  throw new Error(
+    `Claude CLI binary not found. Set CLAUDE_BIN or install 'claude' in PATH. Checked: ${FALLBACK_CLAUDE_PATHS.join(", ")}`
+  );
+}
+
+function buildSpawnPath(currentPath: string | undefined, claudeBin: string): string {
+  const entries = String(currentPath ?? "")
+    .split(":")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const seen = new Set(entries);
+
+  const extras = [
+    dirname(claudeBin),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    join(homedir(), ".local", "bin"),
+    join(homedir(), "bin"),
+  ];
+
+  for (const extra of extras) {
+    if (!extra || seen.has(extra)) continue;
+    entries.push(extra);
+    seen.add(extra);
+  }
+
+  return entries.join(":");
 }

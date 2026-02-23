@@ -28,6 +28,7 @@ import "prismjs/components/prism-yaml";
 import "prismjs/components/prism-markdown";
 import "prismjs/components/prism-css";
 import "prismjs/components/prism-sql";
+import "prismjs/components/prism-markup-templating";
 import "prismjs/components/prism-php";
 
 export type ChatCallbacks = {
@@ -1530,13 +1531,12 @@ function formatToolDetails(
 const CODE_PLACEHOLDER_PATTERN = /^@@CODEBLOCKTOKEN(\d+)@@$/;
 const CODE_PLACEHOLDER_GLOBAL_PATTERN = /@@CODEBLOCKTOKEN(\d+)@@/g;
 const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/;
-const UNORDERED_LIST_PATTERN = /^\s*[-*+]\s+(.+)$/;
-const ORDERED_LIST_PATTERN = /^\s*\d+\.\s+(.+)$/;
+const LIST_ITEM_PATTERN = /^(\s*)(?:([-*+])|(\d+)\.)\s+(.*)$/;
 const BLOCKQUOTE_PATTERN = /^\s*>\s?(.*)$/;
 const HORIZONTAL_RULE_PATTERN = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const INLINE_PLACEHOLDER_PATTERN = /@@INLINEMDTOKEN(\d+)@@/g;
 
-function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string): string {
   const normalized = String(text ?? "").replace(/\r\n?/g, "\n");
   if (!normalized.trim()) return "";
 
@@ -1617,15 +1617,14 @@ function renderMarkdownBlocks(source: string): string {
       continue;
     }
 
-    if (UNORDERED_LIST_PATTERN.test(line)) {
-      const [listHtml, nextIndex] = renderMarkdownList(lines, i, false);
-      blocks.push(listHtml);
-      i = nextIndex;
-      continue;
-    }
-
-    if (ORDERED_LIST_PATTERN.test(line)) {
-      const [listHtml, nextIndex] = renderMarkdownList(lines, i, true);
+    const listItem = matchListItem(line);
+    if (listItem) {
+      const [listHtml, nextIndex] = renderMarkdownList(
+        lines,
+        i,
+        listItem.indent,
+        listItem.ordered
+      );
       blocks.push(listHtml);
       i = nextIndex;
       continue;
@@ -1641,7 +1640,7 @@ function renderMarkdownBlocks(source: string): string {
       if (HEADING_PATTERN.test(nextTrimmed)) break;
       if (HORIZONTAL_RULE_PATTERN.test(nextTrimmed)) break;
       if (BLOCKQUOTE_PATTERN.test(nextLine)) break;
-      if (UNORDERED_LIST_PATTERN.test(nextLine) || ORDERED_LIST_PATTERN.test(nextLine)) break;
+      if (matchListItem(nextLine)) break;
       paragraphLines.push(nextLine);
       i++;
     }
@@ -1658,48 +1657,127 @@ function renderMarkdownBlocks(source: string): string {
 function renderMarkdownList(
   lines: string[],
   startIndex: number,
+  listIndent: number,
   ordered: boolean
 ): [string, number] {
-  const pattern = ordered ? ORDERED_LIST_PATTERN : UNORDERED_LIST_PATTERN;
   const tag = ordered ? "ol" : "ul";
   const items: string[] = [];
   let i = startIndex;
 
   while (i < lines.length) {
-    const line = lines[i];
-    const match = line.match(pattern);
-    if (!match) break;
+    while (i < lines.length && lines[i].trim() === "") {
+      i++;
+    }
+    if (i >= lines.length) break;
 
-    const itemLines = [match[1].trim()];
+    const item = matchListItem(lines[i]);
+    if (!item) break;
+    if (item.indent < listIndent) break;
+    if (item.indent > listIndent) break;
+    if (item.ordered !== ordered) break;
+
     i++;
+    const textLines: string[] = [];
+    const nestedLists: string[] = [];
+    if (item.content) {
+      textLines.push(item.content);
+    }
 
     while (i < lines.length) {
-      const continuationLine = lines[i];
-      const continuationTrimmed = continuationLine.trim();
-      if (!continuationTrimmed) break;
-      if (pattern.test(continuationLine)) break;
-      if (!/^\s{2,}\S/.test(continuationLine)) break;
-      if (CODE_PLACEHOLDER_PATTERN.test(continuationTrimmed)) break;
-      itemLines.push(continuationTrimmed);
-      i++;
-    }
+      const currentLine = lines[i];
+      const trimmed = currentLine.trim();
 
-    const itemHtml = renderInlineMarkdown(itemLines.join("\n")).replace(
-      /\n/g,
-      "<br>"
-    );
-    items.push(`<li>${itemHtml}</li>`);
+      if (!trimmed) {
+        const nextNonEmpty = findNextNonEmptyLine(lines, i + 1);
+        if (nextNonEmpty < 0) {
+          i = lines.length;
+          break;
+        }
 
-    if (lines[i]?.trim() === "") {
-      const nextLine = lines[i + 1];
-      if (!nextLine || !pattern.test(nextLine)) {
+        const nextList = matchListItem(lines[nextNonEmpty]);
+        if (nextList && nextList.indent <= listIndent) {
+          break;
+        }
+
+        if (textLines.length > 0 && textLines[textLines.length - 1] !== "") {
+          textLines.push("");
+        }
+        i = nextNonEmpty;
+        continue;
+      }
+
+      const nestedItem = matchListItem(currentLine);
+      if (nestedItem) {
+        if (nestedItem.indent > listIndent) {
+          const [nestedHtml, nextIndex] = renderMarkdownList(
+            lines,
+            i,
+            nestedItem.indent,
+            nestedItem.ordered
+          );
+          nestedLists.push(nestedHtml);
+          i = nextIndex;
+          continue;
+        }
         break;
       }
-      i++;
+
+      if (leadingIndentWidth(currentLine) > listIndent) {
+        textLines.push(trimmed);
+        i++;
+        continue;
+      }
+
+      break;
     }
+
+    const textHtml = textLines.length > 0
+      ? renderInlineMarkdown(textLines.join("\n")).replace(/\n/g, "<br>")
+      : "";
+    items.push(`<li>${textHtml}${nestedLists.join("")}</li>`);
   }
 
   return [`<${tag}>${items.join("")}</${tag}>`, i];
+}
+
+function matchListItem(
+  line: string
+): {
+  indent: number;
+  ordered: boolean;
+  content: string;
+} | null {
+  const match = line.match(LIST_ITEM_PATTERN);
+  if (!match) return null;
+
+  return {
+    indent: leadingIndentWidth(match[1] ?? ""),
+    ordered: Boolean(match[3]),
+    content: String(match[4] ?? "").trim(),
+  };
+}
+
+function findNextNonEmptyLine(lines: string[], startIndex: number): number {
+  for (let i = startIndex; i < lines.length; i++) {
+    if (lines[i].trim()) return i;
+  }
+  return -1;
+}
+
+function leadingIndentWidth(value: string): number {
+  let width = 0;
+  for (const ch of value) {
+    if (ch === " ") {
+      width += 1;
+      continue;
+    }
+    if (ch === "\t") {
+      width += 4;
+      continue;
+    }
+    break;
+  }
+  return width;
 }
 
 function renderInlineMarkdown(text: string): string {
@@ -1773,8 +1851,13 @@ function sanitizeLinkHref(href: string): string | null {
 
 function renderCodeBlock(code: string, language: string | null): string {
   const highlighted = highlightCodeBlock(code, language);
-  const languageClass = language ? ` class="language-${language}"` : "";
-  return `<pre class="code-block"><code${languageClass}>${highlighted}</code></pre>`;
+  const normalizedLanguage = language ?? "text";
+  const preClass = `code-block language-${normalizedLanguage}${language ? " has-language" : ""}`;
+  const codeClass = `language-${normalizedLanguage}`;
+  const languageLabel = language
+    ? `<span class="code-block-lang">${escapeHtml(formatLanguageLabel(language))}</span>`
+    : "";
+  return `<pre class="${preClass}">${languageLabel}<code class="${codeClass}">${highlighted}</code></pre>`;
 }
 
 function highlightCodeBlock(code: string, language: string | null): string {
@@ -1832,6 +1915,26 @@ function normalizeCodeLanguageTag(language: string): string | null {
   if (token === "diff") return "diff";
   const mapped = map[token] ?? token;
   return mapped || null;
+}
+
+function formatLanguageLabel(language: string): string {
+  const normalized = language.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    javascript: "JavaScript",
+    typescript: "TypeScript",
+    json: "JSON",
+    yaml: "YAML",
+    bash: "Bash",
+    shell: "Shell",
+    sh: "Shell",
+    zsh: "Zsh",
+    jsx: "JSX",
+    tsx: "TSX",
+    markdown: "Markdown",
+    diff: "Diff",
+  };
+  if (labels[normalized]) return labels[normalized];
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : "Text";
 }
 
 function renderToolContent(text: string): string {

@@ -1,6 +1,6 @@
 {
   "name": "claude-sessions",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Desktop app for managing Claude Code sessions",
   "type": "module",
   "scripts": {

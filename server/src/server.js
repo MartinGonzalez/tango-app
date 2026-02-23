@@ -1,7 +1,4 @@
 import http from "node:http";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 
 import { scanClaudeProcesses } from "./processScanner.js";
@@ -9,10 +6,6 @@ import { TaskStore } from "./taskStore.js";
 import { readPromptFromTranscript } from "./transcriptReader.js";
 import { processHookEvent } from "./eventProcessor.js";
 import { notify } from "./notifier.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const publicDir = path.resolve(__dirname, "../public");
 
 const PORT = Number(process.env.PORT ?? 4242);
 const POLL_MS = Number(process.env.POLL_MS ?? 2000);
@@ -35,6 +28,15 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.url === "/health") {
       return sendJson(res, 200, { ok: true });
+    }
+
+    if (req.method === "GET" && req.url === "/") {
+      return sendJson(res, 200, {
+        name: "claude-watcher-server",
+        version: "0.0.1",
+        status: "ok",
+        endpoints: ["/health", "/api/events", "/api/focus", "/api/snapshot"]
+      });
     }
 
     if (req.url === "/api/events" && req.method === "POST") {
@@ -102,19 +104,6 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    if (req.method === "GET") {
-      const filePath = req.url === "/" ? "index.html" : req.url.slice(1);
-      if (filePath.includes("..")) {
-        return sendJson(res, 400, { error: "Invalid path" });
-      }
-
-      const absolutePath = path.join(publicDir, filePath);
-      const content = await readFile(absolutePath);
-      res.writeHead(200, { "Content-Type": contentType(filePath) });
-      res.end(content);
-      return;
-    }
-
     sendJson(res, 404, { error: "Not found" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";
@@ -142,7 +131,7 @@ async function readJsonBody(req) {
 
 async function resolvePrompts(tasks) {
   const pending = tasks.filter((t) => t.transcriptPath && !t.prompt);
-  const results = await Promise.allSettled(
+  await Promise.allSettled(
     pending.map(async (task) => {
       const result = await readPromptFromTranscript(task.transcriptPath);
       if (result) {
@@ -152,22 +141,6 @@ async function resolvePrompts(tasks) {
       }
     })
   );
-}
-
-function contentType(filePath) {
-  if (filePath.endsWith(".js")) {
-    return "text/javascript";
-  }
-  if (filePath.endsWith(".css")) {
-    return "text/css";
-  }
-  if (filePath.endsWith(".json")) {
-    return "application/json";
-  }
-  if (filePath.endsWith(".png")) {
-    return "image/png";
-  }
-  return "text/html";
 }
 
 function safeStringify(value) {

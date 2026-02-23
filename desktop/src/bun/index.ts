@@ -1,7 +1,9 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
+import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { WatcherClient } from "./watcher-client.ts";
 import { SessionManager } from "./session-manager.ts";
 import { readTranscript } from "./transcript-reader.ts";
@@ -25,6 +27,10 @@ import {
   getSlashCommands,
   invalidateSlashCommandsCache,
 } from "./slash-commands.ts";
+import {
+  getInstalledPlugins,
+  invalidateInstalledPluginsCache,
+} from "./plugins.ts";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
@@ -56,16 +62,58 @@ async function ensureServer(): Promise<void> {
   }
 
   console.log("Starting watcher server...");
-  // Try common locations: env var, npm global, relative to project
-  const serverPath = process.env.CLAUDE_WATCHER_SERVER
-    ?? `${process.env.HOME}/Desktop/claude-watcher/src/server.js`;
+  const cwd = process.cwd();
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    process.env.CLAUDE_WATCHER_SERVER?.trim(),
+    // Bundled app path after deploy: Contents/Resources/app/server/src/server.js
+    resolve(moduleDir, "../server/src/server.js"),
+    resolve(cwd, "../server/src/server.js"),
+    resolve(cwd, "server/src/server.js"),
+  ].filter((value): value is string => Boolean(value));
+
+  const serverPath = candidates.find((candidate) => existsSync(candidate));
+  if (!serverPath) {
+    console.warn(
+      `Watcher server entrypoint not found. Checked: ${candidates.join(", ")}. Running in degraded mode`
+    );
+    return;
+  }
+
   try {
-    Bun.spawn(["node", serverPath], {
-      env: { ...process.env, PORT: "4242" },
-      stdio: ["ignore", "ignore", "ignore"],
+    const bundledBun = resolve(dirname(process.argv0), "bun");
+    const runtimeCandidates = [
+      process.env.CLAUDE_WATCHER_RUNTIME?.trim(),
+      existsSync(bundledBun) ? bundledBun : null,
+      "bun",
+      "node",
+    ].filter((value, index, array): value is string => {
+      return Boolean(value) && array.indexOf(value) === index;
     });
+
+    let spawned = false;
+    const failures: string[] = [];
+    for (const runtime of runtimeCandidates) {
+      try {
+        Bun.spawn([runtime, serverPath], {
+          env: { ...process.env, PORT: "4242" },
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+        console.log(`Watcher server spawned via: ${runtime}`);
+        spawned = true;
+        break;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        failures.push(`${runtime}: ${message}`);
+      }
+    }
+
+    if (!spawned) {
+      console.warn(`Failed to spawn watcher server: ${failures.join(" | ")}`);
+      return;
+    }
   } catch (err) {
-    console.warn("Failed to spawn watcher server:", err);
+    console.warn("Unexpected error while starting watcher server:", err);
     return;
   }
 
@@ -343,16 +391,22 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getSlashCommands(cwd);
       },
 
+      getInstalledPlugins: async () => {
+        return getInstalledPlugins();
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
         invalidateSlashCommandsCache(path);
+        invalidateInstalledPluginsCache();
       },
 
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
         invalidateWorkspaceFilesCache(path);
         invalidateSlashCommandsCache(path);
+        invalidateInstalledPluginsCache();
       },
 
       openInFinder: async ({ path }: { path: string }) => {

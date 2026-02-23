@@ -113,6 +113,52 @@ export class PanelLayout {
     return !(this.#panels.get(id)?.hidden ?? true);
   }
 
+  preservePanelPixelWidth(id: string, pixelWidth: number): void {
+    const state = this.#panels.get(id);
+    if (!state || state.hidden || !Number.isFinite(pixelWidth) || pixelWidth <= 0) {
+      return;
+    }
+
+    const visible = this.#visiblePanels();
+    if (visible.length === 0) return;
+
+    const totalPixels = visible.reduce((sum, panel) => sum + panel.el.offsetWidth, 0);
+    if (totalPixels <= 0) return;
+
+    const minPercent = (state.config.minWidth / totalPixels) * 100;
+    const others = visible.filter((panel) => panel !== state);
+    const minOthers = others.length * 0.1;
+    const unclamped = (pixelWidth / totalPixels) * 100;
+    const nextPercent = clamp(
+      unclamped,
+      minPercent,
+      Math.max(minPercent, 100 - minOthers)
+    );
+
+    state.currentWidth = nextPercent;
+    const remaining = Math.max(0, 100 - nextPercent);
+
+    if (others.length > 0) {
+      const othersTotal = others.reduce(
+        (sum, panel) => sum + Math.max(0.1, panel.currentWidth),
+        0
+      );
+      if (othersTotal <= 0) {
+        const even = remaining / others.length;
+        for (const panel of others) {
+          panel.currentWidth = even;
+        }
+      } else {
+        for (const panel of others) {
+          const base = Math.max(0.1, panel.currentWidth);
+          panel.currentWidth = (base / othersTotal) * remaining;
+        }
+      }
+    }
+
+    this.#rebalance();
+  }
+
   #startDrag(handleIndex: number, startX: number, leftId: string, rightId: string): void {
     const leftPanel = this.#panels.get(leftId)!;
     const rightPanel = this.#panels.get(rightId)!;
@@ -247,3 +293,9 @@ type PanelState = {
   hidden: boolean;
   currentWidth: number;
 };
+
+function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
