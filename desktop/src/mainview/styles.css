@@ -2713,6 +2713,10 @@ button {
   margin-left: 6px;
   border-radius: var(--radius-sm);
   color: #FAF9F5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
   transition: all 80ms ease;
   flex-shrink: 0;
 }
@@ -2731,14 +2735,18 @@ button {
   width: 14px;
   height: 14px;
   display: block;
-  margin: 0 auto;
 }
 
 .dv-icon-branch {
   width: 14px;
   height: 14px;
   display: block;
-  margin: 0 auto;
+}
+
+.dv-icon-branch svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .dv-content {

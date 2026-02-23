@@ -1,5 +1,5 @@
 import { h, clearChildren } from "../lib/dom.ts";
-import { menuDotsIcon } from "../lib/icons.ts";
+import { menuDotsIcon, workspaceBranchIcon } from "../lib/icons.ts";
 import type {
   DiffFile,
   DiffLine,
@@ -103,13 +103,7 @@ export class DiffView {
       class: "dv-icon-btn",
       title: "Toggle branch history",
       onclick: () => this.toggleBranchPanel(),
-      innerHTML: `<svg class="dv-icon-branch" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <circle cx="4" cy="3.25" r="1.8" stroke="currentColor" stroke-width="1.1"/>
-        <circle cx="12" cy="12.75" r="1.8" stroke="currentColor" stroke-width="1.1"/>
-        <circle cx="4" cy="12.75" r="1.8" stroke="currentColor" stroke-width="1.1"/>
-        <path d="M4 5.2v5.75M4 7.8c0-2.7 1.85-4.55 4.5-4.55H10" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-      </svg>`,
-    }) as HTMLButtonElement;
+    }, [workspaceBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
 
     this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
       h("span", { class: "dv-file-label" }, [""]),
