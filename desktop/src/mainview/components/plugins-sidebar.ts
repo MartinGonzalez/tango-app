@@ -14,6 +14,7 @@ export type PluginSidebarSelection =
 
 export type PluginsSidebarCallbacks = {
   onSelect: (selection: PluginSidebarSelection) => void;
+  onBack: () => void;
 };
 
 export class PluginsSidebar {
@@ -28,6 +29,11 @@ export class PluginsSidebar {
     this.#callbacks = callbacks;
 
     const header = h("div", { class: "plugins-sidebar-header" }, [
+      h("button", {
+        class: "plugins-sidebar-back-btn",
+        title: "Back to workspaces",
+        onclick: () => this.#callbacks.onBack(),
+      }, ["\u2190"]),
       h("span", { class: "plugins-sidebar-title" }, ["Plugins"]),
     ]);
 

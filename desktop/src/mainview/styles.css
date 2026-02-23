@@ -467,7 +467,7 @@ button {
 }
 
 .ws-session-item.active {
-  background: var(--bg-active);
+  background: #141413;
 }
 
 .ws-session-dot {
@@ -639,35 +639,57 @@ button {
   flex-direction: column;
 }
 
-.sidebar-mode-nav {
+.sidebar-primary-actions {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
   padding: 10px 10px 8px;
   border-bottom: 1px solid var(--border);
 }
 
-.sidebar-mode-btn {
-  flex: 1;
-  min-height: 24px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  transition: all 100ms ease;
+.sidebar-primary-actions[hidden] {
+  display: none !important;
 }
 
-.sidebar-mode-btn:hover {
+.sidebar-primary-btn {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 0 10px;
+  transition: all 110ms ease;
+}
+
+.sidebar-primary-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.sidebar-mode-btn.active {
-  border-color: var(--border-heavy);
-  background: var(--bg-active);
+.sidebar-primary-btn.active {
+  border-color: #2d2c28;
+  background: #141413;
   color: var(--text);
+}
+
+.sidebar-primary-icon {
+  width: 18px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.sidebar-primary-label {
+  font-size: 15px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .sidebar-mode-views {
@@ -697,17 +719,36 @@ button {
 .plugins-sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 12px 12px 10px;
   border-bottom: 1px solid var(--border);
 }
 
+.plugins-sidebar-back-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 100ms ease;
+}
+
+.plugins-sidebar-back-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
 .plugins-sidebar-title {
-  font-size: 11px;
+  font-size: 22px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-tertiary);
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .plugins-sidebar-list {
@@ -747,8 +788,8 @@ button {
 }
 
 .plugin-row.active {
-  background: var(--bg-active);
-  border-color: var(--border-heavy);
+  background: #141413;
+  border-color: #2d2c28;
   color: var(--text);
 }
 
@@ -828,8 +869,8 @@ button {
 
 .plugin-item-row.active {
   color: var(--text);
-  border-color: rgba(59, 130, 246, 0.4);
-  background: rgba(59, 130, 246, 0.12);
+  border-color: #2d2c28;
+  background: #141413;
 }
 
 /* ── Plugins Preview ─────────────────────────────────────────── */
@@ -2666,7 +2707,7 @@ button {
   min-width: 240px;
   max-width: 46%;
   border-left: 1px solid var(--border);
-  background: var(--bg-secondary);
+  background: #262624;
   overflow: hidden;
 }
 
@@ -3205,6 +3246,7 @@ button {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: #262624;
 }
 
 .bp-header {

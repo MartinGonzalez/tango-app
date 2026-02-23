@@ -201,8 +201,7 @@ let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
-let sidebarModeWorkspacesBtn: HTMLButtonElement | null = null;
-let sidebarModePluginsBtn: HTMLButtonElement | null = null;
+let sidebarPrimaryPluginsBtn: HTMLButtonElement | null = null;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FILE_CACHE_MS = 30_000;
@@ -247,30 +246,25 @@ function init(): void {
   sidebarViews.appendChild(workspacesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
 
-  sidebarModeWorkspacesBtn = h("button", {
-    class: "sidebar-mode-btn active",
-    onclick: () => {
-      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
-    },
-  }, ["Workspaces"]) as HTMLButtonElement;
-
-  sidebarModePluginsBtn = h("button", {
-    class: "sidebar-mode-btn",
+  sidebarPrimaryPluginsBtn = h("button", {
+    class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "plugins" }));
       panelLayout.showPanel("workspaces");
       qs("#btn-toggle-workspaces")?.classList.add("active");
       void loadPlugins(true);
     },
-  }, ["Plugins"]) as HTMLButtonElement;
+  }, [
+    h("span", { class: "sidebar-primary-icon", "aria-hidden": "true" }, ["\u25A6"]),
+    h("span", { class: "sidebar-primary-label" }, ["Plugins"]),
+  ]) as HTMLButtonElement;
 
-  const sidebarModeNav = h("div", { class: "sidebar-mode-nav" }, [
-    sidebarModeWorkspacesBtn,
-    sidebarModePluginsBtn,
+  const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
+    sidebarPrimaryPluginsBtn,
   ]);
 
   const sidebarShell = h("div", { class: "sidebar-shell" }, [
-    sidebarModeNav,
+    sidebarPrimaryActions,
     sidebarViews,
   ]);
   wsPanel.appendChild(sidebarShell);
@@ -388,6 +382,9 @@ function init(): void {
         ...s,
         pluginSelection: selection,
       }));
+    },
+    onBack: () => {
+      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
     },
   });
 
@@ -570,10 +567,10 @@ function init(): void {
     );
     const isPluginsMode = state.viewMode === "plugins";
 
+    sidebarPrimaryActions.hidden = isPluginsMode;
     workspacesSidebarHost.hidden = isPluginsMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
-    sidebarModeWorkspacesBtn?.classList.toggle("active", !isPluginsMode);
-    sidebarModePluginsBtn?.classList.toggle("active", isPluginsMode);
+    sidebarPrimaryPluginsBtn?.classList.toggle("active", isPluginsMode);
 
     pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
     pluginsSidebar.setSelection(pluginsSelection);
