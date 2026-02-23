@@ -3,7 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DiffFile } from "../src/shared/types.ts";
-import { getDiff } from "../src/bun/diff-provider.ts";
+import {
+  beginTurnDiff,
+  clearLastTurnDiffForSession,
+  clearLastTurnDiffForWorkspace,
+  finalizeTurnDiff,
+  getDiff,
+} from "../src/bun/diff-provider.ts";
 
 describe("diff-provider getDiff", () => {
   let repoDir = "";
@@ -21,6 +27,7 @@ describe("diff-provider getDiff", () => {
 
   afterEach(async () => {
     if (!repoDir) return;
+    await clearLastTurnDiffForWorkspace(repoDir).catch(() => {});
     await rm(repoDir, { recursive: true, force: true });
   });
 
@@ -46,6 +53,61 @@ describe("diff-provider getDiff", () => {
     expect(diff.map((file) => file.path)).toEqual(["outside.txt", "tracked.txt"]);
     expect(byPath(diff, "outside.txt")?.status).toBe("added");
     expect(byPath(diff, "tracked.txt")?.status).toBe("modified");
+  });
+
+  test("persists last-turn diff across module reloads", async () => {
+    await beginTurnDiff(repoDir, "session-persist");
+    await writeFile(join(repoDir, "tracked.txt"), "line one\nline two\n", "utf-8");
+    await finalizeTurnDiff(repoDir, "session-persist");
+
+    const inMemory = await getDiff(repoDir, "last_turn", "session-persist");
+    expect(byPath(inMemory, "tracked.txt")?.status).toBe("modified");
+
+    const reloaded = await import(`../src/bun/diff-provider.ts?reload=${Date.now()}`);
+    const restored = await reloaded.getDiff(repoDir, "last_turn", "session-persist");
+    expect(byPath(restored, "tracked.txt")?.status).toBe("modified");
+  });
+
+  test("clears persisted last-turn diff when the source session is deleted", async () => {
+    await beginTurnDiff(repoDir, "session-delete");
+    await writeFile(join(repoDir, "tracked.txt"), "line one\nline two\n", "utf-8");
+    await finalizeTurnDiff(repoDir, "session-delete");
+
+    await clearLastTurnDiffForSession("session-delete", repoDir);
+
+    const afterDelete = await getDiff(repoDir, "last_turn", "session-delete");
+    expect(afterDelete).toEqual([]);
+
+    const reloaded = await import(`../src/bun/diff-provider.ts?reload=${Date.now()}`);
+    const restored = await reloaded.getDiff(repoDir, "last_turn", "session-delete");
+    expect(restored).toEqual([]);
+  });
+
+  test("returns empty last-turn diff when no session is selected", async () => {
+    await beginTurnDiff(repoDir, "session-a");
+    await writeFile(join(repoDir, "tracked.txt"), "line one\nline two\n", "utf-8");
+    await finalizeTurnDiff(repoDir, "session-a");
+
+    const noSession = await getDiff(repoDir, "last_turn");
+    expect(noSession).toEqual([]);
+  });
+
+  test("keeps last-turn diffs isolated per session", async () => {
+    await beginTurnDiff(repoDir, "session-a");
+    await writeFile(join(repoDir, "tracked.txt"), "line one\nline two\n", "utf-8");
+    await finalizeTurnDiff(repoDir, "session-a");
+
+    await beginTurnDiff(repoDir, "session-b");
+    await writeFile(join(repoDir, "tracked.txt"), "line one\nline two\nline three\n", "utf-8");
+    await finalizeTurnDiff(repoDir, "session-b");
+
+    const sessionA = await getDiff(repoDir, "last_turn", "session-a");
+    const sessionB = await getDiff(repoDir, "last_turn", "session-b");
+    const missing = await getDiff(repoDir, "last_turn", "session-missing");
+
+    expect(byPath(sessionA, "tracked.txt")?.status).toBe("modified");
+    expect(byPath(sessionB, "tracked.txt")?.status).toBe("modified");
+    expect(missing).toEqual([]);
   });
 });
 

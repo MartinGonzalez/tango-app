@@ -330,7 +330,7 @@ export type AppRPC = {
         response: HistorySession[];
       };
       getDiff: {
-        params: { cwd: string; scope?: DiffScope };
+        params: { cwd: string; scope?: DiffScope; sessionId?: string };
         response: DiffFile[];
       };
       getCommitDiff: {

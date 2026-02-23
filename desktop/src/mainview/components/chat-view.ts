@@ -197,6 +197,11 @@ export class ChatView {
     this.#inputEl.addEventListener("click", () => {
       void this.#updateMentionSuggestions();
     });
+    this.#inputEl.addEventListener("focus", () => {
+      if (this.#headerMenuEl.open) this.#headerMenuEl.open = false;
+      if (this.#permDetailsEl?.open) this.#permDetailsEl.open = false;
+      if (this.#contextDetailsEl?.open) this.#contextDetailsEl.open = false;
+    });
     this.#inputEl.addEventListener("keyup", (event) => {
       if (
         event.key.startsWith("Arrow")
@@ -296,6 +301,16 @@ export class ChatView {
         this.#permFullBtn,
       ]),
     ]) as HTMLDetailsElement;
+    this.#permDetailsEl.addEventListener("focusout", (event: FocusEvent) => {
+      const next = event.relatedTarget as Node | null;
+      if (next && this.#permDetailsEl.contains(next)) return;
+      this.#permDetailsEl.open = false;
+    });
+    this.#permDetailsEl.addEventListener("toggle", () => {
+      if (!this.#permDetailsEl.open) return;
+      this.#headerMenuEl.open = false;
+      if (this.#contextDetailsEl?.open) this.#contextDetailsEl.open = false;
+    });
 
     this.#contextSummaryValueEl = h("span", { class: "context-meter-value" }, ["--"]);
     this.#contextUsedEl = h("div", { class: "context-meter-line" }, ["--"]);

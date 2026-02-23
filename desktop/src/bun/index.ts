@@ -11,6 +11,10 @@ import {
   getDiff,
   beginTurnDiff,
   finalizeTurnDiff,
+  setTurnDiffSession,
+  remapTurnDiffSessionId,
+  clearLastTurnDiffForSession,
+  clearLastTurnDiffForWorkspace,
 } from "./diff-provider.ts";
 import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
 import { listSessionsForWorkspace } from "./session-history.ts";
@@ -148,6 +152,9 @@ sessions.onIdResolved((tempId, realId) => {
   if (cwd) {
     sessionCwds.delete(tempId);
     sessionCwds.set(realId, cwd);
+    void remapTurnDiffSessionId(cwd, tempId, realId).catch((err) => {
+      console.warn("Failed to remap per-session diff state:", err);
+    });
   }
   // Notify webview to update its activeSessionId.
   // RPC messages are ordered — this always arrives before events with realId.
@@ -212,7 +219,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             prompt,
           });
           // Capture per-turn baseline before sending prompt.
-          await beginTurnDiff(cwd).catch(() => {});
+          await beginTurnDiff(cwd, resumeId).catch(() => {});
           const sessionId = await sessions.spawn(
             prompt,
             cwd,
@@ -220,6 +227,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             resumeId,
             selectedFiles ?? []
           );
+          await setTurnDiffSession(cwd, sessionId).catch(() => {});
           // Register the tempId immediately (will be updated to realId on resolve)
           approvals.registerSession(sessionId, fullAccess ?? true);
           sessionCwds.set(sessionId, cwd);
@@ -250,7 +258,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         });
         const cwd = resolveSessionCwd(sessionId);
         if (cwd) {
-          await beginTurnDiff(cwd).catch(() => {});
+          await beginTurnDiff(cwd, sessionId).catch(() => {});
         }
         if (typeof fullAccess === "boolean") {
           approvals.setSessionFullAccess(sessionId, fullAccess);
@@ -329,6 +337,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         }
 
         await sessionNames.delete(sessionId).catch(() => {});
+        await clearLastTurnDiffForSession(sessionId, cwd).catch((err) => {
+          console.warn("Failed to clear persisted last-turn diff for session:", err);
+        });
         return { deleted, transcriptPath: deletedPath ?? resolvedPath ?? null };
       },
 
@@ -336,8 +347,8 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return listSessionsForWorkspace(cwd);
       },
 
-      getDiff: async ({ cwd, scope }) => {
-        return getDiff(cwd, scope ?? "all");
+      getDiff: async ({ cwd, scope, sessionId }) => {
+        return getDiff(cwd, scope ?? "all", sessionId);
       },
 
       getCommitDiff: async ({
@@ -404,6 +415,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
       removeWorkspace: async ({ path }) => {
         await workspaces.remove(path);
+        await clearLastTurnDiffForWorkspace(path).catch((err) => {
+          console.warn("Failed to clear workspace diff state:", err);
+        });
         invalidateWorkspaceFilesCache(path);
         invalidateSlashCommandsCache(path);
         invalidateInstalledPluginsCache();
@@ -461,7 +475,7 @@ async function handleSessionEvent(sessionId: string, event: any): Promise<void> 
   if (event?.type === "result" && event?.subtype === "success") {
     const cwd = resolveSessionCwd(sessionId);
     if (cwd) {
-      await finalizeTurnDiff(cwd).catch((err) => {
+      await finalizeTurnDiff(cwd, sessionId).catch((err) => {
         console.warn("Failed to finalize turn diff:", err);
       });
     }

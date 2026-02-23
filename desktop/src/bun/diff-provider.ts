@@ -1,21 +1,45 @@
 import type { DiffFile, DiffHunk, DiffLine, DiffScope } from "../shared/types.ts";
 import { parseDiff } from "../mainview/components/diff-parser.ts";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
 // ── Snapshot store ──────────────────────────────────────────────
 // Per-workspace snapshots used for:
 // - allBaseline: non-git fallback for "all changes"
 // - turnBaseline: snapshot captured right before a prompt/follow-up
-// - lastTurnDiff: computed when the turn finishes
+// - lastTurnDiffBySession: per-session diffs computed when turns finish
 
 type FileSnapshot = { content: string; mtime: number };
 type WorkspaceSnapshotState = {
   allBaseline: Map<string, FileSnapshot> | null;
   turnBaseline: Map<string, FileSnapshot> | null;
-  lastTurnDiff: DiffFile[];
+  turnSessionId: string | null;
+  lastTurnDiffBySession: Map<string, DiffFile[]>;
+  loadedPersistedLastTurn: boolean;
 };
 const snapshotState = new Map<string, WorkspaceSnapshotState>();
+const LAST_TURN_DIFF_STORE_DIR = join(
+  homedir(),
+  ".claude-sessions",
+  "last-turn-diffs"
+);
+const PERSISTED_LAST_TURN_DIFF_VERSION = 2;
+
+type PersistedLastTurnDiff = {
+  version: number;
+  cwd: string;
+  savedAt: string;
+  sessions: Record<string, DiffFile[]>;
+};
+type LegacyPersistedLastTurnDiff = {
+  version: number;
+  cwd: string;
+  sessionId: string | null;
+  savedAt: string;
+  files: DiffFile[];
+};
 
 const IGNORE_DIRS = new Set([
   "node_modules", ".git", ".next", "dist", "build", ".cache",
@@ -51,26 +75,101 @@ export async function ensureDiffBaseline(cwd: string): Promise<void> {
  * Capture a baseline snapshot for the next turn's diff.
  * Call right before sending prompt/follow-up.
  */
-export async function beginTurnDiff(cwd: string): Promise<void> {
+export async function beginTurnDiff(
+  cwd: string,
+  sessionId?: string
+): Promise<void> {
   await ensureDiffBaseline(cwd);
   const state = getWorkspaceState(cwd);
+  await ensureLoadedPersistedLastTurnDiff(cwd, state);
   state.turnBaseline = await captureWorkspaceSnapshot(cwd);
-  state.lastTurnDiff = [];
+  state.turnSessionId = sessionId ?? null;
+  if (sessionId) {
+    state.lastTurnDiffBySession.delete(sessionId);
+    await savePersistedLastTurnDiff(cwd, state.lastTurnDiffBySession);
+  }
+}
+
+/**
+ * Associate the current in-flight turn with a concrete session ID.
+ * Useful for new prompts where the temp session ID is known only after spawn().
+ */
+export async function setTurnDiffSession(
+  cwd: string,
+  sessionId: string
+): Promise<void> {
+  if (!sessionId) return;
+  const state = getWorkspaceState(cwd);
+  await ensureLoadedPersistedLastTurnDiff(cwd, state);
+  state.turnSessionId = sessionId;
+  state.lastTurnDiffBySession.delete(sessionId);
+  await savePersistedLastTurnDiff(cwd, state.lastTurnDiffBySession);
+}
+
+/**
+ * Move pending/stored per-session diff data from a temporary ID to a real one.
+ */
+export async function remapTurnDiffSessionId(
+  cwd: string,
+  fromSessionId: string,
+  toSessionId: string
+): Promise<void> {
+  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return;
+  const state = getWorkspaceState(cwd);
+  await ensureLoadedPersistedLastTurnDiff(cwd, state);
+
+  let changed = false;
+  if (state.turnSessionId === fromSessionId) {
+    state.turnSessionId = toSessionId;
+    changed = true;
+  }
+
+  const fromFiles = state.lastTurnDiffBySession.get(fromSessionId);
+  if (fromFiles) {
+    if (!state.lastTurnDiffBySession.has(toSessionId)) {
+      state.lastTurnDiffBySession.set(toSessionId, fromFiles);
+    }
+    state.lastTurnDiffBySession.delete(fromSessionId);
+    changed = true;
+  }
+
+  if (changed) {
+    await savePersistedLastTurnDiff(cwd, state.lastTurnDiffBySession);
+  }
 }
 
 /**
  * Finalize the current turn and store the resulting "last turn" diff.
  * Call when Claude emits a result/success event.
  */
-export async function finalizeTurnDiff(cwd: string): Promise<void> {
+export async function finalizeTurnDiff(
+  cwd: string,
+  sessionId?: string
+): Promise<void> {
   const state = getWorkspaceState(cwd);
+  await ensureLoadedPersistedLastTurnDiff(cwd, state);
+  const resolvedSessionId = sessionId ?? state.turnSessionId;
+  let files: DiffFile[] = [];
+
   if (!state.turnBaseline) {
-    state.lastTurnDiff = [];
+    if (resolvedSessionId) {
+      state.lastTurnDiffBySession.set(resolvedSessionId, files);
+      await savePersistedLastTurnDiff(cwd, state.lastTurnDiffBySession);
+    }
+    state.turnSessionId = null;
     return;
   }
 
-  state.lastTurnDiff = await getSnapshotDiffFromBaseline(cwd, state.turnBaseline);
+  files = await getSnapshotDiffFromBaseline(cwd, state.turnBaseline);
   state.turnBaseline = null;
+  state.turnSessionId = null;
+
+  if (!resolvedSessionId) {
+    return;
+  }
+
+  state.lastTurnDiffBySession.set(resolvedSessionId, files);
+  await savePersistedLastTurnDiff(cwd, state.lastTurnDiffBySession);
 }
 
 /**
@@ -80,16 +179,22 @@ export async function finalizeTurnDiff(cwd: string): Promise<void> {
  */
 export async function getDiff(
   cwd: string,
-  scope: DiffScope = "all"
+  scope: DiffScope = "all",
+  sessionId?: string
 ): Promise<DiffFile[]> {
   const state = getWorkspaceState(cwd);
 
   if (scope === "last_turn") {
-    if (state.turnBaseline) {
+    const selectedSessionId = sessionId ?? null;
+    if (!selectedSessionId) {
+      return [];
+    }
+    if (state.turnBaseline && state.turnSessionId === selectedSessionId) {
       // Live preview while Claude is still working on the current turn.
       return getSnapshotDiffFromBaseline(cwd, state.turnBaseline);
     }
-    return state.lastTurnDiff;
+    await ensureLoadedPersistedLastTurnDiff(cwd, state);
+    return state.lastTurnDiffBySession.get(selectedSessionId) ?? [];
   }
 
   if (await hasGit(cwd)) {
@@ -98,6 +203,207 @@ export async function getDiff(
 
   await ensureDiffBaseline(cwd);
   return getSnapshotDiffFromBaseline(cwd, state.allBaseline!);
+}
+
+/**
+ * Remove all in-memory and persisted diff state for a workspace.
+ * Use when the workspace is removed from the app.
+ */
+export async function clearLastTurnDiffForWorkspace(cwd: string): Promise<void> {
+  snapshotState.delete(cwd);
+  await clearPersistedLastTurnDiff(cwd);
+}
+
+/**
+ * Remove persisted "last turn diff" data tied to a deleted session.
+ * If `cwd` is provided, only that workspace is checked. Otherwise all persisted
+ * workspace diff files are scanned.
+ */
+export async function clearLastTurnDiffForSession(
+  sessionId: string,
+  cwd?: string
+): Promise<void> {
+  if (!sessionId) return;
+
+  if (cwd) {
+    await clearLastTurnDiffForSessionInWorkspace(cwd, sessionId);
+    return;
+  }
+
+  let entries;
+  try {
+    entries = await readdir(LAST_TURN_DIFF_STORE_DIR, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const persistedPath = join(LAST_TURN_DIFF_STORE_DIR, entry.name);
+    const persisted = await readPersistedLastTurnDiff(persistedPath);
+    if (!persisted || !(sessionId in persisted.sessions)) continue;
+
+    delete persisted.sessions[sessionId];
+    clearInMemoryDiffForSession(persisted.cwd, sessionId);
+
+    if (Object.keys(persisted.sessions).length === 0) {
+      await rm(persistedPath, { force: true }).catch(() => {});
+      continue;
+    }
+
+    persisted.savedAt = new Date().toISOString();
+    await writePersistedLastTurnDiff(persistedPath, persisted);
+  }
+}
+
+async function clearLastTurnDiffForSessionInWorkspace(
+  cwd: string,
+  sessionId: string
+): Promise<void> {
+  clearInMemoryDiffForSession(cwd, sessionId);
+
+  const persisted = await loadPersistedLastTurnDiff(cwd);
+  if (!persisted || !(sessionId in persisted.sessions)) return;
+
+  delete persisted.sessions[sessionId];
+  await savePersistedLastTurnDiff(
+    cwd,
+    new Map(Object.entries(persisted.sessions))
+  );
+}
+
+async function ensureLoadedPersistedLastTurnDiff(
+  cwd: string,
+  state: WorkspaceSnapshotState
+): Promise<void> {
+  if (state.loadedPersistedLastTurn) return;
+  state.loadedPersistedLastTurn = true;
+
+  const persisted = await loadPersistedLastTurnDiff(cwd);
+  if (!persisted) return;
+  state.lastTurnDiffBySession = new Map(Object.entries(persisted.sessions));
+}
+
+function clearInMemoryDiffForSession(cwd: string, sessionId: string): void {
+  const state = snapshotState.get(cwd);
+  if (!state) return;
+  if (state.turnSessionId === sessionId) {
+    state.turnSessionId = null;
+  }
+  state.lastTurnDiffBySession.delete(sessionId);
+}
+
+async function savePersistedLastTurnDiff(
+  cwd: string,
+  filesBySession: Map<string, DiffFile[]>
+): Promise<void> {
+  if (filesBySession.size === 0) {
+    await clearPersistedLastTurnDiff(cwd);
+    return;
+  }
+
+  const payload: PersistedLastTurnDiff = {
+    version: PERSISTED_LAST_TURN_DIFF_VERSION,
+    cwd,
+    savedAt: new Date().toISOString(),
+    sessions: Object.fromEntries(filesBySession),
+  };
+
+  try {
+    await mkdir(LAST_TURN_DIFF_STORE_DIR, { recursive: true });
+    await writePersistedLastTurnDiff(getPersistedLastTurnDiffPath(cwd), payload);
+  } catch {
+    // Non-fatal: keep in-memory diff behavior even if persistence fails.
+  }
+}
+
+async function clearPersistedLastTurnDiff(cwd: string): Promise<void> {
+  try {
+    await rm(getPersistedLastTurnDiffPath(cwd), { force: true });
+  } catch {
+    // Ignore missing/unreadable files.
+  }
+}
+
+async function loadPersistedLastTurnDiff(
+  cwd: string
+): Promise<PersistedLastTurnDiff | null> {
+  const persisted = await readPersistedLastTurnDiff(getPersistedLastTurnDiffPath(cwd));
+  if (!persisted || persisted.cwd !== cwd) return null;
+  return persisted;
+}
+
+async function readPersistedLastTurnDiff(
+  path: string
+): Promise<PersistedLastTurnDiff | null> {
+  try {
+    const raw = await readFile(path, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (isPersistedLastTurnDiff(parsed)) {
+      return parsed;
+    }
+    if (isLegacyPersistedLastTurnDiff(parsed)) {
+      const sessions = parsed.sessionId
+        ? { [parsed.sessionId]: parsed.files }
+        : {};
+      return {
+        version: PERSISTED_LAST_TURN_DIFF_VERSION,
+        cwd: parsed.cwd,
+        savedAt: parsed.savedAt,
+        sessions,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function isPersistedLastTurnDiff(
+  value: unknown
+): value is PersistedLastTurnDiff {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.version === PERSISTED_LAST_TURN_DIFF_VERSION
+    && typeof candidate.cwd === "string"
+    && typeof candidate.savedAt === "string"
+    && isDiffSessionsRecord(candidate.sessions);
+}
+
+function isLegacyPersistedLastTurnDiff(
+  value: unknown
+): value is LegacyPersistedLastTurnDiff {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.version === 1
+    && typeof candidate.cwd === "string"
+    && (typeof candidate.sessionId === "string" || candidate.sessionId === null)
+    && typeof candidate.savedAt === "string"
+    && Array.isArray(candidate.files);
+}
+
+function isDiffSessionsRecord(value: unknown): value is Record<string, DiffFile[]> {
+  if (!value || typeof value !== "object") return false;
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    if (!Array.isArray(entry)) return false;
+  }
+  return true;
+}
+
+async function writePersistedLastTurnDiff(
+  path: string,
+  payload: PersistedLastTurnDiff
+): Promise<void> {
+  try {
+    await writeFile(path, JSON.stringify(payload));
+  } catch {
+    // Ignore write failures at this layer.
+  }
+}
+
+function getPersistedLastTurnDiffPath(cwd: string): string {
+  const key = createHash("sha256").update(cwd).digest("hex");
+  return join(LAST_TURN_DIFF_STORE_DIR, `${key}.json`);
 }
 
 // ── Git-based diff ──────────────────────────────────────────────
@@ -275,7 +581,9 @@ function getWorkspaceState(cwd: string): WorkspaceSnapshotState {
     state = {
       allBaseline: null,
       turnBaseline: null,
-      lastTurnDiff: [],
+      turnSessionId: null,
+      lastTurnDiffBySession: new Map<string, DiffFile[]>(),
+      loadedPersistedLastTurn: false,
     };
     snapshotState.set(cwd, state);
   }

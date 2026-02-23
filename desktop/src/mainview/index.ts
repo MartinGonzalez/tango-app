@@ -350,6 +350,7 @@ function init(): void {
       if (!next.activeSessionId) {
         chatView.clear();
       }
+      loadDiff(workspacePath);
       loadSessionHistory(workspacePath);
     },
     onToggleWorkspace: (path) => {
@@ -743,11 +744,17 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
   clearCommitDiffSelection(cwd);
 
   try {
-    const selectedScope = scope ?? appState.get().diffScope;
+    const state = appState.get();
+    const selectedScope = scope ?? state.diffScope;
+    const sessionId = selectedScope === "last_turn"
+      && state.activeWorkspace === cwd
+      ? (state.activeSessionId ?? undefined)
+      : undefined;
     filesPanel.setScope(selectedScope);
     const files: DiffFile[] = await (rpc as any).request.getDiff({
       cwd,
       scope: selectedScope,
+      sessionId,
     });
     applyDiffFiles(files);
   } catch (err) {

@@ -35,6 +35,7 @@ export class Sidebar {
   #activeSessionId: string | null = null;
   #openMenuSessionId: string | null = null;
   #renamingSessionId: string | null = null;
+  #removeWorkspaceConfirmOpen = false;
 
   constructor(container: HTMLElement, callbacks: SidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -128,11 +129,9 @@ export class Sidebar {
       }, ["+"]),
       h("button", {
         class: "ws-action-btn ws-action-remove",
-        onclick: (e: Event) => {
+        onclick: async (e: Event) => {
           e.stopPropagation();
-          const confirmed = window.confirm(
-            `Remove "${ws.name}" from the workspace list?`
-          );
+          const confirmed = await this.#confirmWorkspaceRemoval(ws.name);
           if (!confirmed) return;
           this.#callbacks.onRemoveWorkspace(ws.path);
         },
@@ -308,6 +307,70 @@ export class Sidebar {
 
   get element(): HTMLElement {
     return this.#el;
+  }
+
+  async #confirmWorkspaceRemoval(workspaceName: string): Promise<boolean> {
+    if (this.#removeWorkspaceConfirmOpen) return false;
+    this.#removeWorkspaceConfirmOpen = true;
+
+    return await new Promise<boolean>((resolve) => {
+      const titleId = "ws-remove-confirm-title";
+      const overlay = h("div", { class: "ws-confirm-overlay" });
+      const cancelBtn = h("button", {
+        class: "ws-confirm-btn",
+        type: "button",
+      }, ["Cancel"]) as HTMLButtonElement;
+      const removeBtn = h("button", {
+        class: "ws-confirm-btn ws-confirm-btn-danger",
+        type: "button",
+      }, ["Remove"]) as HTMLButtonElement;
+
+      const dialog = h("div", {
+        class: "ws-confirm-dialog",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-labelledby": titleId,
+      }, [
+        h("div", { class: "ws-confirm-title", id: titleId }, ["Remove workspace"]),
+        h("div", { class: "ws-confirm-text" }, [
+          `Remove "${workspaceName}" from the workspace list?`,
+        ]),
+        h("div", { class: "ws-confirm-actions" }, [cancelBtn, removeBtn]),
+      ]);
+
+      let settled = false;
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        document.removeEventListener("keydown", onKeyDown, true);
+        this.#removeWorkspaceConfirmOpen = false;
+        resolve(result);
+      };
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          finish(true);
+        }
+      };
+
+      cancelBtn.addEventListener("click", () => finish(false));
+      removeBtn.addEventListener("click", () => finish(true));
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) {
+          finish(false);
+        }
+      });
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+      document.addEventListener("keydown", onKeyDown, true);
+      cancelBtn.focus();
+    });
   }
 }
 
