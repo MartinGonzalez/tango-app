@@ -1,5 +1,9 @@
 import { h, clearChildren } from "../lib/dom.ts";
-import type { DiffFile, DiffLine } from "../../shared/types.ts";
+import type {
+  DiffFile,
+  DiffLine,
+  WorkspaceFileContent,
+} from "../../shared/types.ts";
 import Prism from "prismjs";
 import "prismjs/components/prism-clike";
 import "prismjs/components/prism-javascript";
@@ -25,6 +29,15 @@ import "prismjs/components/prism-php";
 
 export type DiffViewCallbacks = {
   onBranchPanelToggle?: (visible: boolean) => void;
+  onRequestFullFile?: (path: string) => Promise<WorkspaceFileContent>;
+};
+
+type FullFileLoadState = {
+  status: "loading" | "loaded" | "error";
+  content: string;
+  truncated: boolean;
+  isBinary: boolean;
+  message: string;
 };
 
 /**
@@ -47,9 +60,33 @@ export class DiffView {
   #viewMode: "unified" | "split" = "unified";
   #filesPanelVisible = false;
   #branchPanelVisible = false;
+  #fullFileVisible = new Set<string>();
+  #fullFileLoadState = new Map<string, FullFileLoadState>();
+  #fullFileRequestIds = new Map<string, number>();
+  #openActionsFilePath: string | null = null;
+  #onGlobalClick: (event: MouseEvent) => void;
+  #onGlobalKeyDown: (event: KeyboardEvent) => void;
 
   constructor(container: HTMLElement, callbacks: DiffViewCallbacks = {}) {
     this.#callbacks = callbacks;
+    this.#onGlobalClick = (event: MouseEvent) => {
+      if (!this.#openActionsFilePath) return;
+      const target = event.target;
+      if (
+        target instanceof Element
+        && this.#el.contains(target)
+        && target.closest(".dv-file-actions")
+      ) {
+        return;
+      }
+      this.#openActionsFilePath = null;
+      this.#renderDiff(false);
+    };
+    this.#onGlobalKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !this.#openActionsFilePath) return;
+      this.#openActionsFilePath = null;
+      this.#renderDiff(false);
+    };
 
     this.#filesToggleBtn = h("button", {
       class: "dv-icon-btn",
@@ -106,17 +143,40 @@ export class DiffView {
     this.setFilesPanelVisible(false);
     this.setBranchPanelVisible(false, false);
     container.appendChild(this.#el);
+    document.addEventListener("click", this.#onGlobalClick);
+    document.addEventListener("keydown", this.#onGlobalKeyDown);
   }
 
   setFiles(files: DiffFile[]): void {
     this.#files = files;
+    const nextPaths = new Set(files.map((file) => file.path));
     const nextExpanded = new Map<string, boolean>();
+    const nextVisible = new Set<string>();
+    const nextFullState = new Map<string, FullFileLoadState>();
+    const nextRequestIds = new Map<string, number>();
     for (const file of files) {
       nextExpanded.set(file.path, this.#fileExpanded.get(file.path) ?? true);
+      if (this.#fullFileVisible.has(file.path)) {
+        nextVisible.add(file.path);
+      }
+      const fullState = this.#fullFileLoadState.get(file.path);
+      if (fullState) {
+        nextFullState.set(file.path, fullState);
+      }
+      const requestId = this.#fullFileRequestIds.get(file.path);
+      if (requestId) {
+        nextRequestIds.set(file.path, requestId);
+      }
     }
     this.#fileExpanded = nextExpanded;
+    this.#fullFileVisible = nextVisible;
+    this.#fullFileLoadState = nextFullState;
+    this.#fullFileRequestIds = nextRequestIds;
     if (this.#activeFile && !files.some((f) => f.path === this.#activeFile)) {
       this.#activeFile = null;
+    }
+    if (this.#openActionsFilePath && !nextPaths.has(this.#openActionsFilePath)) {
+      this.#openActionsFilePath = null;
     }
     this.#renderDiff();
   }
@@ -132,6 +192,10 @@ export class DiffView {
     this.#files = [];
     this.#activeFile = null;
     this.#fileExpanded.clear();
+    this.#fullFileVisible.clear();
+    this.#fullFileLoadState.clear();
+    this.#fullFileRequestIds.clear();
+    this.#openActionsFilePath = null;
     const label = this.#toolbarEl.querySelector(".dv-file-label");
     if (label) label.textContent = "";
     clearChildren(this.#contentEl);
@@ -140,7 +204,7 @@ export class DiffView {
     );
   }
 
-  #renderDiff(): void {
+  #renderDiff(scrollToActive = true): void {
     clearChildren(this.#contentEl);
     const label = this.#toolbarEl.querySelector(".dv-file-label");
 
@@ -160,7 +224,7 @@ export class DiffView {
       this.#contentEl.appendChild(this.#renderFileSection(file));
     }
 
-    if (this.#activeFile) {
+    if (scrollToActive && this.#activeFile) {
       this.#scrollToFile(this.#activeFile);
     }
   }
@@ -195,6 +259,7 @@ export class DiffView {
           delta.length > 0 ? h("span", { class: "dv-file-delta" }, delta) : null as any,
         ].filter(Boolean)),
         file.isBinary ? h("span", { class: "dv-file-binary" }, ["bin"]) : null as any,
+        this.#renderFileActions(file),
       ].filter(Boolean))
     );
 
@@ -209,8 +274,184 @@ export class DiffView {
       body.appendChild(this.#buildSplitTable(file));
     }
 
+    const fullFileView = this.#renderFullFileView(file.path);
+    if (fullFileView) {
+      body.appendChild(fullFileView);
+    }
+
     details.appendChild(body);
     return details;
+  }
+
+  #renderFileActions(file: DiffFile): HTMLElement {
+    const isMenuOpen = this.#openActionsFilePath === file.path;
+    const isFullVisible = this.#fullFileVisible.has(file.path);
+    const actionLabel = isFullVisible ? "Hide full" : "Show full";
+
+    const actions = h("div", { class: "dv-file-actions" });
+
+    const menuButton = h("button", {
+      class: "dv-file-actions-btn",
+      title: "More actions",
+      "aria-label": `More actions for ${file.path}`,
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#toggleFileActionsMenu(file.path);
+      },
+    }, ["..."]) as HTMLButtonElement;
+
+    const actionButton = h("button", {
+      class: "dv-file-actions-item",
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#openActionsFilePath = null;
+        this.#toggleShowFullFile(file.path);
+      },
+    }, [actionLabel]) as HTMLButtonElement;
+
+    const menu = h("div", {
+      class: "dv-file-actions-menu",
+      hidden: !isMenuOpen,
+    }, [actionButton]);
+    menu.addEventListener("mousedown", (event) => event.stopPropagation());
+    menu.addEventListener("click", (event) => event.stopPropagation());
+
+    actions.addEventListener("mousedown", (event) => event.stopPropagation());
+    actions.addEventListener("click", (event) => event.stopPropagation());
+    actions.appendChild(menuButton);
+    actions.appendChild(menu);
+    return actions;
+  }
+
+  #toggleFileActionsMenu(path: string): void {
+    this.#openActionsFilePath = this.#openActionsFilePath === path ? null : path;
+    this.#renderDiff(false);
+  }
+
+  #toggleShowFullFile(path: string): void {
+    if (this.#fullFileVisible.has(path)) {
+      this.#fullFileVisible.delete(path);
+      this.#renderDiff(false);
+      return;
+    }
+
+    this.#fullFileVisible.add(path);
+    const existing = this.#fullFileLoadState.get(path);
+    if (existing?.status === "loaded" || existing?.status === "loading") {
+      this.#renderDiff(false);
+      return;
+    }
+
+    if (!this.#callbacks.onRequestFullFile) {
+      this.#fullFileLoadState.set(path, {
+        status: "error",
+        content: "",
+        truncated: false,
+        isBinary: false,
+        message: "Show full is unavailable",
+      });
+      this.#renderDiff(false);
+      return;
+    }
+
+    const requestId = (this.#fullFileRequestIds.get(path) ?? 0) + 1;
+    this.#fullFileRequestIds.set(path, requestId);
+    this.#fullFileLoadState.set(path, {
+      status: "loading",
+      content: "",
+      truncated: false,
+      isBinary: false,
+      message: "",
+    });
+    this.#renderDiff(false);
+
+    void this.#callbacks
+      .onRequestFullFile(path)
+      .then((result) => {
+        if (this.#fullFileRequestIds.get(path) !== requestId) return;
+        this.#fullFileLoadState.set(path, {
+          status: "loaded",
+          content: result.content,
+          truncated: result.truncated,
+          isBinary: result.isBinary,
+          message: "",
+        });
+        this.#renderDiff(false);
+      })
+      .catch((error: unknown) => {
+        if (this.#fullFileRequestIds.get(path) !== requestId) return;
+        const message = error instanceof Error
+          ? error.message
+          : "Failed to load full file";
+        this.#fullFileLoadState.set(path, {
+          status: "error",
+          content: "",
+          truncated: false,
+          isBinary: false,
+          message,
+        });
+        this.#renderDiff(false);
+      });
+  }
+
+  #renderFullFileView(path: string): HTMLElement | null {
+    if (!this.#fullFileVisible.has(path)) return null;
+
+    const state = this.#fullFileLoadState.get(path);
+    const container = h("div", { class: "dv-fullfile" });
+
+    if (!state || state.status === "loading") {
+      container.appendChild(
+        h("div", { class: "dv-fullfile-message" }, ["Loading full file..."])
+      );
+      return container;
+    }
+
+    if (state.status === "error") {
+      container.appendChild(
+        h("div", { class: "dv-fullfile-message dv-fullfile-message-error" }, [
+          state.message || "Failed to load full file",
+        ])
+      );
+      return container;
+    }
+
+    if (state.isBinary) {
+      container.appendChild(
+        h("div", { class: "dv-fullfile-message" }, ["Binary file"])
+      );
+      return container;
+    }
+
+    const headerItems: (HTMLElement | string)[] = [
+      h("span", { class: "dv-fullfile-title" }, ["Full file"]),
+    ];
+    if (state.truncated) {
+      headerItems.push(
+        h("span", { class: "dv-fullfile-note" }, ["Showing first 300KB"])
+      );
+    }
+    container.appendChild(h("div", { class: "dv-fullfile-header" }, headerItems));
+
+    const table = h("table", { class: "diff-table dv-fullfile-table" });
+    const lines = state.content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      table.appendChild(
+        h("tr", { class: "diff-line" }, [
+          h("td", { class: "line-no" }, [String(i + 1)]),
+          h("td", {
+            class: "line-content",
+            innerHTML: line ? highlightCodeLine(line, path) : "&nbsp;",
+          }),
+        ])
+      );
+    }
+
+    container.appendChild(table);
+    return container;
   }
 
   #buildUnifiedTable(file: DiffFile): HTMLElement {
@@ -502,9 +743,16 @@ function resolvePrism(): PrismLike | null {
     return globalPrism;
   }
 
-  const imported = Prism as unknown as PrismLike;
-  if (imported?.highlight && imported?.languages) {
-    return imported;
+  const imported = Prism as unknown as {
+    highlight?: unknown;
+    languages?: unknown;
+  };
+  if (
+    typeof imported?.highlight === "function"
+    && imported?.languages
+    && typeof imported.languages === "object"
+  ) {
+    return imported as PrismLike;
   }
 
   return null;

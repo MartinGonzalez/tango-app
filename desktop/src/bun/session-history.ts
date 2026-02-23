@@ -1,6 +1,11 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import {
+  encodeClaudeProjectPath,
+  encodeClaudeProjectPathLegacy,
+  getWorkspacePathVariants,
+} from "./project-path.ts";
 
 export type HistorySession = {
   sessionId: string;
@@ -14,14 +19,7 @@ export type HistorySession = {
 };
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
-
-/**
- * Encode a workspace path to Claude's project directory name format.
- * e.g. /Users/foo/Desktop/project → -Users-foo-Desktop-project
- */
-function encodeProjectPath(cwd: string): string {
-  return cwd.replace(/\//g, "-");
-}
+const MAX_WORKSPACE_HISTORY_FILES = 200;
 
 /**
  * List all sessions for a given workspace by scanning Claude's transcript files.
@@ -29,30 +27,18 @@ function encodeProjectPath(cwd: string): string {
 export async function listSessionsForWorkspace(
   cwd: string
 ): Promise<HistorySession[]> {
-  const projectDir = join(CLAUDE_PROJECTS_DIR, encodeProjectPath(cwd));
-
-  let entries;
-  try {
-    entries = await readdir(projectDir);
-  } catch {
+  const projectDirs = await resolveWorkspaceProjectDirs(cwd);
+  const candidates = await collectTranscriptCandidates(projectDirs);
+  if (candidates.length === 0) {
     return [];
   }
 
-  const jsonlFiles = entries.filter(
-    (f) => f.endsWith(".jsonl") && !f.includes(".")
-      ? false
-      : f.endsWith(".jsonl")
-  );
-
   const sessions: HistorySession[] = [];
 
-  // Process files in parallel, capped at 20 most recent by filename
-  // (UUIDs don't sort by time, so we parse all and sort later)
-  const promises = jsonlFiles.slice(0, 200).map(async (file) => {
-    const sessionId = basename(file, ".jsonl");
-    const filePath = join(projectDir, file);
+  // Parse the newest transcript files first to avoid dropping recent sessions.
+  const promises = candidates.slice(0, MAX_WORKSPACE_HISTORY_FILES).map(async (entry) => {
     try {
-      return await parseTranscriptMeta(sessionId, filePath);
+      return await parseTranscriptMeta(entry.sessionId, entry.filePath);
     } catch {
       return null;
     }
@@ -256,6 +242,60 @@ function extractCommandName(prompt: string): string | null {
   }
 
   return null;
+}
+
+type TranscriptCandidate = {
+  sessionId: string;
+  filePath: string;
+  mtimeMs: number;
+};
+
+async function resolveWorkspaceProjectDirs(cwd: string): Promise<string[]> {
+  const variants = await getWorkspacePathVariants(cwd);
+  const dirs = new Set<string>();
+
+  for (const variant of variants) {
+    dirs.add(join(CLAUDE_PROJECTS_DIR, encodeClaudeProjectPath(variant)));
+    dirs.add(join(CLAUDE_PROJECTS_DIR, encodeClaudeProjectPathLegacy(variant)));
+  }
+
+  return Array.from(dirs);
+}
+
+async function collectTranscriptCandidates(
+  projectDirs: string[]
+): Promise<TranscriptCandidate[]> {
+  const bySessionId = new Map<string, TranscriptCandidate>();
+
+  for (const projectDir of projectDirs) {
+    let entries: string[];
+    try {
+      entries = await readdir(projectDir);
+    } catch {
+      continue;
+    }
+
+    const jsonlFiles = entries.filter((f) => f.endsWith(".jsonl"));
+
+    for (const file of jsonlFiles) {
+      const sessionId = basename(file, ".jsonl");
+      const filePath = join(projectDir, file);
+      let mtimeMs = 0;
+      try {
+        const info = await stat(filePath);
+        mtimeMs = info.mtimeMs;
+      } catch {
+        // Keep unknown mtime as 0.
+      }
+
+      const current = bySessionId.get(sessionId);
+      if (!current || mtimeMs > current.mtimeMs) {
+        bySessionId.set(sessionId, { sessionId, filePath, mtimeMs });
+      }
+    }
+  }
+
+  return Array.from(bySessionId.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
 function normalizeCommandName(value: string): string | null {

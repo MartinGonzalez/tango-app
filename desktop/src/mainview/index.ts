@@ -42,12 +42,16 @@ const rpc = Electroview.defineRPC<any>({
         const state = appState.get();
         const isResultEvent = (event as any).type === "result";
         const isStopHook = isStopHookEvent(event);
+        const hasPinnedCommitDiff = activeCommitDiff
+          ? activeCommitDiff.cwd === state.activeWorkspace
+          : false;
         if (state.activeSessionId === sessionId && chatView) {
           chatView.appendStreamEvent(event);
         }
         if (
           state.activeSessionId === sessionId
           && state.activeWorkspace
+          && !hasPinnedCommitDiff
           && (isResultEvent || isDiffMutationEvent(event))
         ) {
           workspaceFileCache.delete(state.activeWorkspace);
@@ -115,12 +119,17 @@ const rpc = Electroview.defineRPC<any>({
         console.log(`Session ${sessionId} ended with code ${exitCode}`);
         sessionUsageEstimates.delete(sessionId);
         const state = appState.get();
+        const hasPinnedCommitDiff = activeCommitDiff
+          ? activeCommitDiff.cwd === state.activeWorkspace
+          : false;
         const live = new Set(state.liveSessions);
         live.delete(sessionId);
         appState.update((s) => ({ ...s, liveSessions: live }));
         // Refresh diff when a session ends (changes may have been made)
         if (state.activeWorkspace) {
-          loadDiff(state.activeWorkspace);
+          if (!hasPinnedCommitDiff) {
+            loadDiff(state.activeWorkspace);
+          }
           if (diffView.isBranchPanelVisible) {
             scheduleBranchHistoryRefresh(state.activeWorkspace, 0);
           }
@@ -192,6 +201,7 @@ const sessionUsageEstimates = new Map<string, SessionUsageEstimate>();
 const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
 let prevBranchWorkspace: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
+let activeCommitDiff: { cwd: string; hash: string } | null = null;
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
@@ -387,6 +397,13 @@ function init(): void {
       if (!visible || !activeWorkspace) return;
       void loadBranchHistory(activeWorkspace, true);
     },
+    onRequestFullFile: async (path) => {
+      const cwd = appState.get().activeWorkspace;
+      if (!cwd) {
+        throw new Error("No active workspace");
+      }
+      return (rpc as any).request.getFileContent({ cwd, path });
+    },
   });
 
   // Files panel (embedded inside diff panel)
@@ -404,7 +421,27 @@ function init(): void {
   });
 
   // Branch panel (embedded inside diff panel)
-  branchPanel = new BranchPanel(diffView.branchPanelHost);
+  branchPanel = new BranchPanel(diffView.branchPanelHost, {
+    onSelectCommit: (commit) => {
+      const cwd = appState.get().activeWorkspace;
+      if (!cwd) return;
+
+      const isSameSelection = activeCommitDiff
+        && activeCommitDiff.cwd === cwd
+        && activeCommitDiff.hash === commit.hash;
+
+      if (isSameSelection) {
+        activeCommitDiff = null;
+        branchPanel.setActiveCommit(null);
+        void loadDiff(cwd, appState.get().diffScope);
+        return;
+      }
+
+      activeCommitDiff = { cwd, hash: commit.hash };
+      branchPanel.setActiveCommit(commit.hash);
+      void loadCommitDiff(cwd, commit.hash);
+    },
+  });
 
   // Toggle workspaces button
   qs("#btn-toggle-workspaces")?.addEventListener("click", () => {
@@ -470,6 +507,10 @@ function init(): void {
     ) {
       if (activeWorkspace) {
         branchPanel.render(branchCommits);
+        const activeCommitHash = activeCommitDiff?.cwd === activeWorkspace
+          ? activeCommitDiff.hash
+          : null;
+        branchPanel.setActiveCommit(activeCommitHash);
       } else {
         branchPanel.clear();
       }
@@ -565,7 +606,30 @@ function ensureBranchHistory(cwd: string): void {
   void loadBranchHistory(cwd, false);
 }
 
+function clearCommitDiffSelection(cwd: string): void {
+  if (!activeCommitDiff || activeCommitDiff.cwd !== cwd) return;
+  activeCommitDiff = null;
+
+  const activeWorkspace = appState.get().activeWorkspace;
+  if (activeWorkspace === cwd) {
+    branchPanel.setActiveCommit(null);
+  }
+}
+
+function applyDiffFiles(files: DiffFile[]): void {
+  filesPanel.render(files);
+  diffView.setFiles(files);
+  if (files.length > 0) {
+    filesPanel.setActiveFile(files[0].path);
+    diffView.showFile(files[0].path);
+  } else {
+    diffView.clear();
+  }
+}
+
 async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
+  clearCommitDiffSelection(cwd);
+
   try {
     const selectedScope = scope ?? appState.get().diffScope;
     filesPanel.setScope(selectedScope);
@@ -573,16 +637,23 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
       cwd,
       scope: selectedScope,
     });
-    filesPanel.render(files);
-    diffView.setFiles(files);
-    if (files.length > 0) {
-      filesPanel.setActiveFile(files[0].path);
-      diffView.showFile(files[0].path);
-    } else {
-      diffView.clear();
-    }
+    applyDiffFiles(files);
   } catch (err) {
     console.error("Failed to load diff:", err);
+    filesPanel.clear();
+    diffView.clear();
+  }
+}
+
+async function loadCommitDiff(cwd: string, commitHash: string): Promise<void> {
+  try {
+    const files: DiffFile[] = await (rpc as any).request.getCommitDiff({
+      cwd,
+      commitHash,
+    });
+    applyDiffFiles(files);
+  } catch (err) {
+    console.error("Failed to load commit diff:", err);
     filesPanel.clear();
     diffView.clear();
   }
@@ -752,6 +823,9 @@ async function removeWorkspace(path: string): Promise<void> {
     await (rpc as any).request.removeWorkspace({ path });
     workspaceFileCache.delete(path);
     slashCommandCache.delete(path);
+    if (activeCommitDiff?.cwd === path) {
+      activeCommitDiff = null;
+    }
     appState.update((s) => {
       const workspaces = s.workspaces.filter((w) => w !== path);
       const expanded = new Set(s.expandedWorkspaces);

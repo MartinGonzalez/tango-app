@@ -113,19 +113,125 @@ async function hasGit(cwd: string): Promise<boolean> {
 
 async function getGitDiff(cwd: string): Promise<DiffFile[]> {
   try {
-    // Show both staged and unstaged changes
-    const proc = Bun.spawn(["git", "diff", "HEAD"], {
-      cwd,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const output = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-    if (exitCode !== 0 || !output.trim()) return [];
-    return parseDiff(output);
+    const [trackedOutput, untrackedPaths] = await Promise.all([
+      runGitStdout(cwd, ["diff", "HEAD"]),
+      listUntrackedFiles(cwd),
+    ]);
+
+    const tracked = trackedOutput.trim() ? parseDiff(trackedOutput) : [];
+    if (untrackedPaths.length === 0) {
+      return tracked;
+    }
+
+    const existingPaths = new Set(tracked.map((file) => file.path));
+    const untracked: DiffFile[] = [];
+    for (const relPath of untrackedPaths) {
+      if (existingPaths.has(relPath)) continue;
+      const file = await buildUntrackedAddedFile(cwd, relPath);
+      if (file) untracked.push(file);
+    }
+
+    if (untracked.length === 0) {
+      return tracked;
+    }
+
+    const merged = [...tracked, ...untracked];
+    merged.sort((a, b) => a.path.localeCompare(b.path));
+    return merged;
   } catch {
     return [];
   }
+}
+
+async function runGitStdout(cwd: string, args: string[]): Promise<string> {
+  const proc = Bun.spawn(["git", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) return "";
+  return stdout;
+}
+
+async function listUntrackedFiles(cwd: string): Promise<string[]> {
+  const proc = Bun.spawn(
+    ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+    {
+      cwd,
+      stdout: "pipe",
+      stderr: "ignore",
+    }
+  );
+  const bytes = await new Response(proc.stdout).arrayBuffer();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0 || bytes.byteLength === 0) return [];
+
+  const text = new TextDecoder().decode(bytes);
+  return text
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+async function buildUntrackedAddedFile(
+  cwd: string,
+  relPath: string
+): Promise<DiffFile | null> {
+  const fullPath = join(cwd, relPath);
+
+  let fileStat;
+  try {
+    fileStat = await stat(fullPath);
+  } catch {
+    return null;
+  }
+
+  if (!fileStat.isFile()) {
+    return null;
+  }
+
+  if (fileStat.size > MAX_FILE_SIZE) {
+    return makeBinaryAddedFile(relPath);
+  }
+
+  try {
+    const bytes = await readFile(fullPath);
+    if (isProbablyBinary(bytes)) {
+      return makeBinaryAddedFile(relPath);
+    }
+    return makeAddedFile(relPath, bytes.toString("utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function makeBinaryAddedFile(path: string): DiffFile {
+  return {
+    path,
+    oldPath: null,
+    status: "added",
+    isBinary: true,
+    hunks: [],
+  };
+}
+
+function isProbablyBinary(bytes: Uint8Array): boolean {
+  if (bytes.length === 0) return false;
+
+  const sampleLength = Math.min(bytes.length, 8192);
+  let suspicious = 0;
+
+  for (let i = 0; i < sampleLength; i++) {
+    const value = bytes[i];
+    if (value === 0) return true;
+
+    const isControl = value < 7 || (value > 14 && value < 32);
+    if (isControl) suspicious++;
+  }
+
+  return suspicious / sampleLength > 0.2;
 }
 
 // ── Snapshot-based diff ─────────────────────────────────────────

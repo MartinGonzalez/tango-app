@@ -131,6 +131,12 @@ export type DiffLine = {
 
 export type DiffScope = "last_turn" | "all";
 
+export type WorkspaceFileContent = {
+  content: string;
+  truncated: boolean;
+  isBinary: boolean;
+};
+
 // ── Branch history types ────────────────────────────────────────
 
 export type BranchRefKind = "head" | "branch" | "remote" | "tag" | "other";
@@ -297,6 +303,10 @@ export type AppRPC = {
         params: { cwd: string; scope?: DiffScope };
         response: DiffFile[];
       };
+      getCommitDiff: {
+        params: { cwd: string; commitHash: string };
+        response: DiffFile[];
+      };
       getBranchHistory: {
         params: { cwd: string; limit?: number };
         response: BranchCommit[];
@@ -316,6 +326,10 @@ export type AppRPC = {
       getSlashCommands: {
         params: { cwd: string };
         response: SlashCommandEntry[];
+      };
+      getFileContent: {
+        params: { cwd: string; path: string; maxBytes?: number };
+        response: WorkspaceFileContent;
       };
       addWorkspace: {
         params: { path: string };

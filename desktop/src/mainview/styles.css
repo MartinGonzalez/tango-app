@@ -788,14 +788,101 @@ button {
 
 .chat-bubble.assistant {
   align-self: flex-start;
-  background: #1F1E1D;
+  width: min(100%, 860px);
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
   color: #FAF9F5;
-  border: 1px solid var(--border);
-  border-bottom-left-radius: 2px;
+  border: 0;
+  border-radius: 0;
 }
 
 .chat-bubble.streaming {
-  border-color: rgba(16, 185, 129, 0.4);
+  opacity: 0.95;
+}
+
+.chat-bubble.assistant > :first-child {
+  margin-top: 0;
+}
+
+.chat-bubble.assistant > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-bubble.assistant p {
+  margin: 0 0 10px;
+  color: #f4f3ee;
+  line-height: 1.62;
+}
+
+.chat-bubble.assistant h1,
+.chat-bubble.assistant h2,
+.chat-bubble.assistant h3,
+.chat-bubble.assistant h4,
+.chat-bubble.assistant h5,
+.chat-bubble.assistant h6 {
+  margin: 14px 0 8px;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+  color: #fffdf6;
+}
+
+.chat-bubble.assistant h1 {
+  font-size: 1.45rem;
+}
+
+.chat-bubble.assistant h2 {
+  font-size: 1.3rem;
+}
+
+.chat-bubble.assistant h3 {
+  font-size: 1.15rem;
+}
+
+.chat-bubble.assistant h4,
+.chat-bubble.assistant h5,
+.chat-bubble.assistant h6 {
+  font-size: 1rem;
+}
+
+.chat-bubble.assistant ul,
+.chat-bubble.assistant ol {
+  margin: 0 0 10px 22px;
+  padding: 0;
+}
+
+.chat-bubble.assistant li {
+  margin: 4px 0;
+  line-height: 1.58;
+}
+
+.chat-bubble.assistant blockquote {
+  margin: 10px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid rgba(255, 255, 255, 0.22);
+  color: #cfcabf;
+}
+
+.chat-bubble.assistant hr {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  margin: 12px 0;
+}
+
+.chat-bubble.assistant a {
+  color: #7fb8ff;
+  text-decoration: underline;
+  text-decoration-color: rgba(127, 184, 255, 0.45);
+  text-underline-offset: 2px;
+}
+
+.chat-bubble.assistant a:hover {
+  color: #a5ccff;
+  text-decoration-color: rgba(165, 204, 255, 0.8);
+}
+
+.chat-bubble.assistant del {
+  text-decoration-color: rgba(255, 255, 255, 0.4);
 }
 
 .chat-tool-event,
@@ -1025,7 +1112,8 @@ button {
 
 .code-block {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.55;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1036,6 +1124,33 @@ button {
 
 .code-block code {
   font-family: inherit;
+}
+
+.code-block .token.comment {
+  color: #7c8794;
+}
+
+.code-block .token.string {
+  color: #f59e0b;
+}
+
+.code-block .token.number,
+.code-block .token.boolean {
+  color: #60a5fa;
+}
+
+.code-block .token.keyword,
+.code-block .token.operator {
+  color: #c084fc;
+}
+
+.code-block .token.function,
+.code-block .token.class-name {
+  color: #22d3ee;
+}
+
+.code-block .token.punctuation {
+  color: #9ca3af;
 }
 
 .chat-inline-diff {
@@ -1841,6 +1956,58 @@ button {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dv-file-actions {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.dv-file-actions-btn {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0 4px;
+}
+
+.dv-file-actions-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.dv-file-actions-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 140px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+  padding: 5px;
+  z-index: 15;
+}
+
+.dv-file-actions-item {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  padding: 7px 9px;
+}
+
+.dv-file-actions-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .dv-file-delta {
@@ -1884,6 +2051,46 @@ button {
   padding: 12px 12px 10px;
   color: var(--text-tertiary);
   font-size: 11px;
+}
+
+.dv-fullfile {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.dv-fullfile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 6px;
+}
+
+.dv-fullfile-title {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.dv-fullfile-note {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.dv-fullfile-message {
+  padding: 10px 12px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.dv-fullfile-message-error {
+  color: #f7a8a8;
+}
+
+.dv-fullfile-table {
+  border-top: 1px solid var(--border);
 }
 
 /* ── Diff table ──────────────────────────────────────────────── */
@@ -2264,10 +2471,15 @@ button {
   display: flex;
   gap: 8px;
   padding: 5px 10px;
+  cursor: pointer;
 }
 
 .bp-item:hover {
   background: var(--bg-hover);
+}
+
+.bp-item.active {
+  background: var(--bg-active);
 }
 
 .bp-graph {

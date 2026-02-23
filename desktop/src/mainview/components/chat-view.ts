@@ -7,6 +7,28 @@ import type {
   Activity,
   SlashCommandEntry,
 } from "../../shared/types.ts";
+import Prism from "prismjs";
+import "prismjs/components/prism-clike";
+import "prismjs/components/prism-javascript";
+import "prismjs/components/prism-typescript";
+import "prismjs/components/prism-jsx";
+import "prismjs/components/prism-tsx";
+import "prismjs/components/prism-c";
+import "prismjs/components/prism-cpp";
+import "prismjs/components/prism-csharp";
+import "prismjs/components/prism-java";
+import "prismjs/components/prism-kotlin";
+import "prismjs/components/prism-go";
+import "prismjs/components/prism-rust";
+import "prismjs/components/prism-python";
+import "prismjs/components/prism-ruby";
+import "prismjs/components/prism-bash";
+import "prismjs/components/prism-json";
+import "prismjs/components/prism-yaml";
+import "prismjs/components/prism-markdown";
+import "prismjs/components/prism-css";
+import "prismjs/components/prism-sql";
+import "prismjs/components/prism-php";
 
 export type ChatCallbacks = {
   onSendPrompt: (
@@ -1505,34 +1527,311 @@ function formatToolDetails(
   }
 }
 
-function renderMarkdown(text: string): string {
-  const normalized = escapeHtml(text).replace(/\r\n?/g, "\n");
-  const codeBlocks: string[] = [];
+const CODE_PLACEHOLDER_PATTERN = /^@@CODEBLOCKTOKEN(\d+)@@$/;
+const CODE_PLACEHOLDER_GLOBAL_PATTERN = /@@CODEBLOCKTOKEN(\d+)@@/g;
+const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/;
+const UNORDERED_LIST_PATTERN = /^\s*[-*+]\s+(.+)$/;
+const ORDERED_LIST_PATTERN = /^\s*\d+\.\s+(.+)$/;
+const BLOCKQUOTE_PATTERN = /^\s*>\s?(.*)$/;
+const HORIZONTAL_RULE_PATTERN = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const INLINE_PLACEHOLDER_PATTERN = /@@INLINEMDTOKEN(\d+)@@/g;
 
+function renderMarkdown(text: string): string {
+  const normalized = String(text ?? "").replace(/\r\n?/g, "\n");
+  if (!normalized.trim()) return "";
+
+  const codeBlocks: string[] = [];
   const withCodePlaceholders = normalized.replace(
     /```([^\n`]*)\n?([\s\S]*?)```/g,
-    (_match, lang, code) => {
+    (_match, rawLanguage, code) => {
       const codeText = String(code).replace(/\n$/, "");
-      const language = String(lang ?? "").trim().toLowerCase();
-      const index = codeBlocks.push(
-        language === "diff"
-          ? renderInlineDiff(codeText)
-          : `<pre class="code-block"><code>${codeText}</code></pre>`
-      ) - 1;
-      return `@@CODE_BLOCK_${index}@@`;
+      const language = normalizeCodeLanguageTag(String(rawLanguage ?? ""));
+      const renderedBlock = language === "diff"
+        ? renderInlineDiff(codeText)
+        : renderCodeBlock(codeText, language);
+      const index = codeBlocks.push(renderedBlock) - 1;
+      return `@@CODEBLOCKTOKEN${index}@@`;
     }
   );
 
-  const renderedText = withCodePlaceholders
-    .replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/\n/g, "<br>");
-
-  return renderedText.replace(/@@CODE_BLOCK_(\d+)@@/g, (_match, idx) => {
+  const rendered = renderMarkdownBlocks(withCodePlaceholders);
+  return rendered.replace(CODE_PLACEHOLDER_GLOBAL_PATTERN, (_match, idx) => {
     const block = codeBlocks[Number(idx)];
     return block ?? "";
   });
+}
+
+function renderMarkdownBlocks(source: string): string {
+  const lines = source.split("\n");
+  const blocks: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      i++;
+      continue;
+    }
+
+    if (CODE_PLACEHOLDER_PATTERN.test(trimmed)) {
+      blocks.push(trimmed);
+      i++;
+      continue;
+    }
+
+    const heading = trimmed.match(HEADING_PATTERN);
+    if (heading) {
+      const level = heading[1].length;
+      const body = renderInlineMarkdown(heading[2].trim());
+      blocks.push(`<h${level}>${body}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    if (HORIZONTAL_RULE_PATTERN.test(trimmed)) {
+      blocks.push("<hr>");
+      i++;
+      continue;
+    }
+
+    if (BLOCKQUOTE_PATTERN.test(line)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length) {
+        const quoteLine = lines[i];
+        if (!quoteLine.trim()) {
+          quoteLines.push("");
+          i++;
+          continue;
+        }
+
+        const quoteMatch = quoteLine.match(BLOCKQUOTE_PATTERN);
+        if (!quoteMatch) break;
+        quoteLines.push(quoteMatch[1]);
+        i++;
+      }
+
+      const quoteContent = renderMarkdownBlocks(quoteLines.join("\n"));
+      blocks.push(`<blockquote>${quoteContent || "<p></p>"}</blockquote>`);
+      continue;
+    }
+
+    if (UNORDERED_LIST_PATTERN.test(line)) {
+      const [listHtml, nextIndex] = renderMarkdownList(lines, i, false);
+      blocks.push(listHtml);
+      i = nextIndex;
+      continue;
+    }
+
+    if (ORDERED_LIST_PATTERN.test(line)) {
+      const [listHtml, nextIndex] = renderMarkdownList(lines, i, true);
+      blocks.push(listHtml);
+      i = nextIndex;
+      continue;
+    }
+
+    const paragraphLines: string[] = [line];
+    i++;
+    while (i < lines.length) {
+      const nextLine = lines[i];
+      const nextTrimmed = nextLine.trim();
+      if (!nextTrimmed) break;
+      if (CODE_PLACEHOLDER_PATTERN.test(nextTrimmed)) break;
+      if (HEADING_PATTERN.test(nextTrimmed)) break;
+      if (HORIZONTAL_RULE_PATTERN.test(nextTrimmed)) break;
+      if (BLOCKQUOTE_PATTERN.test(nextLine)) break;
+      if (UNORDERED_LIST_PATTERN.test(nextLine) || ORDERED_LIST_PATTERN.test(nextLine)) break;
+      paragraphLines.push(nextLine);
+      i++;
+    }
+
+    const paragraphHtml = renderInlineMarkdown(
+      paragraphLines.map((part) => part.trim()).join("\n")
+    ).replace(/\n/g, "<br>");
+    blocks.push(`<p>${paragraphHtml}</p>`);
+  }
+
+  return blocks.join("");
+}
+
+function renderMarkdownList(
+  lines: string[],
+  startIndex: number,
+  ordered: boolean
+): [string, number] {
+  const pattern = ordered ? ORDERED_LIST_PATTERN : UNORDERED_LIST_PATTERN;
+  const tag = ordered ? "ol" : "ul";
+  const items: string[] = [];
+  let i = startIndex;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const match = line.match(pattern);
+    if (!match) break;
+
+    const itemLines = [match[1].trim()];
+    i++;
+
+    while (i < lines.length) {
+      const continuationLine = lines[i];
+      const continuationTrimmed = continuationLine.trim();
+      if (!continuationTrimmed) break;
+      if (pattern.test(continuationLine)) break;
+      if (!/^\s{2,}\S/.test(continuationLine)) break;
+      if (CODE_PLACEHOLDER_PATTERN.test(continuationTrimmed)) break;
+      itemLines.push(continuationTrimmed);
+      i++;
+    }
+
+    const itemHtml = renderInlineMarkdown(itemLines.join("\n")).replace(
+      /\n/g,
+      "<br>"
+    );
+    items.push(`<li>${itemHtml}</li>`);
+
+    if (lines[i]?.trim() === "") {
+      const nextLine = lines[i + 1];
+      if (!nextLine || !pattern.test(nextLine)) {
+        break;
+      }
+      i++;
+    }
+  }
+
+  return [`<${tag}>${items.join("")}</${tag}>`, i];
+}
+
+function renderInlineMarkdown(text: string): string {
+  let html = escapeHtml(text);
+  const placeholders: string[] = [];
+  const stash = (value: string): string => {
+    const index = placeholders.push(value) - 1;
+    return `@@INLINEMDTOKEN${index}@@`;
+  };
+
+  html = html.replace(/`([^`\n]+)`/g, (_match, code) => {
+    return stash(`<code class="inline-code">${code}</code>`);
+  });
+
+  html = html.replace(
+    /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g,
+    (_match, label, href, title) => {
+      const safeHref = sanitizeLinkHref(String(href));
+      if (!safeHref) return label;
+      const titleAttr = title ? ` title="${escapeHtml(String(title))}"` : "";
+      return stash(
+        `<a href="${safeHref}"${titleAttr} target="_blank" rel="noopener noreferrer">${label}</a>`
+      );
+    }
+  );
+
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  html = html.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  html = html.replace(/_([^_\n]+)_/g, "<em>$1</em>");
+  html = html.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+
+  html = html.replace(
+    /(^|[\s(])(https?:\/\/[^\s<)]+)(?=$|[\s).,!?:;])/g,
+    (_match, prefix, url) => {
+      const safeHref = sanitizeLinkHref(String(url));
+      if (!safeHref) return `${prefix}${url}`;
+      return `${prefix}<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+    }
+  );
+
+  return html.replace(INLINE_PLACEHOLDER_PATTERN, (_match, idx) => {
+    return placeholders[Number(idx)] ?? "";
+  });
+}
+
+function sanitizeLinkHref(href: string): string | null {
+  const value = href.trim();
+  if (!value) return null;
+  const lowered = value.toLowerCase();
+  if (
+    lowered.startsWith("javascript:")
+    || lowered.startsWith("data:")
+    || lowered.startsWith("vbscript:")
+  ) {
+    return null;
+  }
+
+  if (
+    lowered.startsWith("http://")
+    || lowered.startsWith("https://")
+    || lowered.startsWith("mailto:")
+    || lowered.startsWith("#")
+    || lowered.startsWith("/")
+  ) {
+    return escapeHtml(value);
+  }
+
+  return null;
+}
+
+function renderCodeBlock(code: string, language: string | null): string {
+  const highlighted = highlightCodeBlock(code, language);
+  const languageClass = language ? ` class="language-${language}"` : "";
+  return `<pre class="code-block"><code${languageClass}>${highlighted}</code></pre>`;
+}
+
+function highlightCodeBlock(code: string, language: string | null): string {
+  if (!language || code.length > 20000) {
+    return escapeHtml(code);
+  }
+
+  const prism = resolvePrism();
+  if (!prism) {
+    return escapeHtml(code);
+  }
+
+  const grammar = resolveGrammar(prism.languages, language);
+  if (!grammar) {
+    return escapeHtml(code);
+  }
+
+  try {
+    return prism.highlight(code, grammar, language);
+  } catch {
+    return escapeHtml(code);
+  }
+}
+
+function normalizeCodeLanguageTag(language: string): string | null {
+  const token = language.trim().toLowerCase().split(/\s+/)[0] ?? "";
+  if (!token) return null;
+
+  const map: Record<string, string> = {
+    js: "javascript",
+    mjs: "javascript",
+    cjs: "javascript",
+    ts: "typescript",
+    c: "c",
+    h: "c",
+    cc: "cpp",
+    cxx: "cpp",
+    hpp: "cpp",
+    cs: "csharp",
+    kt: "kotlin",
+    py: "python",
+    rb: "ruby",
+    sh: "bash",
+    shell: "bash",
+    zsh: "bash",
+    yml: "yaml",
+    md: "markdown",
+    html: "markup",
+    text: "",
+    txt: "",
+    plaintext: "",
+    plain: "",
+  };
+
+  if (token === "diff") return "diff";
+  const mapped = map[token] ?? token;
+  return mapped || null;
 }
 
 function renderToolContent(text: string): string {
@@ -1546,43 +1845,10 @@ function renderToolContent(text: string): string {
 
   // Tool payloads are usually path + raw code/content. If multiline, force code block.
   if (trimmed.includes("\n")) {
-    return `<pre class="code-block"><code>${escapeHtml(trimmed)}</code></pre>`;
+    return renderCodeBlock(trimmed, null);
   }
 
   return renderMarkdown(trimmed);
-}
-
-function guessCodeLanguage(filePath: string): string {
-  const ext = basename(filePath).split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    js: "javascript",
-    jsx: "jsx",
-    ts: "typescript",
-    tsx: "tsx",
-    py: "python",
-    rb: "ruby",
-    go: "go",
-    rs: "rust",
-    java: "java",
-    kt: "kotlin",
-    cs: "csharp",
-    cpp: "cpp",
-    c: "c",
-    h: "c",
-    hpp: "cpp",
-    php: "php",
-    sh: "bash",
-    zsh: "bash",
-    bash: "bash",
-    md: "markdown",
-    json: "json",
-    yml: "yaml",
-    yaml: "yaml",
-    html: "html",
-    css: "css",
-    sql: "sql",
-  };
-  return map[ext] ?? "";
 }
 
 function toUnifiedDiff(oldText: string, newText: string): string {
@@ -1671,6 +1937,50 @@ function renderInlineDiff(diffText: string): string {
   }
 
   return `<div class="chat-inline-diff"><table class="diff-table unified"><tbody>${rows.join("")}</tbody></table></div>`;
+}
+
+type PrismLike = {
+  languages: Record<string, Prism.Grammar>;
+  highlight: (text: string, grammar: Prism.Grammar, language: string) => string;
+};
+
+function resolvePrism(): PrismLike | null {
+  const globalPrism = (globalThis as any)?.Prism as Partial<PrismLike> | undefined;
+  if (typeof globalPrism?.highlight === "function" && globalPrism.languages) {
+    return globalPrism as PrismLike;
+  }
+
+  const imported = Prism as unknown as Partial<PrismLike> | undefined;
+  if (typeof imported?.highlight === "function" && imported.languages) {
+    return imported as PrismLike;
+  }
+
+  return null;
+}
+
+function resolveGrammar(
+  languages: Record<string, Prism.Grammar>,
+  language: string
+): Prism.Grammar | null {
+  if (languages[language]) return languages[language];
+
+  if (language === "csharp") {
+    return languages.cs ?? languages.dotnet ?? null;
+  }
+
+  if (language === "typescript") {
+    return languages.ts ?? null;
+  }
+
+  if (language === "javascript") {
+    return languages.js ?? null;
+  }
+
+  if (language === "yaml") {
+    return languages.yml ?? null;
+  }
+
+  return null;
 }
 
 function shouldExpandTool(toolName: string): boolean {

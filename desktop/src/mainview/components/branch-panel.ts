@@ -1,13 +1,20 @@
 import { h, clearChildren } from "../lib/dom.ts";
 import type { BranchCommit, BranchRef } from "../../shared/types.ts";
 
+export type BranchPanelCallbacks = {
+  onSelectCommit?: (commit: BranchCommit) => void;
+};
+
 export class BranchPanel {
   #el: HTMLElement;
   #listEl: HTMLElement;
   #countEl: HTMLElement;
+  #callbacks: BranchPanelCallbacks;
+  #activeCommitHash: string | null = null;
   #commits: BranchCommit[] = [];
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, callbacks: BranchPanelCallbacks = {}) {
+    this.#callbacks = callbacks;
     this.#countEl = h("span", { class: "bp-count" }, ["0"]);
 
     const header = h("div", { class: "bp-header" }, [
@@ -46,9 +53,18 @@ export class BranchPanel {
 
   clear(): void {
     this.#commits = [];
+    this.#activeCommitHash = null;
     this.#countEl.textContent = "0";
     clearChildren(this.#listEl);
     this.#listEl.appendChild(h("div", { class: "bp-empty" }, ["No git history"]));
+  }
+
+  setActiveCommit(commitHash: string | null): void {
+    this.#activeCommitHash = commitHash;
+    for (const item of this.#listEl.querySelectorAll(".bp-item")) {
+      const el = item as HTMLElement;
+      el.classList.toggle("active", el.dataset.commitHash === commitHash);
+    }
   }
 
   #renderCommit(commit: BranchCommit, index: number, total: number): HTMLElement {
@@ -59,7 +75,11 @@ export class BranchPanel {
       hiddenRefs > 0 ? h("span", { class: "bp-ref bp-ref-more" }, [`+${hiddenRefs}`]) : null as any,
     ].filter(Boolean) as HTMLElement[];
 
-    return h("div", { class: "bp-item" }, [
+    return h("div", {
+      class: `bp-item${commit.hash === this.#activeCommitHash ? " active" : ""}`,
+      dataset: { commitHash: commit.hash },
+      onclick: () => this.#callbacks.onSelectCommit?.(commit),
+    }, [
       h("div", { class: "bp-graph" }, [
         h("span", {
           class: `bp-node${commit.isPushed ? " is-pushed" : " is-local"}${commit.isHead ? " is-head" : ""}`,

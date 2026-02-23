@@ -10,7 +10,7 @@ import {
   beginTurnDiff,
   finalizeTurnDiff,
 } from "./diff-provider.ts";
-import { getBranchHistory } from "./branch-history.ts";
+import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
 import { listSessionsForWorkspace } from "./session-history.ts";
 import { WorkspaceStore } from "./workspace-store.ts";
 import { ApprovalServer } from "./approval-server.ts";
@@ -18,12 +18,18 @@ import { installApprovalHook } from "./hook-installer.ts";
 import { SessionNamesStore } from "./session-names-store.ts";
 import {
   getWorkspaceFiles,
+  getWorkspaceFileContent,
   invalidateWorkspaceFilesCache,
 } from "./workspace-files.ts";
 import {
   getSlashCommands,
   invalidateSlashCommandsCache,
 } from "./slash-commands.ts";
+import {
+  encodeClaudeProjectPath,
+  encodeClaudeProjectPathLegacy,
+  getWorkspacePathVariantsSync,
+} from "./project-path.ts";
 import type { AppRPC, SessionInfo, Snapshot, Activity } from "../shared/types.ts";
 
 console.log("Claudex starting...");
@@ -249,24 +255,33 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         cwd?: string;
         transcriptPath?: string;
       }) => {
+        const guessedPaths = cwd ? guessTranscriptPaths(cwd, sessionId) : [];
         const resolvedPath = transcriptPath
           ?? latestSnapshot?.tasks.find((t) => t.sessionId === sessionId)?.transcriptPath
-          ?? (cwd ? guessTranscriptPath(cwd, sessionId) : null);
+          ?? guessedPaths[0]
+          ?? null;
 
         let deleted = false;
-        if (resolvedPath) {
+        let deletedPath: string | null = null;
+        const candidates = new Set<string>();
+        if (resolvedPath) candidates.add(resolvedPath);
+        for (const guessed of guessedPaths) candidates.add(guessed);
+
+        for (const candidate of candidates) {
           try {
-            await unlink(resolvedPath);
+            await unlink(candidate);
             deleted = true;
+            deletedPath = candidate;
+            break;
           } catch (err: any) {
             if (err?.code !== "ENOENT") {
-              console.warn("Failed to delete transcript:", resolvedPath, err);
+              console.warn("Failed to delete transcript:", candidate, err);
             }
           }
         }
 
         await sessionNames.delete(sessionId).catch(() => {});
-        return { deleted, transcriptPath: resolvedPath ?? null };
+        return { deleted, transcriptPath: deletedPath ?? resolvedPath ?? null };
       },
 
       getSessionHistory: async ({ cwd }) => {
@@ -275,6 +290,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
       getDiff: async ({ cwd, scope }) => {
         return getDiff(cwd, scope ?? "all");
+      },
+
+      getCommitDiff: async ({
+        cwd,
+        commitHash,
+      }: {
+        cwd: string;
+        commitHash: string;
+      }) => {
+        return getCommitDiff(cwd, commitHash);
       },
 
       getBranchHistory: async ({
@@ -299,6 +324,18 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       getWorkspaceFiles: async ({ cwd }: { cwd: string }) => {
         if (!cwd) return [];
         return getWorkspaceFiles(cwd);
+      },
+
+      getFileContent: async ({
+        cwd,
+        path,
+        maxBytes,
+      }: {
+        cwd: string;
+        path: string;
+        maxBytes?: number;
+      }) => {
+        return getWorkspaceFileContent(cwd, path, maxBytes);
       },
 
       getSlashCommands: async ({ cwd }: { cwd: string }) => {
@@ -387,9 +424,16 @@ function resolveSessionCwd(sessionId: string): string | null {
   return fromSnapshot;
 }
 
-function guessTranscriptPath(cwd: string, sessionId: string): string {
-  const encoded = cwd.replace(/\//g, "-");
-  return join(homedir(), ".claude", "projects", encoded, `${sessionId}.jsonl`);
+function guessTranscriptPaths(cwd: string, sessionId: string): string[] {
+  const variants = getWorkspacePathVariantsSync(cwd);
+  const paths = new Set<string>();
+  for (const variant of variants) {
+    const encoded = encodeClaudeProjectPath(variant);
+    const legacy = encodeClaudeProjectPathLegacy(variant);
+    paths.add(join(homedir(), ".claude", "projects", encoded, `${sessionId}.jsonl`));
+    paths.add(join(homedir(), ".claude", "projects", legacy, `${sessionId}.jsonl`));
+  }
+  return Array.from(paths);
 }
 
 // ── Window ───────────────────────────────────────────────────────

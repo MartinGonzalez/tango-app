@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { BranchCommit, BranchRef, BranchRefKind } from "../shared/types.ts";
+import { parseDiff } from "../mainview/components/diff-parser.ts";
+import type { BranchCommit, BranchRef, BranchRefKind, DiffFile } from "../shared/types.ts";
 
 const DEFAULT_LIMIT = 80;
 const MAX_LIMIT = 300;
@@ -35,6 +36,33 @@ export async function getBranchHistory(
       if (parsed) commits.push(parsed);
     }
     return commits;
+  } catch {
+    return [];
+  }
+}
+
+export async function getCommitDiff(
+  cwd: string,
+  commitHash: string
+): Promise<DiffFile[]> {
+  if (!(await hasGit(cwd))) return [];
+
+  const hash = commitHash.trim();
+  if (!hash) return [];
+
+  const output = await runGit(cwd, [
+    "show",
+    "--format=",
+    "--patch",
+    "--find-renames",
+    "--find-copies",
+    "--binary",
+    hash,
+  ]);
+  if (!output.trim()) return [];
+
+  try {
+    return parseDiff(output);
   } catch {
     return [];
   }
