@@ -40,19 +40,32 @@ const rpc = Electroview.defineRPC<any>({
       }) => {
         updateSessionUsageEstimate(sessionId, event);
         const state = appState.get();
+        const isResultEvent = (event as any).type === "result";
+        const isStopHook = isStopHookEvent(event);
         if (state.activeSessionId === sessionId && chatView) {
           chatView.appendStreamEvent(event);
         }
         if (
           state.activeSessionId === sessionId
           && state.activeWorkspace
-          && ((event as any).type === "result" || isDiffMutationEvent(event))
+          && (isResultEvent || isDiffMutationEvent(event))
         ) {
           workspaceFileCache.delete(state.activeWorkspace);
           scheduleDiffRefresh(
             state.activeWorkspace,
             state.diffScope,
-            (event as any).type === "result" ? 0 : 120
+            isResultEvent ? 0 : 120
+          );
+        }
+        if (
+          state.activeSessionId === sessionId
+          && state.activeWorkspace
+          && diffView?.isBranchPanelVisible
+          && (isResultEvent || isStopHook)
+        ) {
+          scheduleBranchHistoryRefresh(
+            state.activeWorkspace,
+            isResultEvent ? 0 : 120
           );
         }
       },
@@ -109,7 +122,7 @@ const rpc = Electroview.defineRPC<any>({
         if (state.activeWorkspace) {
           loadDiff(state.activeWorkspace);
           if (diffView.isBranchPanelVisible) {
-            void loadBranchHistory(state.activeWorkspace, true);
+            scheduleBranchHistoryRefresh(state.activeWorkspace, 0);
           }
         }
       },
@@ -164,6 +177,7 @@ let diffView: DiffView;
 let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FILE_CACHE_MS = 30_000;
 const workspaceFileCache = new Map<string, {
   files: string[];
@@ -588,6 +602,16 @@ function scheduleDiffRefresh(
   }, delayMs);
 }
 
+function scheduleBranchHistoryRefresh(cwd: string, delayMs: number): void {
+  if (branchHistoryRefreshTimer) {
+    clearTimeout(branchHistoryRefreshTimer);
+  }
+  branchHistoryRefreshTimer = setTimeout(() => {
+    branchHistoryRefreshTimer = null;
+    void loadBranchHistory(cwd, true);
+  }, delayMs);
+}
+
 function isDiffMutationEvent(event: ClaudeStreamEvent): boolean {
   const ev = event as any;
   if (ev.type !== "user") return false;
@@ -602,6 +626,58 @@ function isDiffMutationEvent(event: ClaudeStreamEvent): boolean {
 
   const hasPatch = Array.isArray(toolResult.structuredPatch) && toolResult.structuredPatch.length > 0;
   return hasPatch;
+}
+
+function isStopHookEvent(event: ClaudeStreamEvent): boolean {
+  const ev = event as any;
+  if (ev.type !== "system") return false;
+
+  const hookName = extractHookEventName(ev);
+  return hookName.toLowerCase() === "stop";
+}
+
+function extractHookEventName(value: unknown, depth = 0): string {
+  if (depth > 4 || value == null) return "";
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+      return "";
+    }
+    try {
+      return extractHookEventName(JSON.parse(trimmed), depth + 1);
+    } catch {
+      return "";
+    }
+  }
+
+  if (typeof value !== "object") return "";
+
+  const bag = value as Record<string, unknown>;
+  const direct = bag.hook_event_name ?? bag.hookEventName;
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim();
+  }
+
+  const nested = [
+    bag.hookSpecificOutput,
+    bag.hook_specific_output,
+    bag.payload,
+    bag.data,
+    bag.result,
+    bag.output,
+    bag.stdout,
+    bag.message,
+    bag.hook_response,
+    bag.hookResponse,
+  ];
+  for (const entry of nested) {
+    const name = extractHookEventName(entry, depth + 1);
+    if (name) return name;
+  }
+
+  return "";
 }
 
 async function loadWorkspaces(): Promise<void> {

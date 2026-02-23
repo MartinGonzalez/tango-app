@@ -2282,15 +2282,21 @@ button {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 1px solid #4b5a6d;
-  background: #0f1520;
+  border: 1px solid #995e44;
+  background: transparent;
   margin-top: 2px;
 }
 
+.bp-node.is-pushed {
+  background: #995e44;
+}
+
+.bp-node.is-local {
+  background: transparent;
+}
+
 .bp-node.is-head {
-  border-color: #f59e0b;
-  background: rgba(245, 158, 11, 0.2);
-  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.22);
+  box-shadow: 0 0 0 2px rgba(153, 94, 68, 0.28);
 }
 
 .bp-tail {
@@ -2309,10 +2315,19 @@ button {
   flex: 1;
 }
 
+.bp-ref-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+
 .bp-title-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 0;
   min-width: 0;
 }
 

@@ -149,6 +149,7 @@ export type BranchCommit = {
   relativeTime: string;
   refs: BranchRef[];
   isHead: boolean;
+  isPushed: boolean;
 };
 
 // ── Stream event types (claude -p --output-format stream-json --verbose) ──

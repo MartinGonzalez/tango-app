@@ -54,19 +54,24 @@ export class BranchPanel {
   #renderCommit(commit: BranchCommit, index: number, total: number): HTMLElement {
     const refs = commit.refs.slice(0, 4);
     const hiddenRefs = Math.max(0, commit.refs.length - refs.length);
+    const refRowItems = [
+      ...refs.map((ref) => this.#renderRef(ref)),
+      hiddenRefs > 0 ? h("span", { class: "bp-ref bp-ref-more" }, [`+${hiddenRefs}`]) : null as any,
+    ].filter(Boolean) as HTMLElement[];
 
     return h("div", { class: "bp-item" }, [
       h("div", { class: "bp-graph" }, [
         h("span", {
-          class: `bp-node${commit.isHead ? " is-head" : ""}`,
+          class: `bp-node${commit.isPushed ? " is-pushed" : " is-local"}${commit.isHead ? " is-head" : ""}`,
         }),
         index < total - 1 ? h("span", { class: "bp-tail" }) : h("span", { class: "bp-tail bp-tail-end" }),
       ]),
       h("div", { class: "bp-main" }, [
+        refRowItems.length > 0
+          ? h("div", { class: "bp-ref-row" }, refRowItems)
+          : null as any,
         h("div", { class: "bp-title-row" }, [
           h("span", { class: "bp-subject", title: commit.subject }, [commit.subject]),
-          ...refs.map((ref) => this.#renderRef(ref)),
-          hiddenRefs > 0 ? h("span", { class: "bp-ref bp-ref-more" }, [`+${hiddenRefs}`]) : null as any,
         ].filter(Boolean)),
         h("div", { class: "bp-meta" }, [
           h("span", { class: "bp-author" }, [commit.author]),
