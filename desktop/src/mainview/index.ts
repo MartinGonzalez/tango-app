@@ -57,6 +57,8 @@ import type {
   ConnectorAuthSession,
   ConnectorProvider,
   PullRequestDetail,
+  PullRequestAgentReviewDocument,
+  PullRequestAgentReviewRun,
   PullRequestReviewThread,
   PullRequestReviewState,
   PullRequestSummary,
@@ -208,6 +210,15 @@ const rpc = Electroview.defineRPC<any>({
           void loadTaskDetail(state.selectedTaskId, true);
         }
       },
+      pullRequestAgentReviewChanged: ({
+        repo,
+        number,
+      }: {
+        repo: string;
+        number: number;
+      }) => {
+        void handlePullRequestAgentReviewChangedMessage(repo, number);
+      },
     },
   },
 });
@@ -253,6 +264,12 @@ type AppState = {
   pullRequestDetailError: string | null;
   selectedPullRequestCommitSha: string | null;
   pullRequestReviewState: PullRequestReviewState | null;
+  pullRequestAgentReviews: PullRequestAgentReviewRun[];
+  pullRequestAgentReviewsLoading: boolean;
+  pullRequestAgentReviewsError: string | null;
+  selectedPullRequestAgentReviewVersion: number | null;
+  selectedPullRequestAgentReviewDocument: PullRequestAgentReviewDocument | null;
+  pullRequestAgentReviewStarting: boolean;
 };
 
 type SessionUsageEstimate = {
@@ -306,6 +323,12 @@ const appState = new Store<AppState>({
   pullRequestDetailError: null,
   selectedPullRequestCommitSha: null,
   pullRequestReviewState: null,
+  pullRequestAgentReviews: [],
+  pullRequestAgentReviewsLoading: false,
+  pullRequestAgentReviewsError: null,
+  selectedPullRequestAgentReviewVersion: null,
+  selectedPullRequestAgentReviewDocument: null,
+  pullRequestAgentReviewStarting: false,
 });
 
 // ── Components ───────────────────────────────────────────────────
@@ -615,6 +638,14 @@ function init(): void {
         ...s,
         selectedPullRequest: { repo, number },
         selectedPullRequestCommitSha: null,
+        selectedPullRequestDetail: null,
+        pullRequestReviewState: null,
+        pullRequestDetailError: null,
+        pullRequestAgentReviews: [],
+        pullRequestAgentReviewsError: null,
+        selectedPullRequestAgentReviewVersion: null,
+        selectedPullRequestAgentReviewDocument: null,
+        pullRequestAgentReviewStarting: false,
       }));
       void loadPullRequestDetail(repo, number, true);
     },
@@ -864,6 +895,12 @@ function init(): void {
     },
     onFilesViewModeChange: (mode) => {
       setGlobalFilesListViewMode(mode);
+    },
+    onStartAgentReview: () => {
+      void startPullRequestAgentReview();
+    },
+    onSelectAgentReviewVersion: (version) => {
+      void selectPullRequestAgentReviewVersion(version);
     },
   });
   connectorsView = new ConnectorsView(chatPanel, {
@@ -1124,6 +1161,12 @@ function init(): void {
       totalFiles: pullRequestTotalFiles,
       fileReviewState: pullRequestReviewMap,
       filesViewMode: state.filesListViewMode,
+      agentReviews: state.pullRequestAgentReviews,
+      agentReviewsLoading: state.pullRequestAgentReviewsLoading,
+      agentReviewsError: state.pullRequestAgentReviewsError,
+      selectedAgentReviewVersion: state.selectedPullRequestAgentReviewVersion,
+      selectedAgentReviewDocument: state.selectedPullRequestAgentReviewDocument,
+      agentReviewStarting: state.pullRequestAgentReviewStarting,
     });
     connectorsView.render(activeWorkspaceConnectors, {
       loading: state.connectorsLoading,
@@ -1925,6 +1968,18 @@ async function loadPullRequests(force = false): Promise<void> {
         selectedPullRequestCommitSha: selectionChanged ? null : s.selectedPullRequestCommitSha,
         selectedPullRequestDetail: selectionChanged ? null : s.selectedPullRequestDetail,
         pullRequestReviewState: selectionChanged ? null : s.pullRequestReviewState,
+        pullRequestAgentReviews: selectionChanged ? [] : s.pullRequestAgentReviews,
+        pullRequestAgentReviewsError: selectionChanged ? null : s.pullRequestAgentReviewsError,
+        pullRequestAgentReviewsLoading: selectionChanged ? false : s.pullRequestAgentReviewsLoading,
+        selectedPullRequestAgentReviewVersion: selectionChanged
+          ? null
+          : s.selectedPullRequestAgentReviewVersion,
+        selectedPullRequestAgentReviewDocument: selectionChanged
+          ? null
+          : s.selectedPullRequestAgentReviewDocument,
+        pullRequestAgentReviewStarting: selectionChanged
+          ? false
+          : s.pullRequestAgentReviewStarting,
       };
     });
 
@@ -1966,6 +2021,8 @@ async function loadPullRequestDetail(
     selectedPullRequest: keepSelection ? s.selectedPullRequest : { repo, number },
     pullRequestDetailLoading: true,
     pullRequestDetailError: null,
+    pullRequestAgentReviewsLoading: true,
+    pullRequestAgentReviewsError: null,
   }));
 
   try {
@@ -1973,6 +2030,38 @@ async function loadPullRequestDetail(
       (rpc as any).request.getPullRequestDetail({ repo, number }),
       (rpc as any).request.getPullRequestReviewState({ repo, number }),
     ]) as [PullRequestDetail, PullRequestReviewState | null];
+
+    let agentReviews: PullRequestAgentReviewRun[] = [];
+    let agentReviewsError: string | null = null;
+
+    try {
+      agentReviews = await (rpc as any).request.getPullRequestAgentReviews({
+        repo,
+        number,
+      }) as PullRequestAgentReviewRun[];
+      agentReviews.sort((left, right) => left.version - right.version);
+    } catch (error) {
+      agentReviewsError = formatPullRequestError(error);
+    }
+
+    const currentState = appState.get();
+    const selectedAgentReviewVersion = resolvePreferredAgentReviewVersion(
+      agentReviews,
+      currentState.selectedPullRequestAgentReviewVersion
+    );
+
+    let selectedAgentReviewDocument: PullRequestAgentReviewDocument | null = null;
+    if (selectedAgentReviewVersion != null && agentReviewsError == null) {
+      try {
+        selectedAgentReviewDocument = await (rpc as any).request.getPullRequestAgentReviewDocument({
+          repo,
+          number,
+          version: selectedAgentReviewVersion,
+        }) as PullRequestAgentReviewDocument | null;
+      } catch (error) {
+        agentReviewsError = formatPullRequestError(error);
+      }
+    }
 
     appState.update((s) => {
       const existingCommitSha = s.selectedPullRequestCommitSha;
@@ -1987,6 +2076,11 @@ async function loadPullRequestDetail(
         selectedPullRequestCommitSha: commitStillExists ? existingCommitSha : null,
         pullRequestDetailLoading: false,
         pullRequestDetailError: null,
+        pullRequestAgentReviews: agentReviews,
+        pullRequestAgentReviewsLoading: false,
+        pullRequestAgentReviewsError: agentReviewsError,
+        selectedPullRequestAgentReviewVersion: selectedAgentReviewVersion,
+        selectedPullRequestAgentReviewDocument: selectedAgentReviewDocument,
       };
     });
 
@@ -2000,6 +2094,12 @@ async function loadPullRequestDetail(
       pullRequestDetailError: message,
       selectedPullRequestDetail: null,
       pullRequestReviewState: null,
+      pullRequestAgentReviews: [],
+      pullRequestAgentReviewsLoading: false,
+      pullRequestAgentReviewsError: null,
+      selectedPullRequestAgentReviewVersion: null,
+      selectedPullRequestAgentReviewDocument: null,
+      pullRequestAgentReviewStarting: false,
     }));
     diffView.clear();
     filesPanel.clear();
@@ -2037,6 +2137,181 @@ async function loadSelectedPullRequestDiff(): Promise<void> {
     filesPanel.clear();
     diffView.clear();
   }
+}
+
+async function refreshPullRequestAgentReviews(
+  repo: string,
+  number: number,
+  preferredVersion?: number | null
+): Promise<void> {
+  appState.update((s) => ({
+    ...s,
+    pullRequestAgentReviewsLoading: true,
+    pullRequestAgentReviewsError: null,
+  }));
+
+  try {
+    const runs = await (rpc as any).request.getPullRequestAgentReviews({
+      repo,
+      number,
+    }) as PullRequestAgentReviewRun[];
+    runs.sort((left, right) => left.version - right.version);
+
+    const currentState = appState.get();
+    const selectedVersion = resolvePreferredAgentReviewVersion(
+      runs,
+      preferredVersion ?? currentState.selectedPullRequestAgentReviewVersion
+    );
+
+    let selectedDocument: PullRequestAgentReviewDocument | null = null;
+    if (selectedVersion != null) {
+      selectedDocument = await (rpc as any).request.getPullRequestAgentReviewDocument({
+        repo,
+        number,
+        version: selectedVersion,
+      }) as PullRequestAgentReviewDocument | null;
+    }
+
+    const selection = appState.get().selectedPullRequest;
+    if (!selection || selection.repo !== repo || selection.number !== number) {
+      return;
+    }
+
+    appState.update((s) => ({
+      ...s,
+      pullRequestAgentReviews: runs,
+      pullRequestAgentReviewsLoading: false,
+      pullRequestAgentReviewsError: null,
+      selectedPullRequestAgentReviewVersion: selectedVersion,
+      selectedPullRequestAgentReviewDocument: selectedDocument,
+    }));
+  } catch (error) {
+    const message = formatPullRequestError(error);
+    const selection = appState.get().selectedPullRequest;
+    if (!selection || selection.repo !== repo || selection.number !== number) {
+      return;
+    }
+    appState.update((s) => ({
+      ...s,
+      pullRequestAgentReviewsLoading: false,
+      pullRequestAgentReviewsError: message,
+      selectedPullRequestAgentReviewDocument: null,
+    }));
+  }
+}
+
+async function selectPullRequestAgentReviewVersion(version: number): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  if (!selection) return;
+
+  const normalized = Math.max(1, Math.trunc(version));
+  appState.update((s) => ({
+    ...s,
+    selectedPullRequestAgentReviewVersion: normalized,
+    pullRequestAgentReviewsLoading: true,
+    pullRequestAgentReviewsError: null,
+  }));
+
+  try {
+    const document = await (rpc as any).request.getPullRequestAgentReviewDocument({
+      repo: selection.repo,
+      number: selection.number,
+      version: normalized,
+    }) as PullRequestAgentReviewDocument | null;
+    const latestSelection = appState.get().selectedPullRequest;
+    if (!latestSelection
+      || latestSelection.repo !== selection.repo
+      || latestSelection.number !== selection.number) {
+      return;
+    }
+
+    appState.update((s) => ({
+      ...s,
+      selectedPullRequestAgentReviewDocument: document,
+      pullRequestAgentReviewsLoading: false,
+      pullRequestAgentReviewsError: null,
+    }));
+  } catch (error) {
+    const message = formatPullRequestError(error);
+    const latestSelection = appState.get().selectedPullRequest;
+    if (!latestSelection
+      || latestSelection.repo !== selection.repo
+      || latestSelection.number !== selection.number) {
+      return;
+    }
+
+    appState.update((s) => ({
+      ...s,
+      pullRequestAgentReviewsLoading: false,
+      pullRequestAgentReviewsError: message,
+      selectedPullRequestAgentReviewDocument: null,
+    }));
+  }
+}
+
+async function startPullRequestAgentReview(): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  if (!selection || !detail) return;
+  if (state.pullRequestAgentReviewStarting) return;
+  if (state.pullRequestAgentReviews.some((run) => run.status === "running")) return;
+
+  appState.update((s) => ({
+    ...s,
+    pullRequestAgentReviewStarting: true,
+    pullRequestAgentReviewsError: null,
+  }));
+
+  try {
+    const run = await (rpc as any).request.startPullRequestAgentReview({
+      repo: selection.repo,
+      number: selection.number,
+      headSha: detail.headSha,
+    }) as PullRequestAgentReviewRun;
+
+    await refreshPullRequestAgentReviews(selection.repo, selection.number, run.version);
+  } catch (error) {
+    const message = formatPullRequestError(error);
+    const latestSelection = appState.get().selectedPullRequest;
+    if (!latestSelection
+      || latestSelection.repo !== selection.repo
+      || latestSelection.number !== selection.number) {
+      return;
+    }
+    appState.update((s) => ({
+      ...s,
+      pullRequestAgentReviewsError: message,
+    }));
+  } finally {
+    const latestSelection = appState.get().selectedPullRequest;
+    if (!latestSelection
+      || latestSelection.repo !== selection.repo
+      || latestSelection.number !== selection.number) {
+      return;
+    }
+    appState.update((s) => ({
+      ...s,
+      pullRequestAgentReviewStarting: false,
+    }));
+  }
+}
+
+async function handlePullRequestAgentReviewChangedMessage(
+  repo: string,
+  number: number
+): Promise<void> {
+  const selection = appState.get().selectedPullRequest;
+  if (!selection || selection.repo !== repo || selection.number !== number) {
+    return;
+  }
+
+  await refreshPullRequestAgentReviews(
+    repo,
+    number,
+    appState.get().selectedPullRequestAgentReviewVersion
+  );
 }
 
 async function setPullRequestFileSeen(path: string, seen: boolean): Promise<void> {
@@ -2549,6 +2824,22 @@ function mergePullRequestLists(...lists: PullRequestSummary[][]): PullRequestSum
     }
   }
   return [...byKey.values()];
+}
+
+function resolvePreferredAgentReviewVersion(
+  runs: PullRequestAgentReviewRun[],
+  preferredVersion: number | null | undefined
+): number | null {
+  if (!Array.isArray(runs) || runs.length === 0) return null;
+
+  if (preferredVersion != null) {
+    const normalized = Math.max(1, Math.trunc(preferredVersion));
+    if (runs.some((run) => run.version === normalized)) {
+      return normalized;
+    }
+  }
+
+  return runs[runs.length - 1]?.version ?? null;
 }
 
 function resolveSelectedPullRequestReviewMap(state: AppState) {

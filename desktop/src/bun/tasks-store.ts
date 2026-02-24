@@ -597,6 +597,22 @@ export class TasksStore {
     return row ? mapRunRow(row) : null;
   }
 
+  listHiddenTaskSessionIds(): string[] {
+    const rows = this.#db.query(
+      `
+      SELECT DISTINCT session_id
+      FROM task_runs
+      WHERE session_id IS NOT NULL
+        AND trim(session_id) <> ''
+        AND action IN ('improve', 'plan')
+      `
+    ).all() as Array<{ session_id: string | null }>;
+
+    return rows
+      .map((row) => String(row.session_id ?? "").trim())
+      .filter((value) => value.length > 0);
+  }
+
   createArtifact(
     taskId: string,
     runId: string | null,

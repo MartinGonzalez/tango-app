@@ -3436,6 +3436,24 @@ button {
   border-bottom: 1px solid var(--border);
 }
 
+.tool-result-details > summary.tool-result-header {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-result-details > summary.tool-result-header::-webkit-details-marker {
+  display: none;
+}
+
+.tool-result-details > summary.tool-result-header::before {
+  content: "\25B8 ";
+  font-size: 9px;
+}
+
+.tool-result-details[open] > summary.tool-result-header::before {
+  content: "\25BE ";
+}
+
 .tool-result-output {
   font-size: 12px;
   color: var(--text-secondary);
@@ -3444,6 +3462,100 @@ button {
   max-height: 200px;
   overflow-y: auto;
   line-height: 1.45;
+}
+
+.tool-result-output p {
+  margin: 0 0 8px;
+}
+
+.tool-result-output ul,
+.tool-result-output ol {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.tool-result-output li {
+  margin: 3px 0;
+}
+
+.todo-write-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.todo-write-message {
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.todo-write-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-write-section-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.todo-write-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-write-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.todo-write-check {
+  width: 12px;
+  height: 12px;
+  margin-top: 2px;
+  border: 1px solid #141413;
+  background: #141413;
+  border-radius: 2px;
+  flex: 0 0 12px;
+}
+
+.todo-write-check.done {
+  background: #9A5F45;
+  border-color: #141413;
+}
+
+.todo-write-label {
+  color: var(--text-secondary);
+}
+
+.todo-write-item.done .todo-write-label {
+  color: #e4d2cb;
+}
+
+.todo-write-status {
+  margin-left: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.todo-write-changes {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.todo-write-empty {
+  color: var(--text-tertiary);
 }
 
 /* ── Code in chat ────────────────────────────────────────────── */
@@ -4407,6 +4519,15 @@ button {
   margin-top: 12px;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.pr-view-toolbar-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -4424,6 +4545,26 @@ button {
   color: var(--text);
   padding: 6px 8px;
   font-size: 12px;
+}
+
+.pr-view-agent-review-btn {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #dbeafe;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pr-view-agent-review-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.24);
+}
+
+.pr-view-agent-review-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .pr-view-description {
@@ -4470,14 +4611,23 @@ button {
   min-width: 0;
 }
 
+.pr-view-tabs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .pr-view-activity-tabs {
   display: inline-flex;
+  min-width: 0;
   gap: 6px;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.02);
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .pr-view-activity-tab {
@@ -4534,6 +4684,121 @@ button {
 .pr-view-timeline-empty {
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.pr-agent-reviews-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pr-agent-reviews-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pr-agent-review-run {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(20, 20, 19, 0.35);
+  padding: 6px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.pr-agent-review-run:hover {
+  border-color: var(--border-heavy);
+}
+
+.pr-agent-review-run.active {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.pr-agent-review-run-version {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pr-agent-review-run-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.pr-agent-review-run-status.is-running {
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.pr-agent-review-run-status.is-completed {
+  color: #9de6b4;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.pr-agent-review-run-status.is-failed {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.pr-agent-review-run-status.is-stale {
+  color: #c4b5fd;
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.pr-agent-review-run-time {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.pr-agent-reviews-markdown {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100% !important;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown {
+  font-size: 15.3px;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant p,
+.pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant li,
+.pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant blockquote {
+  font-size: 15.3px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant h1 {
+  font-size: 1.368rem;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant h2 {
+  font-size: 1.215rem;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant h3 {
+  font-size: 1.062rem;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown .code-block code {
+  font-size: 11.7px;
+}
+
+.pr-agent-reviews-markdown.plugins-preview-markdown .inline-code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pr-view-files-list {

@@ -3,6 +3,8 @@ import { renderMarkdown } from "./chat-view.ts";
 import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type { FileListView } from "./files-panel.ts";
 import type {
+  PullRequestAgentReviewDocument,
+  PullRequestAgentReviewRun,
   PullRequestConversationItem,
   PullRequestDetail,
 } from "../../shared/types.ts";
@@ -13,6 +15,8 @@ export type PRViewCallbacks = {
   onSelectFile: (path: string) => void;
   onToggleFileSeen?: (path: string, seen: boolean) => void;
   onFilesViewModeChange?: (mode: FileListView) => void;
+  onStartAgentReview?: () => void;
+  onSelectAgentReviewVersion?: (version: number) => void;
 };
 
 type PRFileRow = PullRequestDetail["files"][number];
@@ -35,10 +39,16 @@ export class PRView {
   #seenCount = 0;
   #totalFiles = 0;
   #fileReviewState = new Map<string, PullRequestFileReviewState>();
-  #contentTab: "conversation" | "files_changed" = "conversation";
+  #contentTab: "conversation" | "files_changed" | "agent_reviews" = "conversation";
   #filesTabActivePath: string | null = null;
   #filesViewMode: FileListView = "flat";
   #filesTreeExpanded = new Map<string, boolean>();
+  #agentReviews: PullRequestAgentReviewRun[] = [];
+  #agentReviewsLoading = false;
+  #agentReviewsError: string | null = null;
+  #selectedAgentReviewVersion: number | null = null;
+  #selectedAgentReviewDocument: PullRequestAgentReviewDocument | null = null;
+  #agentReviewStarting = false;
 
   constructor(container: HTMLElement, callbacks: PRViewCallbacks) {
     this.#callbacks = callbacks;
@@ -61,6 +71,12 @@ export class PRView {
       totalFiles?: number;
       fileReviewState?: Map<string, PullRequestFileReviewState>;
       filesViewMode?: FileListView;
+      agentReviews?: PullRequestAgentReviewRun[];
+      agentReviewsLoading?: boolean;
+      agentReviewsError?: string | null;
+      selectedAgentReviewVersion?: number | null;
+      selectedAgentReviewDocument?: PullRequestAgentReviewDocument | null;
+      agentReviewStarting?: boolean;
     }
   ): void {
     this.#detail = detail;
@@ -72,8 +88,19 @@ export class PRView {
     this.#fileReviewState = opts?.fileReviewState
       ? new Map(opts.fileReviewState)
       : new Map();
+    this.#agentReviews = Array.isArray(opts?.agentReviews)
+      ? opts.agentReviews.slice().sort((left, right) => left.version - right.version)
+      : [];
+    this.#agentReviewsLoading = Boolean(opts?.agentReviewsLoading);
+    this.#agentReviewsError = opts?.agentReviewsError ?? null;
+    this.#selectedAgentReviewVersion = opts?.selectedAgentReviewVersion ?? null;
+    this.#selectedAgentReviewDocument = opts?.selectedAgentReviewDocument ?? null;
+    this.#agentReviewStarting = Boolean(opts?.agentReviewStarting);
     if (opts?.filesViewMode) {
       this.#filesViewMode = opts.filesViewMode;
+    }
+    if (this.#contentTab === "agent_reviews" && this.#agentReviews.length === 0) {
+      this.#contentTab = "conversation";
     }
     if (this.#filesTabActivePath && !detail?.files.some((file) => file.path === this.#filesTabActivePath)) {
       this.#filesTabActivePath = null;
@@ -123,10 +150,32 @@ export class PRView {
 
     const panelContent = this.#contentTab === "files_changed"
       ? this.#renderFilesChangedPanel(detail)
-      : this.#renderConversationPanel(detail);
+      : this.#contentTab === "agent_reviews"
+        ? this.#renderAgentReviewsPanel()
+        : this.#renderConversationPanel(detail);
+
+    const hasRunningAgentReview = this.#agentReviews.some((run) => run.status === "running");
+    const isAgentReviewActionDisabled = this.#agentReviewStarting || hasRunningAgentReview;
 
     const card = h("div", { class: "pr-view-card" }, [
-      this.#renderPanelTabs(detail),
+      h("div", { class: "pr-view-tabs-row" }, [
+        this.#renderPanelTabs(detail),
+        h("button", {
+          class: "pr-view-agent-review-btn",
+          type: "button",
+          disabled: isAgentReviewActionDisabled,
+          onclick: () => {
+            if (isAgentReviewActionDisabled) return;
+            this.#callbacks.onStartAgentReview?.();
+          },
+        }, [
+          hasRunningAgentReview
+            ? "Agent Review Running"
+            : this.#agentReviewStarting
+              ? "Starting..."
+              : "Agent Review",
+        ]),
+      ]),
       h("header", { class: "pr-view-head" }, [
         h("a", {
           class: "pr-view-title",
@@ -153,7 +202,7 @@ export class PRView {
   }
 
   #renderPanelTabs(detail: PullRequestDetail): HTMLElement {
-    return h("div", { class: "pr-view-activity-tabs" }, [
+    const tabs: Array<HTMLElement | null> = [
       h("button", {
         class: `pr-view-activity-tab${this.#contentTab === "conversation" ? " active" : ""}`,
         type: "button",
@@ -170,10 +219,22 @@ export class PRView {
         "Files changed",
         h("span", { class: "pr-view-activity-count" }, [String(detail.files.length)]),
       ]),
-    ]);
+      this.#agentReviews.length > 0
+        ? h("button", {
+            class: `pr-view-activity-tab${this.#contentTab === "agent_reviews" ? " active" : ""}`,
+            type: "button",
+            onclick: () => this.#setContentTab("agent_reviews"),
+          }, [
+            "Agent reviews",
+            h("span", { class: "pr-view-activity-count" }, [String(this.#agentReviews.length)]),
+          ])
+        : null,
+    ];
+
+    return h("div", { class: "pr-view-activity-tabs" }, tabs.filter(Boolean));
   }
 
-  #setContentTab(next: "conversation" | "files_changed"): void {
+  #setContentTab(next: "conversation" | "files_changed" | "agent_reviews"): void {
     if (this.#contentTab === next) return;
     this.#contentTab = next;
     this.#renderContent();
@@ -235,6 +296,60 @@ export class PRView {
     return h("div", { class: "pr-view-timeline" }, detail.conversation.map((item) =>
       this.#renderTimelineItem(item)
     ));
+  }
+
+  #renderAgentReviewsPanel(): HTMLElement {
+    if (this.#agentReviews.length === 0) {
+      return h("section", { class: "pr-view-section" }, [
+        h("div", { class: "pr-view-section-empty" }, ["No agent reviews yet"]),
+      ]);
+    }
+
+    const selectedVersion = this.#selectedAgentReviewVersion
+      ?? this.#agentReviews[this.#agentReviews.length - 1]?.version
+      ?? null;
+
+    const list = h("div", { class: "pr-agent-reviews-list" });
+    for (const run of this.#agentReviews) {
+      const isActive = run.version === selectedVersion;
+      const timestamp = run.completedAt ?? run.updatedAt ?? run.startedAt;
+      list.appendChild(h("button", {
+        class: `pr-agent-review-run${isActive ? " active" : ""}`,
+        type: "button",
+        onclick: () => {
+          if (this.#selectedAgentReviewVersion === run.version) return;
+          this.#selectedAgentReviewVersion = run.version;
+          this.#callbacks.onSelectAgentReviewVersion?.(run.version);
+          this.#renderContent();
+        },
+      }, [
+        h("span", { class: "pr-agent-review-run-version" }, [`v${run.version}`]),
+        h("span", { class: `pr-agent-review-run-status is-${run.status}` }, [
+          formatAgentReviewStatus(run.status),
+        ]),
+        h("span", { class: "pr-agent-review-run-time" }, [
+          formatDateTime(timestamp),
+        ]),
+      ]));
+    }
+
+    const markdown = this.#selectedAgentReviewDocument?.markdown ?? "";
+    const markdownContent = markdown.trim();
+    const content = this.#agentReviewsLoading && !markdownContent
+      ? h("div", { class: "pr-view-section-empty" }, ["Loading review..."])
+      : this.#agentReviewsError
+        ? h("div", { class: "pr-view-section-empty pr-view-error" }, [this.#agentReviewsError])
+        : markdownContent
+          ? h("div", {
+              class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
+              innerHTML: renderMarkdown(markdown),
+            })
+          : h("div", { class: "pr-view-section-empty" }, ["Review file not found"]);
+
+    return h("section", { class: "pr-view-section pr-agent-reviews-panel" }, [
+      list,
+      content,
+    ]);
   }
 
   #renderFilesChangedPanel(detail: PullRequestDetail): HTMLElement {
@@ -680,6 +795,13 @@ function countPRTreeFiles(node: PRFileTreeNode): number {
     total += countPRTreeFiles(child);
   }
   return total;
+}
+
+function formatAgentReviewStatus(status: PullRequestAgentReviewRun["status"]): string {
+  if (status === "running") return "Running";
+  if (status === "completed") return "Completed";
+  if (status === "stale") return "Stale";
+  return "Failed";
 }
 
 function formatDateTime(value: string): string {

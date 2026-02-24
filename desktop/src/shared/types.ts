@@ -187,7 +187,23 @@ export type CommitExecutionResult = {
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+  | { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean };
+
+export type StreamTodoEntry = {
+  content: string;
+  status: string;
+  activeForm?: string;
+  [key: string]: unknown;
+};
+
+export type StreamToolUseResult = {
+  stdout?: string;
+  stderr?: string;
+  interrupted?: boolean;
+  oldTodos?: StreamTodoEntry[];
+  newTodos?: StreamTodoEntry[];
+  [key: string]: unknown;
+};
 
 export type ClaudeStreamEvent =
   | {
@@ -237,11 +253,7 @@ export type ClaudeStreamEvent =
         content: ContentBlock[];
       };
       session_id: string;
-      tool_use_result?: {
-        stdout?: string;
-        stderr?: string;
-        interrupted?: boolean;
-      };
+      tool_use_result?: StreamToolUseResult;
       [key: string]: unknown;
     }
   | {
@@ -540,6 +552,33 @@ export type PullRequestReviewState = {
   updatedAt: string;
 };
 
+export type PullRequestAgentReviewStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "stale";
+
+export type PullRequestAgentReviewRun = {
+  id: string;
+  repo: string;
+  number: number;
+  version: number;
+  fileName: string;
+  filePath: string;
+  headSha: string;
+  status: PullRequestAgentReviewStatus;
+  sessionId: string | null;
+  startedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  error: string | null;
+};
+
+export type PullRequestAgentReviewDocument = {
+  run: PullRequestAgentReviewRun;
+  markdown: string;
+};
+
 // ── RPC contract ─────────────────────────────────────────────────
 
 export type AppRPC = {
@@ -780,6 +819,18 @@ export type AppRPC = {
         };
         response: void;
       };
+      getPullRequestAgentReviews: {
+        params: { repo: string; number: number };
+        response: PullRequestAgentReviewRun[];
+      };
+      getPullRequestAgentReviewDocument: {
+        params: { repo: string; number: number; version: number };
+        response: PullRequestAgentReviewDocument | null;
+      };
+      startPullRequestAgentReview: {
+        params: { repo: string; number: number; headSha: string };
+        response: PullRequestAgentReviewRun;
+      };
       getFileContent: {
         params: { cwd: string; path: string; maxBytes?: number };
         response: WorkspaceFileContent;
@@ -827,6 +878,12 @@ export type AppRPC = {
       tasksChanged: {
         workspacePath: string;
         taskId?: string;
+      };
+      pullRequestAgentReviewChanged: {
+        repo: string;
+        number: number;
+        runId: string;
+        status: PullRequestAgentReviewStatus;
       };
     };
   }>;

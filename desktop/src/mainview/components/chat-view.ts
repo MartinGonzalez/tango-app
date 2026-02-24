@@ -7,6 +7,8 @@ import type {
   ToolApprovalRequest,
   Activity,
   SlashCommandEntry,
+  StreamToolUseResult,
+  StreamTodoEntry,
 } from "../../shared/types.ts";
 import Prism from "prismjs";
 import "prismjs/components/prism-clike";
@@ -97,6 +99,7 @@ export class ChatView {
   #mentionRequestId: number = 0;
   #mentionSuggestions: MentionSuggestion[] = [];
   #selectedFiles: string[] = [];
+  #toolUsesById: Map<string, { name: string; input: Record<string, unknown> }> = new Map();
   #hasUserScrolledUp: boolean = false;
   #isProgrammaticScroll: boolean = false;
   #onGlobalPointerDown: (event: Event) => void;
@@ -415,6 +418,7 @@ export class ChatView {
 
   renderTranscript(messages: TranscriptMessage[]): void {
     clearChildren(this.#messagesEl);
+    this.#toolUsesById.clear();
     this.#hasUserScrolledUp = false;
     this.#isWaiting = false;
     this.#hideStatus();
@@ -477,19 +481,24 @@ export class ChatView {
     if (ev.type === "user") {
       const content = ev.message?.content;
       if (!content || !Array.isArray(content)) return;
+      const streamToolResult = isRecord(ev.tool_use_result)
+        ? (ev.tool_use_result as StreamToolUseResult)
+        : null;
 
       let hasToolResult = false;
       for (const block of content) {
         if (block.type === "tool_result") {
           hasToolResult = true;
           this.#hideStatus();
-          const output = typeof block.content === "string"
-            ? block.content
-            : JSON.stringify(block.content ?? "");
+          const output = stringifyToolResultContent(block.content);
+          const trackedTool = this.#toolUsesById.get(block.tool_use_id ?? "");
           this.#appendToolResult(
             block.tool_use_id ?? "",
             output,
-            block.is_error === true
+            block.is_error === true,
+            trackedTool?.name,
+            trackedTool?.input,
+            streamToolResult
           );
         }
       }
@@ -540,6 +549,7 @@ export class ChatView {
 
   clear(): void {
     clearChildren(this.#messagesEl);
+    this.#toolUsesById.clear();
     this.#cancelScrollAnimation();
     this.#hasUserScrolledUp = false;
     this.#updateScrollToBottomButton();
@@ -1021,6 +1031,13 @@ export class ChatView {
       bubble.innerHTML = renderMarkdown(block.text);
       this.#messagesEl.appendChild(bubble);
     } else if (block.type === "tool_use") {
+      if (typeof block.id === "string" && block.id.trim()) {
+        this.#toolUsesById.set(block.id, {
+          name: String(block.name ?? ""),
+          input: isRecord(block.input) ? block.input : {},
+        });
+      }
+
       // AskUserQuestion — render as an interactive prompt
       if (block.name === "AskUserQuestion") {
         this.#renderAskUserQuestion(block);
@@ -1044,7 +1061,9 @@ export class ChatView {
       if (details) {
         const detailsEl = qs(".tool-input", toolEvent) as HTMLElement | null;
         if (detailsEl) {
-          detailsEl.innerHTML = renderToolContent(details);
+          detailsEl.innerHTML = block.name.toLowerCase() === "todowrite"
+            ? details
+            : renderToolContent(details);
         }
       }
       this.#messagesEl.appendChild(toolEvent);
@@ -1119,11 +1138,47 @@ export class ChatView {
    * Append a tool result from a "user" type stream event.
    */
   #appendToolResult(
-    _toolUseId: string,
-    _output: string,
-    _isError: boolean
+    toolUseId: string,
+    output: string,
+    isError: boolean,
+    toolName?: string,
+    toolInput?: Record<string, unknown>,
+    streamToolResult: StreamToolUseResult | null = null
   ): void {
-    return;
+    if (toolUseId) {
+      this.#toolUsesById.delete(toolUseId);
+    }
+
+    const normalizedToolName = String(toolName ?? "").trim();
+    const isTodoWriteResult = normalizedToolName.toLowerCase() === "todowrite"
+      || hasTodoWritePayload(streamToolResult, toolInput);
+    const baseTitle = normalizedToolName || (isTodoWriteResult ? "TodoWrite" : "Tool");
+    const title = `${baseTitle} ${isError ? "error" : "result"}`;
+
+    const card = h("div", {
+      class: `chat-tool-output${isError ? " error" : ""}`,
+    }, [
+      h("details", { class: "tool-result-details" }, [
+        h("summary", { class: "tool-result-header" }, [title]),
+        h("div", { class: "tool-result-output" }),
+      ]) as HTMLDetailsElement,
+    ]);
+
+    const details = qs(".tool-result-details", card) as HTMLDetailsElement | null;
+    const outputEl = qs(".tool-result-output", card) as HTMLElement | null;
+    if (details) {
+      details.open = isError || isTodoWriteResult;
+    }
+
+    if (outputEl) {
+      if (isTodoWriteResult) {
+        outputEl.innerHTML = formatTodoWriteResult(output, streamToolResult, toolInput);
+      } else {
+        outputEl.innerHTML = renderToolContent(output);
+      }
+    }
+
+    this.#messagesEl.appendChild(card);
   }
 
   // ── Render transcript messages (historical) ─────────────────────
@@ -1148,7 +1203,9 @@ export class ChatView {
       if (details) {
         const detailsEl = qs(".tool-input", toolEvent) as HTMLElement | null;
         if (detailsEl) {
-          detailsEl.innerHTML = renderToolContent(details);
+          detailsEl.innerHTML = msg.toolName.toLowerCase() === "todowrite"
+            ? details
+            : renderToolContent(details);
         }
       }
       this.#messagesEl.appendChild(toolEvent);
@@ -1578,6 +1635,12 @@ function summarizeToolInput(
       return String(input.url ?? "");
     case "Task":
       return String(input.description ?? input.prompt ?? "").slice(0, 60);
+    case "TodoWrite": {
+      const todos = extractTodoEntries(input.todos);
+      if (todos.length === 0) return "";
+      const completed = todos.filter((todo) => normalizeTodoStatus(todo.status) === "completed").length;
+      return `${completed}/${todos.length} completed`;
+    }
     default:
       return "";
   }
@@ -1592,6 +1655,164 @@ function escapeHtml(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringifyToolResultContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content === null || content === undefined) return "";
+  try {
+    return JSON.stringify(content, null, 2);
+  } catch {
+    return String(content);
+  }
+}
+
+function normalizeTodoStatus(status: string): string {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  if (normalized === "done") return "completed";
+  if (normalized === "in-progress") return "in_progress";
+  if (normalized === "todo") return "pending";
+  return normalized || "pending";
+}
+
+function formatTodoStatus(status: string): string {
+  return normalizeTodoStatus(status).replace(/_/g, " ");
+}
+
+function extractTodoEntries(value: unknown): StreamTodoEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  const todos: StreamTodoEntry[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw)) continue;
+    const content = String(raw.content ?? "").trim();
+    if (!content) continue;
+    const status = normalizeTodoStatus(String(raw.status ?? "pending"));
+    const activeFormRaw = raw.activeForm ?? raw.active_form;
+    const activeForm = typeof activeFormRaw === "string" && activeFormRaw.trim()
+      ? activeFormRaw.trim()
+      : undefined;
+    todos.push({ ...raw, content, status, activeForm });
+  }
+
+  return todos;
+}
+
+function formatTodoList(todos: StreamTodoEntry[]): string {
+  if (todos.length === 0) {
+    return '<div class="todo-write-empty">No todos</div>';
+  }
+
+  const items = todos
+    .map((todo) => {
+      const completed = normalizeTodoStatus(todo.status) === "completed";
+      const status = escapeHtml(formatTodoStatus(todo.status));
+      return `<li class="todo-write-item${completed ? " done" : ""}">`
+        + `<span class="todo-write-check${completed ? " done" : ""}" aria-hidden="true"></span>`
+        + `<span class="todo-write-label">${escapeHtml(todo.content)}</span>`
+        + `<span class="todo-write-status">(${status})</span>`
+        + "</li>";
+    })
+    .join("");
+
+  return `<ul class="todo-write-list">${items}</ul>`;
+}
+
+function formatTodoSection(title: string, bodyHtml: string): string {
+  return `<section class="todo-write-section">`
+    + `<h4 class="todo-write-section-title">${escapeHtml(title)}</h4>`
+    + `${bodyHtml}`
+    + "</section>";
+}
+
+function formatTodoMessage(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return `<div class="todo-write-message">${escapeHtml(trimmed).replace(/\n/g, "<br>")}</div>`;
+}
+
+function summarizeTodoStatusChanges(
+  oldTodos: StreamTodoEntry[],
+  newTodos: StreamTodoEntry[]
+): string[] {
+  const previous = new Map<string, string>();
+  for (const todo of oldTodos) {
+    previous.set(todo.content, normalizeTodoStatus(todo.status));
+  }
+
+  const changes: string[] = [];
+  for (const todo of newTodos) {
+    const nextStatus = normalizeTodoStatus(todo.status);
+    const before = previous.get(todo.content);
+    if (!before) {
+      changes.push(`${todo.content}: added (${formatTodoStatus(nextStatus)})`);
+    } else if (before !== nextStatus) {
+      changes.push(`${todo.content}: ${formatTodoStatus(before)} -> ${formatTodoStatus(nextStatus)}`);
+    }
+    previous.delete(todo.content);
+  }
+
+  for (const [content, before] of previous) {
+    changes.push(`${content}: removed (was ${formatTodoStatus(before)})`);
+  }
+
+  return changes;
+}
+
+function hasTodoWritePayload(
+  streamToolResult: StreamToolUseResult | null,
+  toolInput?: Record<string, unknown>
+): boolean {
+  if (extractTodoEntries(toolInput?.todos).length > 0) return true;
+  if (extractTodoEntries(streamToolResult?.oldTodos).length > 0) return true;
+  if (extractTodoEntries(streamToolResult?.newTodos).length > 0) return true;
+  return false;
+}
+
+function formatTodoWriteResult(
+  output: string,
+  streamToolResult: StreamToolUseResult | null,
+  toolInput?: Record<string, unknown>
+): string {
+  const sections: string[] = [formatTodoMessage(output)].filter(Boolean);
+
+  const inputTodos = extractTodoEntries(toolInput?.todos);
+  if (inputTodos.length > 0) {
+    sections.push(formatTodoSection("Input", formatTodoList(inputTodos)));
+  }
+
+  const oldTodos = extractTodoEntries(streamToolResult?.oldTodos);
+  const newTodos = extractTodoEntries(streamToolResult?.newTodos);
+
+  if (newTodos.length > 0) {
+    sections.push(formatTodoSection("Current todos", formatTodoList(newTodos)));
+  } else if (oldTodos.length > 0) {
+    sections.push(formatTodoSection("Todos", formatTodoList(oldTodos)));
+  }
+
+  const changes = summarizeTodoStatusChanges(oldTodos, newTodos);
+  if (changes.length > 0) {
+    const changesHtml = `<ul class="todo-write-changes">`
+      + changes.map((line) => `<li>${escapeHtml(line)}</li>`).join("")
+      + "</ul>";
+    sections.push(formatTodoSection("Changes", changesHtml));
+  }
+
+  if (sections.length === 0) {
+    return '<div class="todo-write-view"><div class="todo-write-empty">(empty result)</div></div>';
+  }
+
+  return `<div class="todo-write-view">${sections.join("")}</div>`;
+}
+
+function formatTodoWriteInput(input: Record<string, unknown>): string | null {
+  const todos = extractTodoEntries(input.todos);
+  if (todos.length === 0) return null;
+  return `<div class="todo-write-view">${formatTodoSection("Input", formatTodoList(todos))}</div>`;
 }
 
 function formatToolDetails(
@@ -1620,6 +1841,8 @@ function formatToolDetails(
     }
     case "Read":
       return String(input.file_path ?? "");
+    case "TodoWrite":
+      return formatTodoWriteInput(input);
     default:
       return null;
   }
@@ -2445,5 +2668,6 @@ function shouldExpandTool(toolName: string): boolean {
     || normalized === "edit"
     || normalized === "multiedit"
     || normalized === "remove"
-    || normalized === "delete";
+    || normalized === "delete"
+    || normalized === "todowrite";
 }

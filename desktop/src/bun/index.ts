@@ -49,6 +49,9 @@ import {
 } from "./pr-provider.ts";
 import { TaskRepository } from "./task-repository.ts";
 import { PRReviewStore } from "./pr-review-store.ts";
+import { PRAgentReviewStore } from "./pr-agent-review-store.ts";
+import { PRAgentReviewProvider } from "./pr-agent-review-provider.ts";
+import { AGENT_REVIEW_PLACEHOLDER_MARKER } from "./pr-agent-review-files.ts";
 import { ConnectorsRepository } from "./connectors-repository.ts";
 import {
   encodeClaudeProjectPath,
@@ -64,6 +67,7 @@ import type {
   TaskCardStatus,
   ConnectorProvider,
   TaskSourceKind,
+  PullRequestAgentReviewRun,
 } from "../shared/types.ts";
 
 console.log("Claudex starting...");
@@ -78,6 +82,10 @@ const sessionNames = new SessionNamesStore();
 const connectors = new ConnectorsRepository();
 const taskRepository = new TaskRepository(undefined, connectors);
 const prReviewStore = new PRReviewStore();
+const prAgentReviewStore = new PRAgentReviewStore();
+const prAgentReviewProvider = new PRAgentReviewProvider({
+  getWorkspacePaths: () => workspaces.getAll(),
+});
 
 let latestSnapshot: Snapshot | null = null;
 let mainRPC: any = null;
@@ -88,6 +96,16 @@ const taskRunsBySession = new Map<string, {
   action: TaskAction;
   workspacePath: string;
 }>();
+const prAgentRunsBySession = new Map<string, {
+  runId: string;
+  repo: string;
+  number: number;
+}>();
+const hiddenTaskSessionIds = new Set<string>(taskRepository.listHiddenSessionIds());
+const HIDDEN_TASK_PROMPT_PREFIXES = [
+  "You are improving a task note for an engineering workflow.",
+  "You are planning a software engineering task.",
+];
 const IMPROVE_TASK_MODEL = process.env.CLAUDE_TASK_IMPROVE_MODEL?.trim()
   || "claude-haiku-4-5-20251001";
 const PLAN_TASK_MODEL = process.env.CLAUDE_TASK_PLAN_MODEL?.trim()
@@ -172,8 +190,9 @@ async function ensureServer(): Promise<void> {
 // ── Watcher callbacks ────────────────────────────────────────────
 
 watcher.onSnapshot((snapshot) => {
-  latestSnapshot = snapshot;
-  mainRPC?.send.snapshotUpdate(snapshot);
+  const filteredSnapshot = filterSnapshotHiddenTaskSessions(snapshot);
+  latestSnapshot = filteredSnapshot;
+  mainRPC?.send.snapshotUpdate(filteredSnapshot);
 });
 
 watcher.onError((err) => {
@@ -190,6 +209,9 @@ sessions.onIdResolved((tempId, realId) => {
     taskRunsBySession.delete(tempId);
     taskRunsBySession.set(realId, taskRun);
     taskRepository.bindRunSession(taskRun.runId, realId);
+    if (taskRun.action !== "execute") {
+      remapHiddenTaskSessionId(tempId, realId);
+    }
   }
   const cwd = sessionCwds.get(tempId);
   if (cwd) {
@@ -197,6 +219,13 @@ sessions.onIdResolved((tempId, realId) => {
     sessionCwds.set(realId, cwd);
     void remapTurnDiffSessionId(cwd, tempId, realId).catch((err) => {
       console.warn("Failed to remap per-session diff state:", err);
+    });
+  }
+  const prAgentRun = prAgentRunsBySession.get(tempId);
+  if (prAgentRun) {
+    prAgentRunsBySession.set(realId, prAgentRun);
+    void prAgentReviewStore.bindSessionId(prAgentRun.runId, realId).catch((err) => {
+      console.warn("Failed to bind agent review session id:", err);
     });
   }
   // Notify webview to update its activeSessionId.
@@ -211,6 +240,12 @@ sessions.onEvent((sessionId, event) => {
 sessions.onEnd((sessionId, exitCode) => {
   approvals.unregisterSession(sessionId);
   sessionCwds.delete(sessionId);
+  const prAgentRun = prAgentRunsBySession.get(sessionId);
+  if (prAgentRun) {
+    clearAgentRunSessionBindings(prAgentRun.runId);
+    void finalizeAgentReviewRunFromExit(prAgentRun, exitCode);
+    return;
+  }
   const taskRun = taskRunsBySession.get(sessionId);
   if (taskRun) {
     taskRunsBySession.delete(sessionId);
@@ -230,6 +265,11 @@ sessions.onEnd((sessionId, exitCode) => {
 
 sessions.onError((sessionId, error) => {
   console.error(`Session ${sessionId} error:`, error);
+  const prAgentRun = prAgentRunsBySession.get(sessionId);
+  if (prAgentRun) {
+    void failAgentReviewRun(prAgentRun, error, "failed");
+    return;
+  }
   const taskRun = taskRunsBySession.get(sessionId);
   if (taskRun) {
     if (taskRun.action === "execute") {
@@ -410,7 +450,8 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       getSessionHistory: async ({ cwd }) => {
-        return listSessionsForWorkspace(cwd);
+        const sessions = await listSessionsForWorkspace(cwd);
+        return sessions.filter((session) => !isHiddenTaskSession(session.sessionId, session.prompt));
       },
 
       getDiff: async ({ cwd, scope, sessionId }) => {
@@ -663,6 +704,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             action === "execute" ? undefined : []
           );
           sessionId = tempSessionId;
+          if (action !== "execute") {
+            addHiddenTaskSessionId(tempSessionId);
+          }
 
           if (action === "execute") {
             await setTurnDiffSession(prepared.workspacePath, tempSessionId).catch(() => {});
@@ -840,6 +884,99 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         await replyPullRequestReviewComment(repo, number, commentId, body);
       },
 
+      getPullRequestAgentReviews: async ({
+        repo,
+        number,
+      }: {
+        repo: string;
+        number: number;
+      }) => {
+        await prAgentReviewStore.importExistingFiles(repo, number);
+        return prAgentReviewStore.listRuns(repo, number);
+      },
+
+      getPullRequestAgentReviewDocument: async ({
+        repo,
+        number,
+        version,
+      }: {
+        repo: string;
+        number: number;
+        version: number;
+      }) => {
+        await prAgentReviewStore.importExistingFiles(repo, number);
+        const run = await prAgentReviewStore.getRunByVersion(repo, number, version);
+        if (!run) return null;
+        return prAgentReviewProvider.getDocument(run);
+      },
+
+      startPullRequestAgentReview: async ({
+        repo,
+        number,
+        headSha,
+      }: {
+        repo: string;
+        number: number;
+        headSha: string;
+      }) => {
+        const normalizedRepo = String(repo ?? "").trim();
+        const normalizedNumber = Math.max(1, Math.trunc(number));
+        const normalizedHeadSha = String(headSha ?? "").trim();
+        if (!normalizedRepo || !Number.isFinite(normalizedNumber)) {
+          throw new Error("Invalid pull request selection");
+        }
+
+        const run = await prAgentReviewStore.startRun({
+          repo: normalizedRepo,
+          number: normalizedNumber,
+          headSha: normalizedHeadSha,
+        });
+
+        try {
+          await prAgentReviewProvider.writePlaceholder(run);
+          const cwdResolution = await prAgentReviewProvider.resolveCwd(
+            normalizedRepo
+          );
+          const prompt = prAgentReviewProvider.buildPrompt({
+            repo: normalizedRepo,
+            number: normalizedNumber,
+            headSha: normalizedHeadSha,
+            outputFilePath: run.filePath,
+            cwdSource: cwdResolution.source,
+            workspacePath: cwdResolution.workspacePath,
+          });
+
+          const sessionId = await sessions.spawn(
+            prompt,
+            cwdResolution.cwd,
+            true
+          );
+
+          prAgentRunsBySession.set(sessionId, {
+            runId: run.id,
+            repo: normalizedRepo,
+            number: normalizedNumber,
+          });
+          const updatedRun = await prAgentReviewStore.bindSessionId(run.id, sessionId);
+          const resolvedRun = updatedRun ?? run;
+          notifyPullRequestAgentReviewChanged(resolvedRun);
+          return resolvedRun;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await prAgentReviewProvider.writeFailedDocument(run, message).catch((err) => {
+            console.warn("Failed to write agent review error document:", err);
+          });
+          const failedRun = await prAgentReviewStore.markFailed(
+            run.id,
+            message,
+            "failed"
+          );
+          const resolvedRun = failedRun ?? run;
+          notifyPullRequestAgentReviewChanged(resolvedRun);
+          return resolvedRun;
+        }
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
@@ -928,6 +1065,20 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 });
 
 async function handleSessionEvent(sessionId: string, event: any): Promise<void> {
+  const prAgentRun = prAgentRunsBySession.get(sessionId);
+  if (prAgentRun) {
+    const consumed = await finalizeAgentReviewRunFromEvent(
+      sessionId,
+      prAgentRun,
+      event
+    );
+    if (consumed) {
+      return;
+    }
+    // Agent review sessions are background-only and should not stream to chat.
+    return;
+  }
+
   const taskRun = taskRunsBySession.get(sessionId);
   if (taskRun && taskRun.action === "execute") {
     const chunk = extractTaskRunOutput(event);
@@ -991,6 +1142,208 @@ function notifyTasksChanged(workspacePath: string, taskId?: string): void {
     workspacePath,
     taskId,
   });
+}
+
+function addHiddenTaskSessionId(sessionId: string | null | undefined): void {
+  const normalized = String(sessionId ?? "").trim();
+  if (!normalized) return;
+  hiddenTaskSessionIds.add(normalized);
+}
+
+function remapHiddenTaskSessionId(tempId: string, realId: string): void {
+  const prev = String(tempId ?? "").trim();
+  const next = String(realId ?? "").trim();
+  if (!prev || !next || prev === next) return;
+  if (!hiddenTaskSessionIds.has(prev)) return;
+  hiddenTaskSessionIds.delete(prev);
+  hiddenTaskSessionIds.add(next);
+}
+
+function isHiddenTaskSessionId(sessionId: string | null | undefined): boolean {
+  const normalized = String(sessionId ?? "").trim();
+  if (!normalized) return false;
+  return hiddenTaskSessionIds.has(normalized);
+}
+
+function isHiddenTaskPrompt(prompt: string | null | undefined): boolean {
+  const normalized = String(prompt ?? "").trim();
+  if (!normalized) return false;
+  return HIDDEN_TASK_PROMPT_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function isHiddenTaskSession(
+  sessionId: string | null | undefined,
+  prompt?: string | null
+): boolean {
+  return isHiddenTaskSessionId(sessionId) || isHiddenTaskPrompt(prompt);
+}
+
+function filterSnapshotHiddenTaskSessions(snapshot: Snapshot): Snapshot {
+  const tasks = snapshot.tasks.filter((task) => !isHiddenTaskSession(task.sessionId, task.prompt));
+  const processes = snapshot.processes.filter((process) => {
+    const task = process.task;
+    return !isHiddenTaskSession(task?.sessionId, task?.prompt);
+  });
+  const subagents = snapshot.subagents.filter((subagent) => {
+    if (isHiddenTaskSessionId(subagent.parentSessionId)) return false;
+    if (isHiddenTaskSessionId(subagent.subagentSessionId)) return false;
+    return true;
+  });
+
+  if (
+    tasks.length === snapshot.tasks.length
+    && processes.length === snapshot.processes.length
+    && subagents.length === snapshot.subagents.length
+  ) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    tasks,
+    processes,
+    subagents,
+  };
+}
+
+function notifyPullRequestAgentReviewChanged(run: PullRequestAgentReviewRun): void {
+  mainRPC?.send.pullRequestAgentReviewChanged({
+    repo: run.repo,
+    number: run.number,
+    runId: run.id,
+    status: run.status,
+  });
+}
+
+function clearAgentRunSessionBindings(runId: string): void {
+  for (const [sessionId, run] of prAgentRunsBySession) {
+    if (run.runId !== runId) continue;
+    prAgentRunsBySession.delete(sessionId);
+  }
+}
+
+async function finalizeAgentReviewRunFromEvent(
+  sessionId: string,
+  runRef: {
+    runId: string;
+    repo: string;
+    number: number;
+  },
+  event: unknown
+): Promise<boolean> {
+  if (!event || typeof event !== "object") return false;
+  const ev = event as Record<string, any>;
+  if (ev.type !== "result") return false;
+
+  const isSuccess = ev.subtype === "success" && !Boolean(ev.is_error);
+  const isFailure = ev.subtype === "error" || (ev.subtype === "success" && Boolean(ev.is_error));
+  if (!isSuccess && !isFailure) return false;
+
+  const run = await prAgentReviewStore.getRunById(runRef.runId);
+  if (!run) {
+    sessions.kill(sessionId);
+    return true;
+  }
+
+  try {
+    if (isSuccess) {
+      const resultText = String(ev.result ?? "").trim();
+      await prAgentReviewProvider.ensureCompletedDocument(run, resultText);
+      const completedRun = await prAgentReviewStore.markCompleted(run.id);
+      if (completedRun) {
+        notifyPullRequestAgentReviewChanged(completedRun);
+      }
+    } else {
+      const message = String(
+        ev.error?.message
+          ?? ev.result
+          ?? "Agent review failed"
+      ).trim() || "Agent review failed";
+      await prAgentReviewProvider.writeFailedDocument(run, message).catch((err) => {
+        console.warn("Failed to write failed agent review document:", err);
+      });
+      const failedRun = await prAgentReviewStore.markFailed(run.id, message, "failed");
+      if (failedRun) {
+        notifyPullRequestAgentReviewChanged(failedRun);
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to finalize agent review from result event:", err);
+  } finally {
+    sessions.kill(sessionId);
+  }
+
+  return true;
+}
+
+async function finalizeAgentReviewRunFromExit(
+  runRef: {
+    runId: string;
+    repo: string;
+    number: number;
+  },
+  exitCode: number
+): Promise<void> {
+  const run = await prAgentReviewStore.getRunById(runRef.runId);
+  if (!run || run.status !== "running") return;
+
+  const document = await prAgentReviewProvider.getDocument(run);
+  const hasPlaceholder = document?.markdown.includes(AGENT_REVIEW_PLACEHOLDER_MARKER) ?? true;
+
+  if (!hasPlaceholder) {
+    const completedRun = await prAgentReviewStore.markCompleted(run.id);
+    if (completedRun) {
+      notifyPullRequestAgentReviewChanged(completedRun);
+    }
+    return;
+  }
+
+  if (exitCode === 0) {
+    const staleRun = await prAgentReviewStore.markFailed(
+      run.id,
+      "Interrupted before completion",
+      "stale"
+    );
+    if (staleRun) {
+      notifyPullRequestAgentReviewChanged(staleRun);
+    }
+    return;
+  }
+
+  await failAgentReviewRun(
+    runRef,
+    `Session exited with code ${exitCode}`,
+    "failed"
+  );
+}
+
+async function failAgentReviewRun(
+  runRef: {
+    runId: string;
+    repo: string;
+    number: number;
+  },
+  error: string,
+  status: "failed" | "stale" = "failed"
+): Promise<void> {
+  const run = await prAgentReviewStore.getRunById(runRef.runId);
+  if (!run || run.status !== "running") return;
+
+  if (status === "failed") {
+    await prAgentReviewProvider.writeFailedDocument(run, error).catch((err) => {
+      console.warn("Failed to write failed agent review document:", err);
+    });
+  }
+
+  const nextRun = await prAgentReviewStore.markFailed(run.id, error, status);
+  if (nextRun) {
+    notifyPullRequestAgentReviewChanged(nextRun);
+  }
+
+  for (const [sessionId, activeRun] of prAgentRunsBySession) {
+    if (activeRun.runId !== run.id) continue;
+    sessions.kill(sessionId);
+  }
 }
 
 function finalizeBackgroundTaskRunFromEvent(
@@ -1206,6 +1559,8 @@ approvals.onApprovalRequest((req) => {
 await workspaces.load();
 await sessionNames.load();
 await prReviewStore.load();
+await prAgentReviewStore.load();
+await prAgentReviewStore.reconcileInterruptedRuns();
 await connectors.start();
 await ensureServer();
 approvals.start(4243);

@@ -105,4 +105,19 @@ describe("TasksStore", () => {
 
     store.close();
   });
+
+  test("lists hidden session ids for improve and plan runs only", () => {
+    const store = new TasksStore(dbPath);
+
+    const task = store.createTask("/repo/a", "Task A", "notes");
+    store.createTaskRun(task.id, "improve", "prompt", "completed", "sess-improve");
+    store.createTaskRun(task.id, "plan", "prompt", "completed", "sess-plan");
+    store.createTaskRun(task.id, "execute", "prompt", "completed", "sess-execute");
+    store.createTaskRun(task.id, "improve", "prompt", "completed", null);
+
+    const ids = store.listHiddenTaskSessionIds().sort();
+    expect(ids).toEqual(["sess-improve", "sess-plan"]);
+
+    store.close();
+  });
 });

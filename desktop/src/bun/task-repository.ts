@@ -357,6 +357,10 @@ export class TaskRepository {
     return this.#store.getTaskRunBySessionId(sessionId);
   }
 
+  listHiddenSessionIds(): string[] {
+    return this.#store.listHiddenTaskSessionIds();
+  }
+
   finalizeRun(runId: string, params: {
     success: boolean;
     output?: string | null;
