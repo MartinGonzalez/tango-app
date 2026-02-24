@@ -1640,11 +1640,14 @@ export function renderMarkdown(text: string): string {
   const codeBlocks: string[] = [];
   const withCodePlaceholders = normalized.replace(
     /```([^\n`]*)\n?([\s\S]*?)```/g,
-    (_match, rawLanguage, code) => {
+    (_match, rawLanguage, code, offset, source) => {
       const codeText = String(code).replace(/\n$/, "");
       const language = normalizeCodeLanguageTag(String(rawLanguage ?? ""));
+      const diffFilePath = language === "diff"
+        ? inferDiffFilePathFromContext(String(source ?? normalized), Number(offset ?? 0))
+        : null;
       const renderedBlock = language === "diff"
-        ? renderInlineDiff(codeText)
+        ? renderInlineDiff(codeText, diffFilePath)
         : renderCodeBlock(codeText, language);
       const index = codeBlocks.push(renderedBlock) - 1;
       return `@@CODEBLOCKTOKEN${index}@@`;
@@ -2094,7 +2097,22 @@ function toUnifiedDiff(oldText: string, newText: string): string {
   return out.length > 0 ? out.join("\n") : "(no textual changes)";
 }
 
-function renderInlineDiff(diffText: string): string {
+function inferDiffFilePathFromContext(source: string, blockStart: number): string | null {
+  const contextStart = Math.max(0, blockStart - 2000);
+  const context = source.slice(contextStart, blockStart);
+  const lines = context.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const candidate = lines[i].trim();
+    if (!candidate) continue;
+    const match = candidate.match(/^file:\s+(.+)$/i);
+    if (!match) continue;
+    const filePath = String(match[1] ?? "").trim();
+    return filePath || null;
+  }
+  return null;
+}
+
+function renderInlineDiff(diffText: string, filePath: string | null = null): string {
   const rows: string[] = [];
   const lines = diffText.split("\n");
   let oldLine = 1;
@@ -2114,10 +2132,15 @@ function renderInlineDiff(diffText: string): string {
     }
 
     let rowClass = "diff-context";
+    let lineContent = line;
     if (line.startsWith("+")) {
       rowClass = "diff-add";
+      lineContent = line.slice(1);
     } else if (line.startsWith("-")) {
       rowClass = "diff-delete";
+      lineContent = line.slice(1);
+    } else if (line.startsWith(" ")) {
+      lineContent = line.slice(1);
     }
 
     let lineNo = "";
@@ -2131,12 +2154,104 @@ function renderInlineDiff(diffText: string): string {
       newLine++;
     }
 
+    const renderedContent = lineContent
+      ? highlightDiffLine(lineContent, filePath)
+      : "&nbsp;";
+
     rows.push(
-      `<tr class="diff-line ${rowClass}"><td class="line-no">${lineNo}</td><td class="line-content">${escapeHtml(line)}</td></tr>`
+      `<tr class="diff-line ${rowClass}"><td class="line-no">${lineNo}</td><td class="line-content">${renderedContent}</td></tr>`
     );
   }
 
-  return `<div class="chat-inline-diff"><table class="diff-table unified"><tbody>${rows.join("")}</tbody></table></div>`;
+  return `<div class="chat-inline-diff diff-block"><table class="diff-table unified"><tbody>${rows.join("")}</tbody></table></div>`;
+}
+
+function highlightDiffLine(content: string, filePath: string | null): string {
+  if (content.length > 8000) {
+    return escapeHtml(content);
+  }
+
+  const prism = resolvePrism();
+  if (!prism) {
+    return fallbackDiffHighlight(content);
+  }
+
+  const language = filePath ? languageFromFilePath(filePath) : null;
+  const grammar = language ? resolveGrammar(prism.languages, language) : null;
+
+  if (!grammar || !language) {
+    return fallbackDiffHighlight(content);
+  }
+
+  try {
+    const highlighted = prism.highlight(content, grammar, language);
+    return highlighted.includes("token") ? highlighted : fallbackDiffHighlight(content);
+  } catch {
+    return fallbackDiffHighlight(content);
+  }
+}
+
+function languageFromFilePath(filePath: string): string | null {
+  const fileName = filePath.split("/").pop() ?? filePath;
+  const ext = fileName.includes(".")
+    ? fileName.split(".").pop()!.toLowerCase()
+    : "";
+
+  const map: Record<string, string> = {
+    js: "javascript",
+    jsx: "jsx",
+    ts: "typescript",
+    tsx: "tsx",
+    c: "c",
+    h: "c",
+    cc: "cpp",
+    cxx: "cpp",
+    cpp: "cpp",
+    hpp: "cpp",
+    cs: "csharp",
+    java: "java",
+    kt: "kotlin",
+    go: "go",
+    rs: "rust",
+    py: "python",
+    rb: "ruby",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    json: "json",
+    yml: "yaml",
+    yaml: "yaml",
+    md: "markdown",
+    css: "css",
+    sql: "sql",
+    php: "php",
+  };
+
+  return map[ext] ?? null;
+}
+
+const FALLBACK_DIFF_KEYWORD_REGEX = /\b(import|from|export|default|class|interface|type|enum|public|private|protected|function|const|let|var|return|if|else|for|while|switch|case|break|continue|new|async|await|try|catch|finally|extends|implements|static|readonly|true|false|null|undefined|using|namespace|void|string|int|bool|this|base)\b/g;
+const FALLBACK_DIFF_NUMBER_REGEX = /\b\d+(?:\.\d+)?\b/g;
+const FALLBACK_DIFF_STRING_REGEX = /`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g;
+const FALLBACK_DIFF_COMMENT_REGEX = /\/\/.*$/g;
+
+function fallbackDiffHighlight(content: string): string {
+  let html = escapeHtml(content);
+  const tokens: string[] = [];
+
+  const stash = (value: string, className: string): string => {
+    const index = tokens.push(`<span class="token ${className}">${value}</span>`) - 1;
+    return `@@CHAT_DIFF_FALLBACK_${index}@@`;
+  };
+
+  html = html.replace(FALLBACK_DIFF_STRING_REGEX, (value) => stash(value, "string"));
+  html = html.replace(FALLBACK_DIFF_COMMENT_REGEX, (value) => stash(value, "comment"));
+  html = html.replace(FALLBACK_DIFF_KEYWORD_REGEX, '<span class="token keyword">$1</span>');
+  html = html.replace(FALLBACK_DIFF_NUMBER_REGEX, '<span class="token number">$&</span>');
+
+  return html.replace(/@@CHAT_DIFF_FALLBACK_(\d+)@@/g, (_match, index) => {
+    return tokens[Number(index)] ?? "";
+  });
 }
 
 type PrismLike = {

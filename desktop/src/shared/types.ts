@@ -273,6 +273,75 @@ export type InstalledPlugin = {
   skills: PluginItem[];
 };
 
+export type TaskCardStatus =
+  | "draft"
+  | "planned"
+  | "running"
+  | "done"
+  | "blocked"
+  | "archived";
+
+export type TaskAction = "improve" | "plan" | "execute";
+
+export type TaskSourceKind = "jira" | "slack" | "url" | "manual";
+
+export type TaskRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export type TaskCardSummary = {
+  id: string;
+  workspacePath: string;
+  title: string;
+  status: TaskCardStatus;
+  updatedAt: string;
+  hasPlan: boolean;
+};
+
+export type TaskSourceFetchStatus = "idle" | "success" | "http_error" | "network_error";
+
+export type TaskSource = {
+  id: string;
+  taskId: string;
+  kind: TaskSourceKind;
+  url: string | null;
+  title: string | null;
+  content: string | null;
+  fetchStatus: TaskSourceFetchStatus;
+  httpStatus: number | null;
+  error: string | null;
+  fetchedAt: string | null;
+  updatedAt: string;
+};
+
+export type TaskRun = {
+  id: string;
+  taskId: string;
+  action: TaskAction;
+  status: TaskRunStatus;
+  sessionId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  output: string | null;
+  error: string | null;
+};
+
+export type TaskCardDetail = {
+  id: string;
+  workspacePath: string;
+  title: string;
+  notes: string;
+  planMarkdown: string | null;
+  status: TaskCardStatus;
+  sources: TaskSource[];
+  lastRun: TaskRun | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 // ── RPC contract ─────────────────────────────────────────────────
 
 export type AppRPC = {
@@ -361,6 +430,70 @@ export type AppRPC = {
         params: {};
         response: InstalledPlugin[];
       };
+      getWorkspaceTasks: {
+        params: { workspacePath: string };
+        response: TaskCardSummary[];
+      };
+      getTaskDetail: {
+        params: { taskId: string };
+        response: TaskCardDetail | null;
+      };
+      createTask: {
+        params: { workspacePath: string; title?: string; notes?: string };
+        response: TaskCardDetail;
+      };
+      updateTask: {
+        params: {
+          taskId: string;
+          patch: {
+            title?: string;
+            notes?: string;
+            status?: TaskCardStatus;
+            planMarkdown?: string | null;
+          };
+        };
+        response: TaskCardDetail | null;
+      };
+      deleteTask: {
+        params: { taskId: string };
+        response: void;
+      };
+      addTaskSource: {
+        params: {
+          taskId: string;
+          kind: TaskSourceKind;
+          url?: string | null;
+          content?: string | null;
+        };
+        response: TaskSource;
+      };
+      updateTaskSource: {
+        params: {
+          sourceId: string;
+          patch: {
+            title?: string | null;
+            content?: string | null;
+            url?: string | null;
+          };
+        };
+        response: TaskSource | null;
+      };
+      removeTaskSource: {
+        params: { sourceId: string };
+        response: void;
+      };
+      fetchTaskSource: {
+        params: { sourceId: string };
+        response: TaskSource | null;
+      };
+      runTaskAction: {
+        params: { taskId: string; action: TaskAction };
+        response: { runId: string; sessionId: string | null };
+      };
+      getTaskRuns: {
+        params: { taskId: string; limit?: number };
+        response: TaskRun[];
+      };
       getFileContent: {
         params: { cwd: string; path: string; maxBytes?: number };
         response: WorkspaceFileContent;
@@ -401,6 +534,10 @@ export type AppRPC = {
         exitCode: number;
       };
       toolApproval: ToolApprovalRequest;
+      tasksChanged: {
+        workspacePath: string;
+        taskId?: string;
+      };
     };
   }>;
 };

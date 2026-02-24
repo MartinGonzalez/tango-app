@@ -25,6 +25,10 @@ export function h(
         el.hidden = Boolean(val);
       } else if (key === "innerHTML") {
         el.innerHTML = val;
+      } else if (key === "disabled") {
+        (el as HTMLButtonElement).disabled = Boolean(val);
+      } else if (key === "checked") {
+        (el as HTMLInputElement).checked = Boolean(val);
       } else {
         el.setAttribute(key, String(val));
       }

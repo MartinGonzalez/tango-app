@@ -52,7 +52,9 @@ export class SessionManager {
     cwd: string,
     fullAccess: boolean = true,
     resumeSessionId?: string,
-    selectedFiles: string[] = []
+    selectedFiles: string[] = [],
+    model?: string,
+    tools?: string[]
   ): Promise<string> {
     const claudeBin = resolveClaudeBinary();
     const args = [
@@ -68,6 +70,18 @@ export class SessionManager {
 
     if (resumeSessionId) {
       args.push("--resume", resumeSessionId);
+    }
+
+    if (model && model.trim()) {
+      args.push("--model", model.trim());
+    }
+
+    if (Array.isArray(tools)) {
+      if (tools.length === 0) {
+        args.push("--tools", "");
+      } else {
+        args.push("--tools", tools.join(","));
+      }
     }
 
     let proc;

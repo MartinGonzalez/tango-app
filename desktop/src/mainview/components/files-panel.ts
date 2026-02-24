@@ -1,4 +1,4 @@
-import { h, clearChildren } from "../lib/dom.ts";
+import { h } from "../lib/dom.ts";
 import type { DiffFile, DiffScope } from "../../shared/types.ts";
 
 export type FilesPanelCallbacks = {
@@ -13,6 +13,7 @@ export class FilesPanel {
   #callbacks: FilesPanelCallbacks;
   #activeFile: string | null = null;
   #files: DiffFile[] = [];
+  #fileItemEls = new Map<string, HTMLElement>();
   #scope: DiffScope = "last_turn";
   #scopeLastBtn: HTMLButtonElement;
   #scopeAllBtn: HTMLButtonElement;
@@ -54,10 +55,10 @@ export class FilesPanel {
   render(files: DiffFile[]): void {
     this.#files = files;
     this.#countEl.textContent = String(files.length);
-    clearChildren(this.#listEl);
+    this.#fileItemEls.clear();
 
     if (files.length === 0) {
-      this.#listEl.appendChild(
+      this.#listEl.replaceChildren(
         h("div", { class: "fp-empty" }, [
           this.#scope === "last_turn"
             ? "No changes in last turn"
@@ -67,27 +68,30 @@ export class FilesPanel {
       return;
     }
 
+    const fragment = document.createDocumentFragment();
     for (const file of files) {
-      this.#listEl.appendChild(this.#renderFile(file));
+      fragment.appendChild(this.#renderFile(file));
     }
+    this.#listEl.replaceChildren(fragment);
   }
 
   setActiveFile(path: string | null): void {
+    const previous = this.#activeFile;
     this.#activeFile = path;
-    for (const item of this.#listEl.querySelectorAll(".fp-file-item")) {
-      (item as HTMLElement).classList.toggle(
-        "active",
-        (item as HTMLElement).dataset.filePath === path
-      );
+    if (previous && previous !== path) {
+      this.#fileItemEls.get(previous)?.classList.remove("active");
+    }
+    if (path) {
+      this.#fileItemEls.get(path)?.classList.add("active");
     }
   }
 
   clear(): void {
     this.#files = [];
     this.#activeFile = null;
+    this.#fileItemEls.clear();
     this.#countEl.textContent = "0";
-    clearChildren(this.#listEl);
-    this.#listEl.appendChild(
+    this.#listEl.replaceChildren(
       h("div", { class: "fp-empty" }, [
         this.#scope === "last_turn"
           ? "No changes in last turn"
@@ -118,7 +122,7 @@ export class FilesPanel {
       dels > 0 ? h("span", { class: "fp-delta-del" }, [`-${dels}`]) : null as any,
     ].filter(Boolean) as HTMLElement[];
 
-    return h(
+    const item = h(
       "div",
       {
         class: `fp-file-item${file.path === this.#activeFile ? " active" : ""}`,
@@ -142,6 +146,8 @@ export class FilesPanel {
         file.isBinary ? h("span", { class: "fp-binary-tag" }, ["bin"]) : null as any,
       ].filter(Boolean)
     );
+    this.#fileItemEls.set(file.path, item);
+    return item;
   }
 
   get element(): HTMLElement {

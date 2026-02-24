@@ -1,18 +1,23 @@
 import Electrobun, { Electroview } from "electrobun/view";
 import { Store } from "./lib/state.ts";
 import { h, qs } from "./lib/dom.ts";
-import { pluginToolIcon } from "./lib/icons.ts";
+import { pluginToolIcon, tasksToolIcon } from "./lib/icons.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
 import { Sidebar, type WorkspaceData } from "./components/sidebar.ts";
 import {
   PluginsSidebar,
   type PluginSidebarSelection,
 } from "./components/plugins-sidebar.ts";
+import {
+  TasksSidebar,
+  type TaskWorkspaceGroup,
+} from "./components/tasks-sidebar.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ChatView } from "./components/chat-view.ts";
 import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
+import { TasksView } from "./components/tasks-view.ts";
 import type {
   SessionInfo,
   Snapshot,
@@ -26,6 +31,10 @@ import type {
   ToolApprovalRequest,
   SlashCommandEntry,
   InstalledPlugin,
+  TaskAction,
+  TaskCardDetail,
+  TaskCardSummary,
+  TaskCardStatus,
 } from "../shared/types.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
@@ -87,6 +96,7 @@ const rpc = Electroview.defineRPC<any>({
         tempId: string;
         realId: string;
       }) => {
+        remapAppSpawnedSession(tempId, realId);
         const state = appState.get();
         const live = new Set(state.liveSessions);
         if (live.has(tempId)) {
@@ -125,6 +135,7 @@ const rpc = Electroview.defineRPC<any>({
       }) => {
         console.log(`Session ${sessionId} ended with code ${exitCode}`);
         sessionUsageEstimates.delete(sessionId);
+        removeAppSpawnedSession(sessionId);
         const state = appState.get();
         const hasPinnedCommitDiff = activeCommitDiff
           ? activeCommitDiff.cwd === state.activeWorkspace
@@ -142,6 +153,20 @@ const rpc = Electroview.defineRPC<any>({
           }
         }
       },
+      tasksChanged: ({
+        workspacePath,
+        taskId,
+      }: {
+        workspacePath: string;
+        taskId?: string;
+      }) => {
+        void loadWorkspaceTasks(workspacePath, true);
+        const state = appState.get();
+        if (!state.selectedTaskId) return;
+        if (!taskId || taskId === state.selectedTaskId) {
+          void loadTaskDetail(state.selectedTaskId, true);
+        }
+      },
     },
   },
 });
@@ -153,7 +178,7 @@ const _electrobun = new Electrobun.Electroview({ rpc });
 
 type AppState = {
   snapshot: Snapshot | null;
-  viewMode: "workspaces" | "plugins";
+  viewMode: "workspaces" | "plugins" | "tasks";
   workspaces: string[];
   expandedWorkspaces: Set<string>;
   activeWorkspace: string | null;
@@ -167,11 +192,22 @@ type AppState = {
   plugins: InstalledPlugin[];
   pluginsLoading: boolean;
   pluginSelection: PluginSidebarSelection | null;
+  tasksByWorkspace: Record<string, TaskCardSummary[]>;
+  tasksLoading: boolean;
+  selectedTaskId: string | null;
+  selectedTaskDetail: TaskCardDetail | null;
 };
 
 type SessionUsageEstimate = {
   promptTokens: number | null;
   model: string | null;
+};
+
+type AppSpawnedSessionMeta = {
+  cwd: string;
+  topic: string | null;
+  startedAt: string;
+  updatedAt: string;
 };
 
 const appState = new Store<AppState>({
@@ -190,6 +226,10 @@ const appState = new Store<AppState>({
   plugins: [],
   pluginsLoading: false,
   pluginSelection: null,
+  tasksByWorkspace: {},
+  tasksLoading: false,
+  selectedTaskId: null,
+  selectedTaskDetail: null,
 });
 
 // ── Components ───────────────────────────────────────────────────
@@ -197,12 +237,15 @@ const appState = new Store<AppState>({
 let panelLayout: PanelLayout;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
+let tasksSidebar: TasksSidebar;
 let pluginsPreview: PluginsPreview;
+let tasksView: TasksView;
 let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
 let sidebarPrimaryPluginsBtn: HTMLButtonElement | null = null;
+let sidebarPrimaryTasksBtn: HTMLButtonElement | null = null;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FILE_CACHE_MS = 30_000;
@@ -216,6 +259,7 @@ const slashCommandCache = new Map<string, {
   loadedAt: number;
 }>();
 const sessionUsageEstimates = new Map<string, SessionUsageEstimate>();
+const appSpawnedSessions = new Map<string, AppSpawnedSessionMeta>();
 const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
 let prevBranchWorkspace: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
@@ -244,8 +288,13 @@ function init(): void {
     class: "sidebar-mode-view sidebar-mode-view-plugins",
     hidden: true,
   });
+  const tasksSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-tasks",
+    hidden: true,
+  });
   sidebarViews.appendChild(workspacesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
+  sidebarViews.appendChild(tasksSidebarHost);
 
   sidebarPrimaryPluginsBtn = h("button", {
     class: "sidebar-primary-btn",
@@ -260,8 +309,22 @@ function init(): void {
     h("span", { class: "sidebar-primary-label" }, ["Plugins"]),
   ]) as HTMLButtonElement;
 
+  sidebarPrimaryTasksBtn = h("button", {
+    class: "sidebar-primary-btn",
+    onclick: () => {
+      appState.update((s) => ({ ...s, viewMode: "tasks" }));
+      panelLayout.showPanel("workspaces");
+      qs("#btn-toggle-workspaces")?.classList.add("active");
+      void loadAllWorkspaceTasks();
+    },
+  }, [
+    tasksToolIcon("sidebar-primary-icon"),
+    h("span", { class: "sidebar-primary-label" }, ["Tasks"]),
+  ]) as HTMLButtonElement;
+
   const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
     sidebarPrimaryPluginsBtn,
+    sidebarPrimaryTasksBtn,
   ]);
 
   const sidebarShell = h("div", { class: "sidebar-shell" }, [
@@ -389,6 +452,23 @@ function init(): void {
     },
   });
 
+  tasksSidebar = new TasksSidebar(tasksSidebarHost, {
+    onSelectTask: (taskId, workspacePath) => {
+      appState.update((s) => ({
+        ...s,
+        selectedTaskId: taskId,
+        activeWorkspace: workspacePath,
+      }));
+      void loadTaskDetail(taskId, true);
+    },
+    onCreateTask: (workspacePath) => {
+      void createTaskInWorkspace(workspacePath);
+    },
+    onBack: () => {
+      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+    },
+  });
+
   // Chat panel
   chatView = new ChatView(chatPanel, {
     onStopSession: async () => {
@@ -430,9 +510,24 @@ function init(): void {
             sessionId: state.activeSessionId ?? undefined, // resume if set
             selectedFiles,
           });
-          const live = new Set(state.liveSessions);
-          live.add(sessionId);
-          appState.update((s) => ({ ...s, activeSessionId: sessionId, liveSessions: live }));
+          registerAppSpawnedSession(
+            sessionId,
+            cwd,
+            resolvePromptTitle(null, prompt)
+          );
+          appState.update((s) => {
+            const live = new Set(s.liveSessions);
+            live.add(sessionId);
+            const expanded = new Set(s.expandedWorkspaces);
+            expanded.add(cwd);
+            return {
+              ...s,
+              activeSessionId: sessionId,
+              activeWorkspace: cwd,
+              liveSessions: live,
+              expandedWorkspaces: expanded,
+            };
+          });
         }
       } catch (err) {
         console.error("Failed to send prompt:", err);
@@ -462,6 +557,93 @@ function init(): void {
     },
   });
   pluginsPreview = new PluginsPreview(chatPanel);
+  tasksView = new TasksView(chatPanel, {
+    onUpdateTask: async (taskId, patch) => {
+      await (rpc as any).request.updateTask({ taskId, patch });
+    },
+    onDeleteTask: async (taskId) => {
+      const detail = appState.get().selectedTaskDetail;
+      await (rpc as any).request.deleteTask({ taskId });
+      if (!detail) return;
+      appState.update((s) => ({
+        ...s,
+        selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
+        selectedTaskDetail: s.selectedTaskId === taskId ? null : s.selectedTaskDetail,
+      }));
+      await loadWorkspaceTasks(detail.workspacePath, true);
+      const remaining = appState.get().tasksByWorkspace[detail.workspacePath] ?? [];
+      const next = remaining[0] ?? null;
+      if (next) {
+        appState.update((s) => ({ ...s, selectedTaskId: next.id }));
+        await loadTaskDetail(next.id, true);
+      }
+    },
+    onAddSource: async (taskId, payload) => {
+      await (rpc as any).request.addTaskSource({
+        taskId,
+        kind: payload.kind,
+        url: payload.url,
+        content: payload.content,
+      });
+    },
+    onUpdateSource: async (sourceId, patch) => {
+      await (rpc as any).request.updateTaskSource({ sourceId, patch });
+    },
+    onRemoveSource: async (sourceId) => {
+      await (rpc as any).request.removeTaskSource({ sourceId });
+    },
+    onFetchSource: async (sourceId) => {
+      await (rpc as any).request.fetchTaskSource({ sourceId });
+    },
+    onRunAction: async (taskId, action) => {
+      const detail = appState.get().selectedTaskDetail;
+      const workspacePath = detail?.workspacePath ?? appState.get().activeWorkspace ?? null;
+      const result: { runId: string; sessionId: string | null } = await (rpc as any).request.runTaskAction({
+        taskId,
+        action,
+      });
+
+      if (action !== "execute" || !result.sessionId) {
+        if (workspacePath) {
+          await loadWorkspaceTasks(workspacePath, true);
+        }
+        await loadTaskDetail(taskId, true);
+        return;
+      }
+
+      if (workspacePath) {
+        const executionTitle = detail?.title
+          ? `Task: ${detail.title}`
+          : "Task execution";
+        registerAppSpawnedSession(result.sessionId, workspacePath, executionTitle);
+      }
+
+      appState.update((s) => {
+        const live = new Set(s.liveSessions);
+        live.add(result.sessionId!);
+        const expanded = new Set(s.expandedWorkspaces);
+        if (workspacePath) {
+          expanded.add(workspacePath);
+        }
+        return {
+          ...s,
+          viewMode: "workspaces",
+          activeWorkspace: workspacePath ?? s.activeWorkspace,
+          activeSessionId: result.sessionId,
+          liveSessions: live,
+          expandedWorkspaces: expanded,
+        };
+      });
+
+      await loadSessionTranscript(result.sessionId);
+      if (workspacePath) {
+        void loadWorkspaceTasks(workspacePath, true);
+        void loadSessionHistory(workspacePath);
+        await loadDiff(workspacePath);
+        ensureBranchHistory(workspacePath);
+      }
+    },
+  });
 
   // Diff panel
   diffView = new DiffView(diffPanel, {
@@ -567,21 +749,31 @@ function init(): void {
       state.pluginSelection
     );
     const isPluginsMode = state.viewMode === "plugins";
+    const isTasksMode = state.viewMode === "tasks";
+    const taskGroups = buildTaskWorkspaceGroups(state);
 
-    sidebarPrimaryActions.hidden = isPluginsMode;
-    workspacesSidebarHost.hidden = isPluginsMode;
+    sidebarPrimaryActions.hidden = isPluginsMode || isTasksMode;
+    workspacesSidebarHost.hidden = isPluginsMode || isTasksMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
+    tasksSidebarHost.hidden = !isTasksMode;
     sidebarPrimaryPluginsBtn?.classList.toggle("active", isPluginsMode);
+    sidebarPrimaryTasksBtn?.classList.toggle("active", isTasksMode);
 
     pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
     pluginsSidebar.setSelection(pluginsSelection);
+    tasksSidebar.render(taskGroups, { loading: state.tasksLoading });
+    tasksSidebar.setSelection(state.selectedTaskId);
     pluginsPreview.render(state.plugins, pluginsSelection, {
       loading: state.pluginsLoading,
     });
+    tasksView.render(state.selectedTaskDetail, {
+      loading: state.tasksLoading && Boolean(state.selectedTaskId),
+    });
 
-    chatView.element.hidden = isPluginsMode;
+    chatView.element.hidden = isPluginsMode || isTasksMode;
     pluginsPreview.setVisible(isPluginsMode);
-    if (isPluginsMode) {
+    tasksView.setVisible(isTasksMode);
+    if (isPluginsMode || isTasksMode) {
       panelLayout.hidePanel("diff");
       if (sidebarWidthBeforeSwitch > 0) {
         panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
@@ -729,10 +921,13 @@ function clearCommitDiffSelection(cwd: string): void {
 
 function applyDiffFiles(files: DiffFile[]): void {
   filesPanel.render(files);
-  diffView.setFiles(files);
   if (files.length > 0) {
-    filesPanel.setActiveFile(files[0].path);
-    diffView.showFile(files[0].path);
+    const firstPath = files[0].path;
+    filesPanel.setActiveFile(firstPath);
+    diffView.setFiles(files, {
+      activeFile: firstPath,
+      scrollToActive: false,
+    });
   } else {
     diffView.clear();
   }
@@ -893,6 +1088,7 @@ async function loadWorkspaces(): Promise<void> {
         ensureBranchHistory(wsPath);
       }
     }
+    void loadAllWorkspaceTasks();
   } catch {
     // First run — no workspaces yet
   }
@@ -937,6 +1133,146 @@ async function loadPlugins(force = false): Promise<void> {
   }
 }
 
+async function loadAllWorkspaceTasks(): Promise<void> {
+  const state = appState.get();
+  if (state.workspaces.length === 0) {
+    appState.update((s) => ({
+      ...s,
+      tasksByWorkspace: {},
+      tasksLoading: false,
+      selectedTaskId: null,
+      selectedTaskDetail: null,
+    }));
+    return;
+  }
+
+  appState.update((s) => ({
+    ...s,
+    tasksLoading: true,
+  }));
+
+  try {
+    const pairs = await Promise.all(state.workspaces.map(async (workspacePath) => {
+      const tasks: TaskCardSummary[] = await (rpc as any).request.getWorkspaceTasks({ workspacePath });
+      return [workspacePath, tasks] as const;
+    }));
+
+    const byWorkspace: Record<string, TaskCardSummary[]> = {};
+    for (const [workspacePath, tasks] of pairs) {
+      byWorkspace[workspacePath] = tasks;
+    }
+
+    let selectedTaskId = appState.get().selectedTaskId;
+    if (!selectedTaskId || !findTaskSummaryById(byWorkspace, selectedTaskId)) {
+      const activeWorkspace = appState.get().activeWorkspace;
+      const preferred = activeWorkspace ? byWorkspace[activeWorkspace] : null;
+      selectedTaskId = preferred?.[0]?.id ?? pairs[0]?.[1]?.[0]?.id ?? null;
+    }
+
+    appState.update((s) => ({
+      ...s,
+      tasksByWorkspace: byWorkspace,
+      tasksLoading: false,
+      selectedTaskId,
+      selectedTaskDetail: selectedTaskId === s.selectedTaskDetail?.id ? s.selectedTaskDetail : null,
+    }));
+
+    if (selectedTaskId) {
+      await loadTaskDetail(selectedTaskId, true);
+    }
+  } catch (err) {
+    console.error("Failed to load tasks:", err);
+    appState.update((s) => ({
+      ...s,
+      tasksLoading: false,
+    }));
+  }
+}
+
+async function loadWorkspaceTasks(workspacePath: string, refreshDetail = false): Promise<void> {
+  if (!workspacePath) return;
+  try {
+    const tasks: TaskCardSummary[] = await (rpc as any).request.getWorkspaceTasks({ workspacePath });
+    appState.update((s) => ({
+      ...s,
+      tasksByWorkspace: {
+        ...s.tasksByWorkspace,
+        [workspacePath]: tasks,
+      },
+    }));
+
+    const selectedTaskId = appState.get().selectedTaskId;
+    if (!selectedTaskId) return;
+    const selectedStillExists = tasks.some((task) => task.id === selectedTaskId);
+    if (refreshDetail && selectedStillExists) {
+      await loadTaskDetail(selectedTaskId, true);
+      return;
+    }
+    if (!selectedStillExists && appState.get().selectedTaskDetail?.workspacePath === workspacePath) {
+      const next = tasks[0] ?? null;
+      appState.update((s) => ({
+        ...s,
+        selectedTaskId: next?.id ?? null,
+        selectedTaskDetail: next ? s.selectedTaskDetail : null,
+      }));
+      if (next) {
+        await loadTaskDetail(next.id, true);
+      } else {
+        appState.update((s) => ({ ...s, selectedTaskDetail: null }));
+      }
+    }
+  } catch (err) {
+    console.error("Failed to load workspace tasks:", err);
+  }
+}
+
+async function loadTaskDetail(taskId: string, keepSelection = false): Promise<void> {
+  if (!taskId) return;
+  try {
+    const detail: TaskCardDetail | null = await (rpc as any).request.getTaskDetail({ taskId });
+    if (!detail) {
+      appState.update((s) => ({
+        ...s,
+        selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
+        selectedTaskDetail: s.selectedTaskDetail?.id === taskId ? null : s.selectedTaskDetail,
+      }));
+      return;
+    }
+
+    appState.update((s) => ({
+      ...s,
+      selectedTaskId: keepSelection ? (s.selectedTaskId ?? detail.id) : detail.id,
+      selectedTaskDetail: detail,
+      activeWorkspace: detail.workspacePath,
+    }));
+  } catch (err) {
+    console.error("Failed to load task detail:", err);
+  }
+}
+
+async function createTaskInWorkspace(workspacePath: string): Promise<void> {
+  try {
+    const detail: TaskCardDetail = await (rpc as any).request.createTask({
+      workspacePath,
+      title: "Untitled task",
+      notes: "",
+    });
+
+    appState.update((s) => ({
+      ...s,
+      selectedTaskId: detail.id,
+      selectedTaskDetail: detail,
+      activeWorkspace: workspacePath,
+      viewMode: "tasks",
+    }));
+
+    await loadWorkspaceTasks(workspacePath, false);
+    await loadTaskDetail(detail.id, true);
+  } catch (err) {
+    console.error("Failed to create task:", err);
+  }
+}
+
 async function openWorkspace(): Promise<void> {
   try {
     const dir: string | null = await (rpc as any).request.pickDirectory({});
@@ -959,6 +1295,7 @@ async function openWorkspace(): Promise<void> {
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
     ensureBranchHistory(dir);
+    loadWorkspaceTasks(dir);
   } catch (err) {
     console.error("Failed to pick directory:", err);
   }
@@ -979,13 +1316,19 @@ async function removeWorkspace(path: string): Promise<void> {
       expanded.delete(path);
       loadedBranchHistory.delete(path);
       const branchHistory = { ...s.branchHistory };
+      const tasksByWorkspace = { ...s.tasksByWorkspace };
       delete branchHistory[path];
+      delete tasksByWorkspace[path];
+      const selectedTaskRemoved = s.selectedTaskDetail?.workspacePath === path;
       return {
         ...s,
         workspaces,
         expandedWorkspaces: expanded,
         branchHistory,
+        tasksByWorkspace,
         loadedBranchHistory,
+        selectedTaskId: selectedTaskRemoved ? null : s.selectedTaskId,
+        selectedTaskDetail: selectedTaskRemoved ? null : s.selectedTaskDetail,
         activeWorkspace: s.activeWorkspace === path
           ? (workspaces[0] ?? null)
           : s.activeWorkspace,
@@ -996,6 +1339,7 @@ async function removeWorkspace(path: string): Promise<void> {
     if (nextWorkspace) {
       ensureBranchHistory(nextWorkspace);
     }
+    loadAllWorkspaceTasks();
   } catch (err) {
     console.error("Failed to remove workspace:", err);
   }
@@ -1154,6 +1498,25 @@ function resolvePluginSelection(
   };
 }
 
+function buildTaskWorkspaceGroups(state: AppState): TaskWorkspaceGroup[] {
+  return state.workspaces.map((workspacePath) => ({
+    workspacePath,
+    workspaceName: workspacePath.split("/").pop() ?? workspacePath,
+    tasks: state.tasksByWorkspace[workspacePath] ?? [],
+  }));
+}
+
+function findTaskSummaryById(
+  byWorkspace: Record<string, TaskCardSummary[]>,
+  taskId: string
+): TaskCardSummary | null {
+  for (const tasks of Object.values(byWorkspace)) {
+    const found = tasks.find((task) => task.id === taskId);
+    if (found) return found;
+  }
+  return null;
+}
+
 function buildWorkspaceData(state: AppState): WorkspaceData[] {
   const liveSessions = state.snapshot
     ? buildSessionList(state.snapshot)
@@ -1172,9 +1535,16 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
     const history = (state.historySessions[wsPath] ?? [])
       .filter((h) => !liveIds.has(h.sessionId))
       .map(historyToSessionInfo);
+    const historyIds = new Set(history.map((session) => session.sessionId));
+    const optimistic = buildAppSpawnedSessionList(
+      wsPath,
+      liveIds,
+      historyIds,
+      state.liveSessions
+    );
 
     // Apply custom names to all sessions
-    const allSessions = [...wsLive, ...history].map((s) => ({
+    const allSessions = [...wsLive, ...optimistic, ...history].map((s) => ({
       ...s,
       topic: state.customSessionNames[s.sessionId] ?? s.topic,
     }));
@@ -1227,6 +1597,69 @@ function historyToSessionInfo(h: HistorySession): SessionInfo {
     isAppSpawned: false,
     transcriptPath: h.transcriptPath,
   };
+}
+
+function buildAppSpawnedSessionList(
+  workspacePath: string,
+  liveIds: Set<string>,
+  historyIds: Set<string>,
+  stateLiveIds: Set<string>
+): SessionInfo[] {
+  const result: SessionInfo[] = [];
+  for (const [sessionId, meta] of appSpawnedSessions) {
+    if (meta.cwd !== workspacePath) continue;
+    if (!stateLiveIds.has(sessionId)) continue;
+    if (liveIds.has(sessionId) || historyIds.has(sessionId)) continue;
+    result.push({
+      sessionId,
+      topic: meta.topic,
+      prompt: null,
+      cwd: meta.cwd,
+      activity: "working",
+      model: null,
+      contextPercentage: null,
+      currentToolLabel: null,
+      startedAt: meta.startedAt,
+      updatedAt: meta.updatedAt,
+      isAppSpawned: true,
+      transcriptPath: null,
+    });
+  }
+  return result;
+}
+
+function registerAppSpawnedSession(
+  sessionId: string,
+  cwd: string,
+  topic: string | null
+): void {
+  const normalizedId = String(sessionId ?? "").trim();
+  const normalizedCwd = String(cwd ?? "").trim();
+  if (!normalizedId || !normalizedCwd) return;
+
+  const now = new Date().toISOString();
+  appSpawnedSessions.set(normalizedId, {
+    cwd: normalizedCwd,
+    topic: topic ? collapseWhitespace(topic) : null,
+    startedAt: now,
+    updatedAt: now,
+  });
+}
+
+function remapAppSpawnedSession(tempId: string, realId: string): void {
+  if (!appSpawnedSessions.has(tempId)) return;
+  if (tempId === realId) return;
+  const meta = appSpawnedSessions.get(tempId);
+  if (!meta) return;
+  appSpawnedSessions.delete(tempId);
+  appSpawnedSessions.set(realId, {
+    ...meta,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function removeAppSpawnedSession(sessionId: string): void {
+  appSpawnedSessions.delete(sessionId);
 }
 
 function buildSessionList(snapshot: Snapshot): SessionInfo[] {

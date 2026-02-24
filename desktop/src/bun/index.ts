@@ -35,12 +35,21 @@ import {
   getInstalledPlugins,
   invalidateInstalledPluginsCache,
 } from "./plugins.ts";
+import { TaskRepository } from "./task-repository.ts";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
   getWorkspacePathVariantsSync,
 } from "./project-path.ts";
-import type { AppRPC, SessionInfo, Snapshot, Activity } from "../shared/types.ts";
+import type {
+  AppRPC,
+  SessionInfo,
+  Snapshot,
+  Activity,
+  TaskAction,
+  TaskCardStatus,
+  TaskSourceKind,
+} from "../shared/types.ts";
 
 console.log("Claudex starting...");
 
@@ -51,10 +60,19 @@ const sessions = new SessionManager();
 const workspaces = new WorkspaceStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
+const taskRepository = new TaskRepository();
 
 let latestSnapshot: Snapshot | null = null;
 let mainRPC: any = null;
 const sessionCwds = new Map<string, string>();
+const taskRunsBySession = new Map<string, {
+  runId: string;
+  taskId: string;
+  action: TaskAction;
+  workspacePath: string;
+}>();
+const IMPROVE_TASK_MODEL = process.env.CLAUDE_TASK_IMPROVE_MODEL?.trim()
+  || "claude-haiku-4-5-20251001";
 
 // ── Auto-start watcher server if needed ──────────────────────────
 
@@ -148,6 +166,12 @@ watcher.onError((err) => {
 sessions.onIdResolved((tempId, realId) => {
   // Move approval policy from temp ID to real session ID
   approvals.resolveSessionId(tempId, realId);
+  const taskRun = taskRunsBySession.get(tempId);
+  if (taskRun) {
+    taskRunsBySession.delete(tempId);
+    taskRunsBySession.set(realId, taskRun);
+    taskRepository.bindRunSession(taskRun.runId, realId);
+  }
   const cwd = sessionCwds.get(tempId);
   if (cwd) {
     sessionCwds.delete(tempId);
@@ -168,11 +192,32 @@ sessions.onEvent((sessionId, event) => {
 sessions.onEnd((sessionId, exitCode) => {
   approvals.unregisterSession(sessionId);
   sessionCwds.delete(sessionId);
+  const taskRun = taskRunsBySession.get(sessionId);
+  if (taskRun) {
+    taskRunsBySession.delete(sessionId);
+    try {
+      const { task } = taskRepository.finalizeRun(taskRun.runId, {
+        success: exitCode === 0,
+        exitCode,
+        error: exitCode === 0 ? null : `Session exited with code ${exitCode}`,
+      });
+      notifyTasksChanged(task.workspacePath, task.id);
+    } catch (err) {
+      console.warn("Failed to finalize task run:", err);
+    }
+  }
   mainRPC?.send.sessionEnded({ sessionId, exitCode });
 });
 
 sessions.onError((sessionId, error) => {
   console.error(`Session ${sessionId} error:`, error);
+  const taskRun = taskRunsBySession.get(sessionId);
+  if (taskRun) {
+    taskRepository.appendRunOutput(taskRun.runId, `\n[error]\n${error}\n`);
+    if (taskRun.action !== "execute") {
+      return;
+    }
+  }
   mainRPC?.send.sessionStream({
     sessionId,
     event: { type: "error", error: { message: error } },
@@ -406,6 +451,206 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getInstalledPlugins();
       },
 
+      getWorkspaceTasks: async ({
+        workspacePath,
+      }: {
+        workspacePath: string;
+      }) => {
+        if (!workspacePath) return [];
+        return taskRepository.listWorkspaceTasks(workspacePath);
+      },
+
+      getTaskDetail: async ({ taskId }: { taskId: string }) => {
+        if (!taskId) return null;
+        return taskRepository.getTaskDetail(taskId);
+      },
+
+      createTask: async ({
+        workspacePath,
+        title,
+        notes,
+      }: {
+        workspacePath: string;
+        title?: string;
+        notes?: string;
+      }) => {
+        const task = taskRepository.createTask(workspacePath, title, notes);
+        notifyTasksChanged(task.workspacePath, task.id);
+        return task;
+      },
+
+      updateTask: async ({
+        taskId,
+        patch,
+      }: {
+        taskId: string;
+        patch: {
+          title?: string;
+          notes?: string;
+          status?: TaskCardStatus;
+          planMarkdown?: string | null;
+        };
+      }) => {
+        if (!taskId) return null;
+        const task = taskRepository.updateTask(taskId, patch);
+        if (task) {
+          notifyTasksChanged(task.workspacePath, task.id);
+        }
+        return task;
+      },
+
+      deleteTask: async ({ taskId }: { taskId: string }) => {
+        const workspacePath = taskRepository.getTaskDetail(taskId)?.workspacePath ?? null;
+        taskRepository.deleteTask(taskId);
+        if (workspacePath) {
+          notifyTasksChanged(workspacePath);
+        }
+      },
+
+      addTaskSource: async ({
+        taskId,
+        kind,
+        url,
+        content,
+      }: {
+        taskId: string;
+        kind: TaskSourceKind;
+        url?: string | null;
+        content?: string | null;
+      }) => {
+        let source = taskRepository.addTaskSource(
+          taskId,
+          kind,
+          url ?? null,
+          content ?? null
+        );
+
+        if (source.url) {
+          const fetched = await taskRepository.fetchTaskSource(source.id);
+          if (fetched) source = fetched;
+        }
+
+        const task = taskRepository.getTaskDetail(taskId);
+        if (task) {
+          notifyTasksChanged(task.workspacePath, task.id);
+        }
+        return source;
+      },
+
+      updateTaskSource: async ({
+        sourceId,
+        patch,
+      }: {
+        sourceId: string;
+        patch: {
+          title?: string | null;
+          content?: string | null;
+          url?: string | null;
+        };
+      }) => {
+        let source = taskRepository.updateTaskSource(sourceId, patch);
+        if (source && patch.url !== undefined && patch.url !== null && patch.url.trim()) {
+          const fetched = await taskRepository.fetchTaskSource(source.id);
+          if (fetched) source = fetched;
+        }
+
+        if (source) {
+          const task = taskRepository.getTaskDetail(source.taskId);
+          if (task) {
+            notifyTasksChanged(task.workspacePath, task.id);
+          }
+        }
+        return source;
+      },
+
+      removeTaskSource: async ({ sourceId }: { sourceId: string }) => {
+        const source = taskRepository.getTaskSource(sourceId);
+        taskRepository.removeTaskSource(sourceId);
+        if (source) {
+          const task = taskRepository.getTaskDetail(source.taskId);
+          if (task) notifyTasksChanged(task.workspacePath, task.id);
+        }
+      },
+
+      fetchTaskSource: async ({ sourceId }: { sourceId: string }) => {
+        const source = await taskRepository.fetchTaskSource(sourceId);
+        if (source) {
+          const task = taskRepository.getTaskDetail(source.taskId);
+          if (task) {
+            notifyTasksChanged(task.workspacePath, task.id);
+          }
+        }
+        return source;
+      },
+
+      runTaskAction: async ({
+        taskId,
+        action,
+      }: {
+        taskId: string;
+        action: TaskAction;
+      }) => {
+        const prepared = taskRepository.prepareTaskRun(taskId, action);
+        notifyTasksChanged(prepared.workspacePath, prepared.task.id);
+
+        let sessionId: string | null = null;
+        try {
+          if (action === "execute") {
+            await beginTurnDiff(prepared.workspacePath).catch(() => {});
+          }
+
+          const tempSessionId = await sessions.spawn(
+            prepared.prompt,
+            prepared.workspacePath,
+            true,
+            undefined,
+            [],
+            action === "improve" ? IMPROVE_TASK_MODEL : undefined,
+            action === "execute" ? undefined : []
+          );
+          sessionId = tempSessionId;
+
+          if (action === "execute") {
+            await setTurnDiffSession(prepared.workspacePath, tempSessionId).catch(() => {});
+          }
+
+          taskRepository.bindRunSession(prepared.run.id, tempSessionId);
+          taskRunsBySession.set(tempSessionId, {
+            runId: prepared.run.id,
+            taskId: prepared.task.id,
+            action,
+            workspacePath: prepared.workspacePath,
+          });
+          sessionCwds.set(tempSessionId, prepared.workspacePath);
+          approvals.registerSession(tempSessionId, true);
+          await workspaces.add(prepared.workspacePath);
+          notifyTasksChanged(prepared.workspacePath, prepared.task.id);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          taskRepository.finalizeRun(prepared.run.id, {
+            success: false,
+            error: message,
+          });
+          notifyTasksChanged(prepared.workspacePath, prepared.task.id);
+          throw err;
+        }
+
+        return {
+          runId: prepared.run.id,
+          sessionId: action === "execute" ? sessionId : null,
+        };
+      },
+
+      getTaskRuns: async ({
+        taskId,
+        limit,
+      }: {
+        taskId: string;
+        limit?: number;
+      }) => {
+        return taskRepository.getTaskRuns(taskId, limit ?? 20);
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
@@ -472,13 +717,34 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 });
 
 async function handleSessionEvent(sessionId: string, event: any): Promise<void> {
-  if (event?.type === "result" && event?.subtype === "success") {
-    const cwd = resolveSessionCwd(sessionId);
-    if (cwd) {
-      await finalizeTurnDiff(cwd, sessionId).catch((err) => {
-        console.warn("Failed to finalize turn diff:", err);
-      });
+  const taskRun = taskRunsBySession.get(sessionId);
+  if (taskRun) {
+    const chunk = extractTaskRunOutput(event);
+    if (chunk) {
+      taskRepository.appendRunOutput(taskRun.runId, chunk);
     }
+  }
+
+  if (event?.type === "result" && event?.subtype === "success") {
+    if (!taskRun || taskRun.action === "execute") {
+      const cwd = resolveSessionCwd(sessionId);
+      if (cwd) {
+        await finalizeTurnDiff(cwd, sessionId).catch((err) => {
+          console.warn("Failed to finalize turn diff:", err);
+        });
+      }
+    }
+  }
+
+  if (taskRun && taskRun.action !== "execute") {
+    const consumed = finalizeBackgroundTaskRunFromEvent(sessionId, taskRun, event);
+    if (consumed) {
+      return;
+    }
+  }
+
+  if (taskRun && taskRun.action !== "execute") {
+    return;
   }
 
   mainRPC?.send.sessionStream({ sessionId, event });
@@ -502,6 +768,83 @@ function guessTranscriptPaths(cwd: string, sessionId: string): string[] {
     paths.add(join(homedir(), ".claude", "projects", legacy, `${sessionId}.jsonl`));
   }
   return Array.from(paths);
+}
+
+function notifyTasksChanged(workspacePath: string, taskId?: string): void {
+  if (!workspacePath) return;
+  mainRPC?.send.tasksChanged({
+    workspacePath,
+    taskId,
+  });
+}
+
+function finalizeBackgroundTaskRunFromEvent(
+  sessionId: string,
+  taskRun: {
+    runId: string;
+    taskId: string;
+    action: TaskAction;
+    workspacePath: string;
+  },
+  event: unknown
+): boolean {
+  if (!event || typeof event !== "object") return false;
+  const ev = event as Record<string, any>;
+  if (ev.type !== "result") return false;
+
+  const isSuccess = ev.subtype === "success";
+  const isFailure = ev.subtype === "error";
+  if (!isSuccess && !isFailure) return false;
+
+  taskRunsBySession.delete(sessionId);
+  try {
+    const output = isSuccess
+      ? String(ev.result ?? "").trim() || null
+      : null;
+    const error = isFailure
+      ? String(ev.error?.message ?? ev.result ?? "Task action failed").trim() || "Task action failed"
+      : null;
+    const { task } = taskRepository.finalizeRun(taskRun.runId, {
+      success: isSuccess,
+      output,
+      error,
+    });
+    notifyTasksChanged(task.workspacePath, task.id);
+  } catch (err) {
+    console.warn("Failed to finalize background task run from result event:", err);
+  } finally {
+    // Hidden runs are single-turn tasks; terminate the process once result is available.
+    sessions.kill(sessionId);
+  }
+  return true;
+}
+
+function extractTaskRunOutput(event: unknown): string {
+  if (!event || typeof event !== "object") return "";
+
+  const ev = event as Record<string, any>;
+  if (ev.type === "assistant") {
+    const blocks = ev?.message?.content;
+    if (!Array.isArray(blocks)) return "";
+    const text = blocks
+      .filter((block) => block && typeof block === "object" && block.type === "text")
+      .map((block) => String(block.text ?? ""))
+      .join("\n")
+      .trim();
+    return text ? `${text}\n` : "";
+  }
+
+  if (ev.type === "result") {
+    const result = String(ev.result ?? "").trim();
+    return result ? `${result}\n` : "";
+  }
+
+  if (ev.type === "error") {
+    const message = String(ev.error?.message ?? "Unknown error").trim();
+    return message ? `[error]\n${message}\n` : "";
+  }
+
+  return "";
 }
 
 // ── Window ───────────────────────────────────────────────────────
@@ -579,6 +922,7 @@ mainRPC = mainWindow.webview.rpc;
 mainWindow.on("close", () => {
   watcher.stop();
   approvals.stop();
+  taskRepository.close();
   Utils.quit();
 });
 

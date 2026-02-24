@@ -42,6 +42,13 @@ type FullFileLoadState = {
   message: string;
 };
 
+type SetFilesOptions = {
+  activeFile?: string | null;
+  scrollToActive?: boolean;
+};
+
+const MAX_AUTO_EXPANDED_FILES = 40;
+
 /**
  * Diff content panel — renders all changed files.
  * Each file can be collapsed/expanded independently.
@@ -68,6 +75,8 @@ export class DiffView {
   #openActionsFilePath: string | null = null;
   #onGlobalClick: (event: MouseEvent) => void;
   #onGlobalKeyDown: (event: KeyboardEvent) => void;
+  #fileSectionEls = new Map<string, HTMLDetailsElement>();
+  #fileActionsMenus = new Map<string, HTMLElement>();
 
   constructor(container: HTMLElement, callbacks: DiffViewCallbacks = {}) {
     this.#callbacks = callbacks;
@@ -81,13 +90,11 @@ export class DiffView {
       ) {
         return;
       }
-      this.#openActionsFilePath = null;
-      this.#renderDiff(false);
+      this.#closeActionsMenu();
     };
     this.#onGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || !this.#openActionsFilePath) return;
-      this.#openActionsFilePath = null;
-      this.#renderDiff(false);
+      this.#closeActionsMenu();
     };
 
     this.#filesToggleBtn = h("button", {
@@ -143,15 +150,19 @@ export class DiffView {
     document.addEventListener("keydown", this.#onGlobalKeyDown);
   }
 
-  setFiles(files: DiffFile[]): void {
+  setFiles(files: DiffFile[], options: SetFilesOptions = {}): void {
     this.#files = files;
+    const autoExpandByDefault = files.length <= MAX_AUTO_EXPANDED_FILES;
     const nextPaths = new Set(files.map((file) => file.path));
     const nextExpanded = new Map<string, boolean>();
     const nextVisible = new Set<string>();
     const nextFullState = new Map<string, FullFileLoadState>();
     const nextRequestIds = new Map<string, number>();
     for (const file of files) {
-      nextExpanded.set(file.path, this.#fileExpanded.get(file.path) ?? true);
+      nextExpanded.set(
+        file.path,
+        this.#fileExpanded.get(file.path) ?? autoExpandByDefault
+      );
       if (this.#fullFileVisible.has(file.path)) {
         nextVisible.add(file.path);
       }
@@ -168,19 +179,49 @@ export class DiffView {
     this.#fullFileVisible = nextVisible;
     this.#fullFileLoadState = nextFullState;
     this.#fullFileRequestIds = nextRequestIds;
+    if (options.activeFile !== undefined) {
+      this.#activeFile = options.activeFile && nextPaths.has(options.activeFile)
+        ? options.activeFile
+        : null;
+    }
     if (this.#activeFile && !files.some((f) => f.path === this.#activeFile)) {
       this.#activeFile = null;
+    }
+    if (this.#activeFile) {
+      this.#fileExpanded.set(this.#activeFile, true);
     }
     if (this.#openActionsFilePath && !nextPaths.has(this.#openActionsFilePath)) {
       this.#openActionsFilePath = null;
     }
-    this.#renderDiff();
+    this.#renderDiff(options.scrollToActive ?? true);
   }
 
   showFile(path: string): void {
+    const previousActive = this.#activeFile;
     this.#activeFile = path;
     this.#fileExpanded.set(path, true);
-    this.#renderDiff();
+
+    if (this.#fileSectionEls.size === 0) {
+      this.#renderDiff();
+      this.#scrollToFile(path);
+      return;
+    }
+
+    if (previousActive && previousActive !== path) {
+      this.#fileSectionEls.get(previousActive)?.classList.remove("active");
+    }
+
+    const target = this.#fileSectionEls.get(path);
+    if (!target) {
+      this.#renderDiff();
+      this.#scrollToFile(path);
+      return;
+    }
+
+    target.classList.add("active");
+    if (!target.open) {
+      target.open = true;
+    }
     this.#scrollToFile(path);
   }
 
@@ -191,24 +232,22 @@ export class DiffView {
     this.#fullFileVisible.clear();
     this.#fullFileLoadState.clear();
     this.#fullFileRequestIds.clear();
+    this.#fileSectionEls.clear();
+    this.#fileActionsMenus.clear();
     this.#openActionsFilePath = null;
     const label = this.#toolbarEl.querySelector(".dv-file-label");
     if (label) label.textContent = "";
-    clearChildren(this.#contentEl);
-    this.#contentEl.appendChild(
-      h("div", { class: "dv-empty" }, ["No changes"])
-    );
+    this.#contentEl.replaceChildren(h("div", { class: "dv-empty" }, ["No changes"]));
   }
 
   #renderDiff(scrollToActive = true): void {
-    clearChildren(this.#contentEl);
     const label = this.#toolbarEl.querySelector(".dv-file-label");
+    this.#fileSectionEls.clear();
+    this.#fileActionsMenus.clear();
 
     if (this.#files.length === 0) {
       if (label) label.textContent = "";
-      this.#contentEl.appendChild(
-        h("div", { class: "dv-empty" }, ["No changes"])
-      );
+      this.#contentEl.replaceChildren(h("div", { class: "dv-empty" }, ["No changes"]));
       return;
     }
 
@@ -216,9 +255,11 @@ export class DiffView {
       label.textContent = `${this.#files.length} file${this.#files.length !== 1 ? "s" : ""} changed`;
     }
 
+    const fragment = document.createDocumentFragment();
     for (const file of this.#files) {
-      this.#contentEl.appendChild(this.#renderFileSection(file));
+      fragment.appendChild(this.#renderFileSection(file));
     }
+    this.#contentEl.replaceChildren(fragment);
 
     if (scrollToActive && this.#activeFile) {
       this.#scrollToFile(this.#activeFile);
@@ -243,9 +284,6 @@ export class DiffView {
       dataset: { filePath: file.path },
     }) as HTMLDetailsElement;
     details.open = this.#fileExpanded.get(file.path) ?? true;
-    details.addEventListener("toggle", () => {
-      this.#fileExpanded.set(file.path, details.open);
-    });
 
     details.appendChild(
       h("summary", { class: "dv-file-summary" }, [
@@ -260,22 +298,33 @@ export class DiffView {
     );
 
     const body = h("div", { class: "dv-file-body" });
-    if (file.isBinary) {
-      body.appendChild(h("div", { class: "dv-file-empty" }, ["Binary file changed"]));
-    } else if (file.hunks.length === 0) {
-      body.appendChild(h("div", { class: "dv-file-empty" }, ["Empty diff"]));
-    } else if (this.#viewMode === "unified") {
-      body.appendChild(this.#buildUnifiedTable(file));
-    } else {
-      body.appendChild(this.#buildSplitTable(file));
-    }
+    const renderBody = () => {
+      clearChildren(body);
+      if (!details.open) return;
 
-    const fullFileView = this.#renderFullFileView(file.path);
-    if (fullFileView) {
-      body.appendChild(fullFileView);
-    }
+      if (file.isBinary) {
+        body.appendChild(h("div", { class: "dv-file-empty" }, ["Binary file changed"]));
+      } else if (file.hunks.length === 0) {
+        body.appendChild(h("div", { class: "dv-file-empty" }, ["Empty diff"]));
+      } else if (this.#viewMode === "unified") {
+        body.appendChild(this.#buildUnifiedTable(file));
+      } else {
+        body.appendChild(this.#buildSplitTable(file));
+      }
+
+      const fullFileView = this.#renderFullFileView(file.path);
+      if (fullFileView) {
+        body.appendChild(fullFileView);
+      }
+    };
+    details.addEventListener("toggle", () => {
+      this.#fileExpanded.set(file.path, details.open);
+      renderBody();
+    });
+    renderBody();
 
     details.appendChild(body);
+    this.#fileSectionEls.set(file.path, details);
     return details;
   }
 
@@ -318,25 +367,25 @@ export class DiffView {
     actions.addEventListener("click", (event) => event.stopPropagation());
     actions.appendChild(menuButton);
     actions.appendChild(menu);
+    this.#fileActionsMenus.set(file.path, menu);
     return actions;
   }
 
   #toggleFileActionsMenu(path: string): void {
-    this.#openActionsFilePath = this.#openActionsFilePath === path ? null : path;
-    this.#renderDiff(false);
+    this.#setOpenActionsFilePath(this.#openActionsFilePath === path ? null : path);
   }
 
   #toggleShowFullFile(path: string): void {
     if (this.#fullFileVisible.has(path)) {
       this.#fullFileVisible.delete(path);
-      this.#renderDiff(false);
+      this.#rerenderFileSection(path);
       return;
     }
 
     this.#fullFileVisible.add(path);
     const existing = this.#fullFileLoadState.get(path);
     if (existing?.status === "loaded" || existing?.status === "loading") {
-      this.#renderDiff(false);
+      this.#rerenderFileSection(path);
       return;
     }
 
@@ -348,7 +397,7 @@ export class DiffView {
         isBinary: false,
         message: "Show full is unavailable",
       });
-      this.#renderDiff(false);
+      this.#rerenderFileSection(path);
       return;
     }
 
@@ -361,7 +410,7 @@ export class DiffView {
       isBinary: false,
       message: "",
     });
-    this.#renderDiff(false);
+    this.#rerenderFileSection(path);
 
     void this.#callbacks
       .onRequestFullFile(path)
@@ -374,7 +423,7 @@ export class DiffView {
           isBinary: result.isBinary,
           message: "",
         });
-        this.#renderDiff(false);
+        this.#rerenderFileSection(path);
       })
       .catch((error: unknown) => {
         if (this.#fullFileRequestIds.get(path) !== requestId) return;
@@ -388,7 +437,7 @@ export class DiffView {
           isBinary: false,
           message,
         });
-        this.#renderDiff(false);
+        this.#rerenderFileSection(path);
       });
   }
 
@@ -463,7 +512,6 @@ export class DiffView {
 
       for (const line of hunk.lines) {
         const lineClass = `diff-line diff-${line.type}`;
-        const prefix = { add: "+", delete: "-", context: " " }[line.type];
         const lineNo = line.type === "add"
           ? line.newLineNo
           : line.type === "delete"
@@ -477,14 +525,16 @@ export class DiffView {
             ]),
             h("td", {
               class: "line-content",
-              innerHTML: renderUnifiedLineContent(prefix, line.content, line.type, file.path),
+              innerHTML: line.content
+                ? highlightCodeLine(line.content, file.path)
+                : "&nbsp;",
             }),
           ])
         );
       }
     }
 
-    return table;
+    return h("div", { class: "diff-block" }, [table]);
   }
 
   #buildSplitTable(file: DiffFile): HTMLElement {
@@ -512,21 +562,25 @@ export class DiffView {
             ]),
             h("td", {
               class: `line-content${leftLineClass}`,
-              innerHTML: left ? highlightCodeLine(left.content, file.path) : "",
+              innerHTML: left
+                ? (left.content ? highlightCodeLine(left.content, file.path) : "&nbsp;")
+                : "",
             }),
             h("td", { class: `line-no${rightLineClass}` }, [
               right?.newLineNo != null ? String(right.newLineNo) : "",
             ]),
             h("td", {
               class: `line-content${rightLineClass}`,
-              innerHTML: right ? highlightCodeLine(right.content, file.path) : "",
+              innerHTML: right
+                ? (right.content ? highlightCodeLine(right.content, file.path) : "&nbsp;")
+                : "",
             }),
           ])
         );
       }
     }
 
-    return table;
+    return h("div", { class: "diff-block" }, [table]);
   }
 
   #setViewMode(mode: "unified" | "split"): void {
@@ -539,12 +593,57 @@ export class DiffView {
 
   #scrollToFile(path: string): void {
     requestAnimationFrame(() => {
-      const target = Array.from(
-        this.#contentEl.querySelectorAll<HTMLElement>(".dv-file-section")
-      ).find((el) => el.dataset.filePath === path);
+      const target = this.#fileSectionEls.get(path);
       if (!target) return;
       target.scrollIntoView({ block: "nearest" });
     });
+  }
+
+  #setOpenActionsFilePath(path: string | null): void {
+    const previousPath = this.#openActionsFilePath;
+    if (previousPath === path) return;
+
+    this.#openActionsFilePath = path;
+    let updated = true;
+
+    if (previousPath) {
+      const previousMenu = this.#fileActionsMenus.get(previousPath);
+      if (previousMenu) {
+        previousMenu.hidden = true;
+      } else {
+        updated = false;
+      }
+    }
+
+    if (path) {
+      const nextMenu = this.#fileActionsMenus.get(path);
+      if (nextMenu) {
+        nextMenu.hidden = false;
+      } else {
+        updated = false;
+      }
+    }
+
+    if (!updated) {
+      this.#renderDiff(false);
+    }
+  }
+
+  #closeActionsMenu(): void {
+    if (!this.#openActionsFilePath) return;
+    this.#setOpenActionsFilePath(null);
+  }
+
+  #rerenderFileSection(path: string): void {
+    const current = this.#fileSectionEls.get(path);
+    const file = this.#files.find((entry) => entry.path === path);
+    if (!current || !file) {
+      this.#renderDiff(false);
+      return;
+    }
+
+    const next = this.#renderFileSection(file);
+    current.replaceWith(next);
   }
 
   setFilesPanelVisible(visible: boolean): void {
@@ -637,24 +736,6 @@ function pairLines(lines: DiffLine[]): [DiffLine | null, DiffLine | null][] {
 
   flush();
   return result;
-}
-
-function renderUnifiedLineContent(
-  prefix: string,
-  content: string,
-  type: DiffLine["type"],
-  filePath: string
-): string {
-  const prefixClass =
-    type === "add"
-      ? "dv-diff-prefix-add"
-      : type === "delete"
-      ? "dv-diff-prefix-del"
-      : "dv-diff-prefix-context";
-
-  const safePrefix = escapeHtml(prefix);
-  const highlighted = highlightCodeLine(content, filePath);
-  return `<span class="dv-diff-prefix ${prefixClass}">${safePrefix}</span>${highlighted}`;
 }
 
 function highlightCodeLine(content: string, filePath: string): string {
