@@ -274,11 +274,14 @@ export type InstalledPlugin = {
 };
 
 export type TaskCardStatus =
+  | "todo"
+  | "in_progress"
   | "draft"
   | "planned"
   | "running"
   | "done"
   | "blocked"
+  | "blocked_by"
   | "archived";
 
 export type TaskAction = "improve" | "plan" | "execute";

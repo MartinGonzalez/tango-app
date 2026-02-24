@@ -578,6 +578,36 @@ function init(): void {
         await loadTaskDetail(next.id, true);
       }
     },
+    onOpenSession: async (taskId) => {
+      const state = appState.get();
+      const detail = state.selectedTaskDetail?.id === taskId
+        ? state.selectedTaskDetail
+        : await (rpc as any).request.getTaskDetail({ taskId });
+
+      if (!detail) {
+        throw new Error("Task not found");
+      }
+
+      const sessionId = String(detail.lastRun?.sessionId ?? "").trim();
+      if (!sessionId) {
+        throw new Error("No session found for this task");
+      }
+
+      const expanded = new Set(appState.get().expandedWorkspaces);
+      expanded.add(detail.workspacePath);
+      appState.update((s) => ({
+        ...s,
+        viewMode: "workspaces",
+        activeWorkspace: detail.workspacePath,
+        activeSessionId: sessionId,
+        expandedWorkspaces: expanded,
+      }));
+
+      await loadSessionTranscript(sessionId);
+      void loadSessionHistory(detail.workspacePath);
+      await loadDiff(detail.workspacePath);
+      ensureBranchHistory(detail.workspacePath);
+    },
     onAddSource: async (taskId, payload) => {
       await (rpc as any).request.addTaskSource({
         taskId,

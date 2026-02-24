@@ -1,4 +1,5 @@
 import { clearChildren, h } from "../lib/dom.ts";
+import { renderMarkdown } from "./chat-view.ts";
 import type {
   TaskAction,
   TaskCardDetail,
@@ -19,9 +20,15 @@ type TaskSourcePatch = {
   url?: string | null;
 };
 
+type TaskFieldUiState = {
+  contentMode: "edit" | "rendered";
+  expanded: boolean;
+};
+
 export type TasksViewCallbacks = {
   onUpdateTask: (taskId: string, patch: TaskPatch) => Promise<void>;
   onDeleteTask: (taskId: string) => Promise<void>;
+  onOpenSession: (taskId: string) => Promise<void>;
   onAddSource: (
     taskId: string,
     payload: {
@@ -66,6 +73,8 @@ export class TasksView {
     content?: string | null;
     url?: string | null;
   }>();
+  #taskFieldUi = new Map<string, TaskFieldUiState>();
+  #deleteTaskConfirmOpen = false;
 
   constructor(container: HTMLElement, callbacks: TasksViewCallbacks) {
     this.#callbacks = callbacks;
@@ -128,10 +137,34 @@ export class TasksView {
 
     const pendingImprove = this.#pendingImproveByTask.get(task.id) ?? null;
     const taskDraft = this.#taskDrafts.get(task.id);
+    const notesContentValue = taskDraft?.notes ?? task.notes;
+    const planContentValue = taskDraft?.planMarkdown ?? task.planMarkdown ?? "";
+    const taskFieldUi = this.#getTaskFieldUi(task.id, {
+      notes: notesContentValue,
+      planMarkdown: planContentValue,
+    });
+    const isRenderedMode = taskFieldUi.contentMode === "rendered";
     const runningAction = task.lastRun?.status === "running"
       ? task.lastRun.action
       : null;
+    const isInProgressTask = task.status === "in_progress" || task.status === "running";
+    const isDoneTask = task.status === "done";
+    const useSessionActions = isInProgressTask || isDoneTask;
+    const isReadOnlyTask = useSessionActions;
+    const isImproveOrPlanRunning = task.lastRun?.status === "running"
+      && (task.lastRun.action === "improve" || task.lastRun.action === "plan");
     const isTaskBusy = Boolean(runningAction) || this.#hasActionInFlight(task.id);
+    const deleteKey = `${task.id}:delete`;
+    const openSessionKey = `${task.id}:open-session`;
+    const markDoneKey = `${task.id}:mark-done`;
+    const improveKey = `${task.id}:improve`;
+    const planKey = `${task.id}:plan`;
+    const deleteBusy = this.#actionInFlight.has(deleteKey);
+    const openSessionBusy = this.#actionInFlight.has(openSessionKey);
+    const markDoneBusy = this.#actionInFlight.has(markDoneKey);
+    const improveOrPlanInFlight = this.#actionInFlight.has(improveKey) || this.#actionInFlight.has(planKey);
+    const canDelete = !isImproveOrPlanRunning && !improveOrPlanInFlight && !deleteBusy;
+    const hasOpenSession = String(task.lastRun?.sessionId ?? "").trim().length > 0;
     const bannerError = this.#lastError
       ?? (
         task.lastRun?.status === "failed"
@@ -151,6 +184,7 @@ export class TasksView {
         this.#queueTaskPatch(task.id, { title: value });
       },
       onblur: () => this.#clearTaskDraftFields(task.id, ["title"]),
+      disabled: isReadOnlyTask,
     }) as HTMLInputElement;
 
     const notesInput = h("textarea", {
@@ -166,6 +200,8 @@ export class TasksView {
       onblur: () => this.#clearTaskDraftFields(task.id, ["notes"]),
     }) as HTMLTextAreaElement;
     notesInput.value = taskDraft?.notes ?? task.notes;
+    notesInput.disabled = isReadOnlyTask;
+    notesInput.className = `tasks-textarea${taskFieldUi.expanded ? " tasks-textarea-expanded" : ""}`;
 
     const planInput = h("textarea", {
       class: "tasks-textarea tasks-plan-textarea",
@@ -180,12 +216,15 @@ export class TasksView {
       onblur: () => this.#clearTaskDraftFields(task.id, ["planMarkdown"]),
     }) as HTMLTextAreaElement;
     planInput.value = taskDraft?.planMarkdown ?? task.planMarkdown ?? "";
+    planInput.disabled = isReadOnlyTask;
+    planInput.className = `tasks-textarea tasks-plan-textarea${taskFieldUi.expanded ? " tasks-textarea-expanded" : ""}`;
 
     const sourceUrlInput = h("input", {
       class: "tasks-input",
       type: "url",
       "data-focus-id": `task:${task.id}:source-create-url`,
       placeholder: "https://jira... or https://slack...",
+      disabled: isReadOnlyTask,
     }) as HTMLInputElement;
 
     const sources = h("div", { class: "tasks-sources" });
@@ -201,39 +240,103 @@ export class TasksView {
           fetchStatus: source.fetchStatus,
           httpStatus: source.httpStatus,
           error: source.error,
-        }));
+        }, isReadOnlyTask));
       }
     }
 
+    const actionMain = useSessionActions
+      ? h("div", { class: "tasks-action-main" }, [
+          h("button", {
+            class: "tasks-btn tasks-btn-primary",
+            disabled: openSessionBusy || !hasOpenSession,
+            onclick: async () => {
+              if (this.#actionInFlight.has(openSessionKey)) return;
+              this.#actionInFlight.add(openSessionKey);
+              this.#renderContent();
+              try {
+                await this.#callbacks.onOpenSession(task.id);
+                this.#lastError = null;
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.#lastError = message || "Failed to open task session";
+              } finally {
+                this.#actionInFlight.delete(openSessionKey);
+                this.#renderContent();
+              }
+            },
+          }, [openSessionBusy ? "Opening..." : "Open Session"]),
+          isInProgressTask
+            ? h("button", {
+                class: "tasks-btn tasks-btn-primary",
+                disabled: markDoneBusy || isImproveOrPlanRunning,
+                onclick: async () => {
+                  if (this.#actionInFlight.has(markDoneKey)) return;
+                  this.#actionInFlight.add(markDoneKey);
+                  this.#renderContent();
+                  try {
+                    await this.#flushTaskPatch(task.id);
+                    await this.#callbacks.onUpdateTask(task.id, { status: "done" });
+                    this.#lastError = null;
+                  } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    this.#lastError = message || "Failed to mark task as done";
+                  } finally {
+                    this.#actionInFlight.delete(markDoneKey);
+                    this.#renderContent();
+                  }
+                },
+              }, [markDoneBusy ? "Marking..." : "Mark As done"])
+            : h("div", { hidden: true }),
+        ])
+      : h("div", { class: "tasks-action-main" }, [
+          this.#actionButton(
+            task,
+            "improve",
+            "Improve Task",
+            isTaskBusy,
+            runningAction
+          ),
+          this.#actionButton(
+            task,
+            "plan",
+            "Plan Task",
+            isTaskBusy,
+            runningAction
+          ),
+          this.#actionButton(
+            task,
+            "execute",
+            "Execute Task",
+            isTaskBusy,
+            runningAction
+          ),
+        ]);
+
     const actions = h("div", { class: "tasks-action-row" }, [
-      this.#actionButton(
-        task,
-        "improve",
-        "Improve Task",
-        isTaskBusy,
-        runningAction
-      ),
-      this.#actionButton(
-        task,
-        "plan",
-        "Plan Task",
-        isTaskBusy,
-        runningAction
-      ),
-      this.#actionButton(
-        task,
-        "execute",
-        "Execute Task",
-        isTaskBusy,
-        runningAction
-      ),
-      h("button", {
-        class: "tasks-btn tasks-btn-danger",
-        disabled: isTaskBusy,
-        onclick: async () => {
-          await this.#callbacks.onDeleteTask(task.id);
-        },
-      }, ["Delete Task"]),
+      actionMain,
+      h("div", { class: "tasks-action-danger" }, [
+        h("button", {
+          class: "tasks-btn tasks-btn-danger",
+          disabled: !canDelete,
+          onclick: async () => {
+            if (this.#actionInFlight.has(deleteKey)) return;
+            const confirmed = await this.#confirmTaskDeletion(taskDraft?.title ?? task.title);
+            if (!confirmed) return;
+            this.#actionInFlight.add(deleteKey);
+            this.#renderContent();
+            try {
+              await this.#callbacks.onDeleteTask(task.id);
+              this.#lastError = null;
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              this.#lastError = message || "Failed to delete task";
+            } finally {
+              this.#actionInFlight.delete(deleteKey);
+              this.#renderContent();
+            }
+          },
+        }, [deleteBusy ? "Deleting..." : "Delete Task"]),
+      ]),
     ]);
 
     this.#bodyEl.appendChild(
@@ -242,18 +345,55 @@ export class TasksView {
           ? h("div", { class: "tasks-error-banner" }, [bannerError])
           : h("div", { class: "tasks-error-banner", hidden: true }),
         h("div", { class: "tasks-card-header" }, [
-          h("span", { class: `tasks-status tasks-status-${task.status}` }, [task.status]),
-          h("span", { class: "tasks-updated" }, [`Updated ${timeAgo(task.updatedAt)}`]),
+          h("span", { class: `tasks-status tasks-status-${task.status}` }, [formatTaskStatusLabel(task.status)]),
+          h("div", { class: "tasks-card-header-right" }, [
+            h("div", { class: "tasks-content-toolbar" }, [
+              h("div", { class: "tasks-field-view-toggle" }, [
+                h("button", {
+                  class: `tasks-field-btn${taskFieldUi.contentMode === "edit" ? " active" : ""}`,
+                  type: "button",
+                  onclick: () => {
+                    this.#setTaskFieldUi(task.id, { contentMode: "edit" });
+                    this.#renderContent();
+                  },
+                }, ["Edit"]),
+                h("button", {
+                  class: `tasks-field-btn${taskFieldUi.contentMode === "rendered" ? " active" : ""}`,
+                  type: "button",
+                  onclick: () => {
+                    this.#setTaskFieldUi(task.id, { contentMode: "rendered" });
+                    this.#renderContent();
+                  },
+                }, ["Rendered"]),
+              ]),
+              h("button", {
+                class: "tasks-field-btn",
+                type: "button",
+                onclick: () => {
+                  this.#setTaskFieldUi(task.id, { expanded: !taskFieldUi.expanded });
+                  this.#renderContent();
+                },
+              }, [taskFieldUi.expanded ? "Collapse" : "Expand"]),
+            ]),
+            h("span", { class: "tasks-updated" }, [`Updated ${timeAgo(task.updatedAt)}`]),
+          ]),
         ]),
         h("div", { class: "tasks-field" }, [
           h("label", { class: "tasks-label" }, ["Title"]),
           titleInput,
         ]),
-        h("div", { class: "tasks-field" }, [
+        h("div", { class: `tasks-field${taskFieldUi.expanded ? " tasks-field-expanded" : ""}` }, [
           h("label", { class: "tasks-label" }, ["Notes"]),
-          notesInput,
+          isRenderedMode
+            ? h("div", {
+                class: `tasks-markdown${taskFieldUi.expanded ? " is-expanded" : ""}`,
+                innerHTML: renderMarkdown(
+                  hasText(notesContentValue) ? notesContentValue : "_No notes yet_"
+                ),
+              })
+            : notesInput,
         ]),
-        pendingImprove
+        pendingImprove && !useSessionActions
           ? h("div", { class: "tasks-field tasks-improve-proposal" }, [
               h("label", { class: "tasks-label" }, ["Improve Preview"]),
               h("div", { class: "tasks-run-status" }, [
@@ -294,9 +434,16 @@ export class TasksView {
               ]),
             ])
           : h("div", { hidden: true }),
-        h("div", { class: "tasks-field" }, [
+        h("div", { class: `tasks-field${taskFieldUi.expanded ? " tasks-field-expanded" : ""}` }, [
           h("label", { class: "tasks-label" }, ["Plan"]),
-          planInput,
+          isRenderedMode
+            ? h("div", {
+                class: `tasks-markdown${taskFieldUi.expanded ? " is-expanded" : ""}`,
+                innerHTML: renderMarkdown(
+                  hasText(planContentValue) ? planContentValue : "_No plan yet_"
+                ),
+              })
+            : planInput,
         ]),
         h("div", { class: "tasks-field" }, [
           h("label", { class: "tasks-label" }, ["Sources"]),
@@ -304,6 +451,7 @@ export class TasksView {
             sourceUrlInput,
             h("button", {
               class: "tasks-btn",
+              disabled: isReadOnlyTask,
               onclick: async () => {
                 const url = sourceUrlInput.value.trim();
                 if (!url) return;
@@ -317,6 +465,7 @@ export class TasksView {
             }, ["Add URL"]),
             h("button", {
               class: "tasks-btn",
+              disabled: isReadOnlyTask,
               onclick: async () => {
                 await this.#callbacks.onAddSource(task.id, {
                   kind: "manual",
@@ -327,7 +476,7 @@ export class TasksView {
           ]),
           sources,
         ]),
-        runningAction
+        formatRunningAction(runningAction)
           ? h("div", { class: "tasks-run-status" }, [formatRunningAction(runningAction)])
           : h("div", { class: "tasks-run-status", hidden: true }),
         actions,
@@ -348,7 +497,8 @@ export class TasksView {
       fetchStatus: string;
       httpStatus: number | null;
       error: string | null;
-    }
+    },
+    readOnly: boolean
   ): HTMLElement {
     const urlInput = h("input", {
       class: "tasks-input tasks-source-url",
@@ -364,6 +514,7 @@ export class TasksView {
         });
       },
       onblur: () => this.#clearSourceDraftFields(sourceId, ["url"]),
+      disabled: readOnly,
     }) as HTMLInputElement;
 
     const titleInput = h("input", {
@@ -380,6 +531,7 @@ export class TasksView {
         });
       },
       onblur: () => this.#clearSourceDraftFields(sourceId, ["title"]),
+      disabled: readOnly,
     }) as HTMLInputElement;
 
     const contentInput = h("textarea", {
@@ -395,6 +547,7 @@ export class TasksView {
         });
       },
       onblur: () => this.#clearSourceDraftFields(sourceId, ["content"]),
+      disabled: readOnly,
     }) as HTMLTextAreaElement;
     contentInput.value = this.#sourceDrafts.get(sourceId)?.content ?? source.content ?? "";
 
@@ -418,6 +571,7 @@ export class TasksView {
       h("div", { class: "tasks-source-actions" }, [
         h("button", {
           class: "tasks-btn",
+          disabled: readOnly,
           onclick: async () => {
             await this.#flushSourcePatch(sourceId);
             await this.#callbacks.onFetchSource(sourceId);
@@ -425,6 +579,7 @@ export class TasksView {
         }, ["Fetch"]),
         h("button", {
           class: "tasks-btn tasks-btn-danger",
+          disabled: readOnly,
           onclick: async () => {
             await this.#flushSourcePatch(sourceId);
             await this.#callbacks.onRemoveSource(sourceId);
@@ -449,7 +604,7 @@ export class TasksView {
       ? "Improving..."
       : action === "plan"
         ? "Planning..."
-        : "Executing...";
+        : label;
 
     return h("button", {
       class: "tasks-btn tasks-btn-primary",
@@ -550,6 +705,30 @@ export class TasksView {
     this.#sourceDrafts.set(sourceId, { ...prev, ...draft });
   }
 
+  #getTaskFieldUi(taskId: string, seed?: {
+    notes?: string | null;
+    planMarkdown?: string | null;
+  }): TaskFieldUiState {
+    const existing = this.#taskFieldUi.get(taskId);
+    if (existing) return existing;
+
+    const hasContent = hasText(seed?.notes) || hasText(seed?.planMarkdown);
+    const initial: TaskFieldUiState = {
+      contentMode: hasContent ? "rendered" : "edit",
+      expanded: false,
+    };
+    this.#taskFieldUi.set(taskId, initial);
+    return initial;
+  }
+
+  #setTaskFieldUi(taskId: string, patch: Partial<TaskFieldUiState>): void {
+    const prev = this.#getTaskFieldUi(taskId);
+    this.#taskFieldUi.set(taskId, {
+      ...prev,
+      ...patch,
+    });
+  }
+
   #clearTaskDraftFields(taskId: string, fields: Array<"title" | "notes" | "planMarkdown">): void {
     const draft = this.#taskDrafts.get(taskId);
     if (!draft) return;
@@ -639,6 +818,69 @@ export class TasksView {
     return false;
   }
 
+  async #confirmTaskDeletion(taskTitle: string): Promise<boolean> {
+    if (this.#deleteTaskConfirmOpen) return false;
+    this.#deleteTaskConfirmOpen = true;
+
+    return await new Promise<boolean>((resolve) => {
+      const titleId = "task-delete-confirm-title";
+      const overlay = h("div", { class: "ws-confirm-overlay" });
+      const cancelBtn = h("button", {
+        class: "ws-confirm-btn",
+        type: "button",
+      }, ["Cancel"]) as HTMLButtonElement;
+      const deleteBtn = h("button", {
+        class: "ws-confirm-btn ws-confirm-btn-danger",
+        type: "button",
+      }, ["Delete"]) as HTMLButtonElement;
+      const safeTitle = collapseWhitespace(taskTitle || "Untitled task");
+
+      const dialog = h("div", {
+        class: "ws-confirm-dialog",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-labelledby": titleId,
+      }, [
+        h("div", { class: "ws-confirm-title", id: titleId }, ["Delete task"]),
+        h("div", { class: "ws-confirm-text" }, [
+          `Delete "${safeTitle}"? This action cannot be undone.`,
+        ]),
+        h("div", { class: "ws-confirm-actions" }, [cancelBtn, deleteBtn]),
+      ]);
+
+      let settled = false;
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        document.removeEventListener("keydown", onKeyDown, true);
+        this.#deleteTaskConfirmOpen = false;
+        resolve(result);
+      };
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          finish(true);
+        }
+      };
+
+      cancelBtn.addEventListener("click", () => finish(false));
+      deleteBtn.addEventListener("click", () => finish(true));
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) finish(false);
+      });
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+      document.addEventListener("keydown", onKeyDown, true);
+      cancelBtn.focus();
+    });
+  }
+
   get element(): HTMLElement {
     return this.#el;
   }
@@ -712,8 +954,24 @@ function hasText(value: string | null | undefined): boolean {
   return String(value ?? "").trim().length > 0;
 }
 
-function formatRunningAction(action: TaskAction): string {
+function collapseWhitespace(value: string): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function formatRunningAction(action: TaskAction | null): string | null {
+  if (!action) return null;
   if (action === "improve") return "Improving task in background...";
   if (action === "plan") return "Planning task in background...";
-  return "Executing task...";
+  return null;
+}
+
+function formatTaskStatusLabel(status: string): string {
+  const value = String(status ?? "");
+  if (value === "todo") return "Todo";
+  if (value === "in_progress") return "In progress";
+  if (value === "blocked_by") return "Blocked by";
+  if (value === "draft") return "Todo";
+  if (value === "planned") return "Todo";
+  if (value === "running") return "In progress";
+  return value.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }

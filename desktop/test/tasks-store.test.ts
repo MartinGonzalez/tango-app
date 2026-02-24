@@ -53,7 +53,7 @@ describe("TasksStore", () => {
 
     const created = store.createTask("/repo/a", "Task A", "notes");
     expect(created.title).toBe("Task A");
-    expect(created.status).toBe("draft");
+    expect(created.status).toBe("todo");
 
     const updated = store.updateTask(created.id, {
       notesMd: "notes updated",
@@ -61,7 +61,7 @@ describe("TasksStore", () => {
       planMd: "# Plan",
     });
     expect(updated?.notes).toBe("notes updated");
-    expect(updated?.status).toBe("planned");
+    expect(updated?.status).toBe("todo");
 
     const source = store.addTaskSource(created.id, "url", "https://example.com", "raw");
     expect(source.kind).toBe("url");

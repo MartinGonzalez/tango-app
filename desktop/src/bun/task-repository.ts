@@ -177,7 +177,7 @@ export class TaskRepository {
       throw new Error(`Task not found: ${taskId}`);
     }
 
-    if (task.status === "running") {
+    if (task.status === "running" || task.status === "in_progress") {
       const runningExecute = this.#store.findRunningRun(taskId, "execute");
       if (runningExecute && !isStaleBackgroundRun(runningExecute.startedAt)) {
         throw new Error("Task is already running");
@@ -192,7 +192,7 @@ export class TaskRepository {
         });
       }
       this.#store.updateTask(task.id, {
-        status: "blocked",
+        status: "blocked_by",
       });
     }
 
@@ -219,7 +219,7 @@ export class TaskRepository {
 
     if (action === "execute") {
       this.#store.updateTask(task.id, {
-        status: "running",
+        status: "in_progress",
         lastAction: action,
         lastActionSessionId: null,
       });
@@ -345,7 +345,7 @@ export class TaskRepository {
 
     this.#store.updateTask(task.id, {
       planMd: mergedOutput,
-      status: "planned",
+      status: "todo",
       plannedAt: now,
       lastAction: run.action,
       lastActionSessionId: run.sessionId,
@@ -360,15 +360,15 @@ export class TaskRepository {
     now: string
   ): void {
     this.#store.updateTask(task.id, {
-      status: success ? "done" : "blocked",
-      executedAt: success ? now : null,
+      status: success ? "in_progress" : "blocked_by",
+      executedAt: null,
       lastAction: run.action,
       lastActionSessionId: run.sessionId,
     });
 
     const executionContext = [
       `run=${run.id}`,
-      `status=${success ? "done" : "blocked"}`,
+      `status=${success ? "in_progress" : "blocked_by"}`,
       `startedAt=${run.startedAt}`,
       `endedAt=${run.endedAt ?? now}`,
     ].join("\n");
@@ -381,7 +381,7 @@ export class TaskRepository {
     this.#store.createArtifact(task.id, null, "plan", task.planMarkdown ?? "");
     this.#store.updateTask(task.id, {
       planMd: null,
-      status: "draft",
+      status: "todo",
       plannedAt: null,
     });
   }

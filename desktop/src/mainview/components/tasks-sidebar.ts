@@ -20,6 +20,7 @@ export class TasksSidebar {
   #groups: TaskWorkspaceGroup[] = [];
   #selectedTaskId: string | null = null;
   #loading = false;
+  #collapsedWorkspacePaths = new Set<string>();
 
   constructor(container: HTMLElement, callbacks: TasksSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -77,18 +78,41 @@ export class TasksSidebar {
   }
 
   #renderGroup(group: TaskWorkspaceGroup): HTMLElement {
+    const isCollapsed = this.#collapsedWorkspacePaths.has(group.workspacePath);
+    const toggleCollapsed = () => {
+      if (this.#collapsedWorkspacePaths.has(group.workspacePath)) {
+        this.#collapsedWorkspacePaths.delete(group.workspacePath);
+      } else {
+        this.#collapsedWorkspacePaths.add(group.workspacePath);
+      }
+      this.#renderContent();
+    };
+
     const wrapper = h("div", { class: "task-group" }, [
-      h("div", { class: "task-group-header" }, [
+      h("div", {
+        class: `task-group-header${isCollapsed ? " is-collapsed" : ""}`,
+        role: "button",
+        tabindex: "0",
+        onclick: toggleCollapsed,
+        onkeydown: (event: KeyboardEvent) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          toggleCollapsed();
+        },
+      }, [
         h("span", { class: "task-group-title", title: group.workspacePath }, [group.workspaceName]),
         h("button", {
           class: "task-group-new-btn",
           title: "New task",
-          onclick: () => this.#callbacks.onCreateTask(group.workspacePath),
+          onclick: (event: Event) => {
+            event.stopPropagation();
+            this.#callbacks.onCreateTask(group.workspacePath);
+          },
         }, ["+"]),
       ]),
     ]);
 
-    const list = h("div", { class: "task-group-list" });
+    const list = h("div", { class: "task-group-list", hidden: isCollapsed });
 
     if (group.tasks.length === 0) {
       list.appendChild(h("div", { class: "task-group-empty" }, ["No tasks"]));
@@ -112,7 +136,7 @@ export class TasksSidebar {
     }, [
       h("span", { class: "task-row-title" }, [task.title]),
       h("div", { class: "task-row-meta" }, [
-        h("span", { class: `task-row-status task-status-${task.status}` }, [task.status]),
+        h("span", { class: `task-row-status task-status-${task.status}` }, [formatTaskStatusLabel(task.status)]),
         h("span", { class: "task-row-time" }, [timeAgo(task.updatedAt)]),
       ]),
     ]);
@@ -137,4 +161,15 @@ function timeAgo(iso: string): string {
 
   const days = Math.floor(hours / 24);
   return `${days}d`;
+}
+
+function formatTaskStatusLabel(status: string): string {
+  const value = String(status ?? "");
+  if (value === "todo") return "Todo";
+  if (value === "in_progress") return "In progress";
+  if (value === "blocked_by") return "Blocked by";
+  if (value === "draft") return "Todo";
+  if (value === "planned") return "Todo";
+  if (value === "running") return "In progress";
+  return value.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
 }

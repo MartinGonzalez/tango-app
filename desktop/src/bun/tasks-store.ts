@@ -131,7 +131,7 @@ export class TasksStore {
       id: row.id,
       workspacePath: row.workspace_path,
       title: row.title,
-      status: row.status as TaskCardStatus,
+      status: normalizeTaskStatus(row.status),
       updatedAt: row.updated_at,
       hasPlan: row.has_plan > 0,
     }));
@@ -201,7 +201,7 @@ export class TasksStore {
       title: taskRow.title,
       notes: taskRow.notes_md,
       planMarkdown: taskRow.plan_md,
-      status: taskRow.status as TaskCardStatus,
+      status: normalizeTaskStatus(taskRow.status),
       sources: sourceRows.map(mapSourceRow),
       lastRun: runRow ? mapRunRow(runRow) : null,
       createdAt: taskRow.created_at,
@@ -240,7 +240,7 @@ export class TasksStore {
         last_action,
         last_action_session_id,
         version
-      ) VALUES (?, ?, ?, ?, NULL, 'draft', ?, ?, NULL, NULL, NULL, NULL, 1)
+      ) VALUES (?, ?, ?, ?, NULL, 'todo', ?, ?, NULL, NULL, NULL, NULL, 1)
       `
     ).run(id, workspacePath, title, notesMd, now, now);
 
@@ -753,6 +753,23 @@ function mapRunRow(row: TaskRunRow): TaskRun {
     output: row.output_text,
     error: row.error_text,
   };
+}
+
+function normalizeTaskStatus(value: string): TaskCardStatus {
+  const status = String(value ?? "").trim();
+  if (status === "draft" || status === "planned") return "todo";
+  if (status === "running") return "in_progress";
+  if (status === "blocked") return "blocked_by";
+  if (
+    status === "todo"
+    || status === "in_progress"
+    || status === "done"
+    || status === "blocked_by"
+    || status === "archived"
+  ) {
+    return status;
+  }
+  return "todo";
 }
 
 function isoNow(): string {

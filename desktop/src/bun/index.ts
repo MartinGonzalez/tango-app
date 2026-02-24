@@ -73,6 +73,8 @@ const taskRunsBySession = new Map<string, {
 }>();
 const IMPROVE_TASK_MODEL = process.env.CLAUDE_TASK_IMPROVE_MODEL?.trim()
   || "claude-haiku-4-5-20251001";
+const PLAN_TASK_MODEL = process.env.CLAUDE_TASK_PLAN_MODEL?.trim()
+  || "opus";
 
 // ── Auto-start watcher server if needed ──────────────────────────
 
@@ -213,7 +215,9 @@ sessions.onError((sessionId, error) => {
   console.error(`Session ${sessionId} error:`, error);
   const taskRun = taskRunsBySession.get(sessionId);
   if (taskRun) {
-    taskRepository.appendRunOutput(taskRun.runId, `\n[error]\n${error}\n`);
+    if (taskRun.action === "execute") {
+      taskRepository.appendRunOutput(taskRun.runId, `\n[error]\n${error}\n`);
+    }
     if (taskRun.action !== "execute") {
       return;
     }
@@ -605,7 +609,11 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             true,
             undefined,
             [],
-            action === "improve" ? IMPROVE_TASK_MODEL : undefined,
+            action === "improve"
+              ? IMPROVE_TASK_MODEL
+              : action === "plan"
+                ? PLAN_TASK_MODEL
+                : undefined,
             action === "execute" ? undefined : []
           );
           sessionId = tempSessionId;
@@ -718,7 +726,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
 async function handleSessionEvent(sessionId: string, event: any): Promise<void> {
   const taskRun = taskRunsBySession.get(sessionId);
-  if (taskRun) {
+  if (taskRun && taskRun.action === "execute") {
     const chunk = extractTaskRunOutput(event);
     if (chunk) {
       taskRepository.appendRunOutput(taskRun.runId, chunk);
@@ -734,6 +742,10 @@ async function handleSessionEvent(sessionId: string, event: any): Promise<void> 
         });
       }
     }
+  }
+
+  if (taskRun && taskRun.action === "execute") {
+    finalizeExecuteTaskRunFromEvent(sessionId, taskRun, event);
   }
 
   if (taskRun && taskRun.action !== "execute") {
@@ -817,6 +829,43 @@ function finalizeBackgroundTaskRunFromEvent(
     sessions.kill(sessionId);
   }
   return true;
+}
+
+function finalizeExecuteTaskRunFromEvent(
+  sessionId: string,
+  taskRun: {
+    runId: string;
+    taskId: string;
+    action: TaskAction;
+    workspacePath: string;
+  },
+  event: unknown
+): void {
+  if (!event || typeof event !== "object") return;
+  const ev = event as Record<string, any>;
+  if (ev.type !== "result") return;
+
+  const isSuccess = ev.subtype === "success";
+  const isFailure = ev.subtype === "error";
+  if (!isSuccess && !isFailure) return;
+
+  taskRunsBySession.delete(sessionId);
+  try {
+    const output = isSuccess
+      ? String(ev.result ?? "").trim() || null
+      : null;
+    const error = isFailure
+      ? String(ev.error?.message ?? ev.result ?? "Task execution failed").trim() || "Task execution failed"
+      : null;
+    const { task } = taskRepository.finalizeRun(taskRun.runId, {
+      success: isSuccess,
+      output,
+      error,
+    });
+    notifyTasksChanged(task.workspacePath, task.id);
+  } catch (err) {
+    console.warn("Failed to finalize execute task run from result event:", err);
+  }
 }
 
 function extractTaskRunOutput(event: unknown): string {
