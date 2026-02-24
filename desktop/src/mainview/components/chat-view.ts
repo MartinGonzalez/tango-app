@@ -1632,6 +1632,7 @@ const LIST_ITEM_PATTERN = /^(\s*)(?:([-*+])|(\d+)\.)\s+(.*)$/;
 const BLOCKQUOTE_PATTERN = /^\s*>\s?(.*)$/;
 const HORIZONTAL_RULE_PATTERN = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const INLINE_PLACEHOLDER_PATTERN = /@@INLINEMDTOKEN(\d+)@@/g;
+type TableAlignment = "left" | "center" | "right";
 
 export function renderMarkdown(text: string): string {
   const normalized = String(text ?? "").replace(/\r\n?/g, "\n");
@@ -1696,6 +1697,13 @@ function renderMarkdownBlocks(source: string): string {
       continue;
     }
 
+    const table = tryRenderMarkdownTable(lines, i);
+    if (table) {
+      blocks.push(table.html);
+      i = table.nextIndex;
+      continue;
+    }
+
     if (BLOCKQUOTE_PATTERN.test(line)) {
       const quoteLines: string[] = [];
       while (i < lines.length) {
@@ -1752,6 +1760,66 @@ function renderMarkdownBlocks(source: string): string {
   }
 
   return blocks.join("");
+}
+
+function tryRenderMarkdownTable(
+  lines: string[],
+  startIndex: number
+): { html: string; nextIndex: number } | null {
+  if (startIndex + 1 >= lines.length) return null;
+  const headerLine = lines[startIndex];
+  const dividerLine = lines[startIndex + 1];
+
+  if (!headerLine.includes("|")) return null;
+  const headerCells = splitMarkdownTableRow(headerLine);
+  if (headerCells.length === 0) return null;
+
+  const alignments = parseMarkdownTableDivider(dividerLine, headerCells.length);
+  if (!alignments) return null;
+
+  let i = startIndex + 2;
+  const rowCells: string[][] = [];
+
+  while (i < lines.length) {
+    const rowLine = lines[i];
+    const rowTrimmed = rowLine.trim();
+    if (!rowTrimmed) break;
+    if (CODE_PLACEHOLDER_PATTERN.test(rowTrimmed)) break;
+    if (HEADING_PATTERN.test(rowTrimmed)) break;
+    if (HORIZONTAL_RULE_PATTERN.test(rowTrimmed)) break;
+    if (BLOCKQUOTE_PATTERN.test(rowLine)) break;
+    if (matchListItem(rowLine)) break;
+    if (!rowLine.includes("|")) break;
+
+    const parsed = splitMarkdownTableRow(rowLine);
+    if (parsed.length === 0) break;
+    rowCells.push(normalizeMarkdownTableRow(parsed, headerCells.length));
+    i++;
+  }
+
+  const headerHtml = normalizeMarkdownTableRow(headerCells, headerCells.length)
+    .map((cell, idx) => {
+      const alignClass = `md-align-${alignments[idx] ?? "left"}`;
+      return `<th class="${alignClass}">${renderInlineMarkdown(cell)}</th>`;
+    })
+    .join("");
+  const bodyHtml = rowCells
+    .map((cells) => {
+      const rowHtml = cells
+        .map((cell, idx) => {
+          const alignClass = `md-align-${alignments[idx] ?? "left"}`;
+          return `<td class="${alignClass}">${renderInlineMarkdown(cell)}</td>`;
+        })
+        .join("");
+      return `<tr>${rowHtml}</tr>`;
+    })
+    .join("");
+
+  const bodySection = bodyHtml ? `<tbody>${bodyHtml}</tbody>` : "";
+  return {
+    html: `<div class="md-table-wrap"><table class="md-table"><thead><tr>${headerHtml}</tr></thead>${bodySection}</table></div>`,
+    nextIndex: i,
+  };
 }
 
 function renderMarkdownList(
@@ -1855,6 +1923,79 @@ function matchListItem(
     ordered: Boolean(match[3]),
     content: String(match[4] ?? "").trim(),
   };
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [];
+
+  let row = trimmed;
+  if (row.startsWith("|")) row = row.slice(1);
+  if (row.endsWith("|")) row = row.slice(0, -1);
+
+  const cells: string[] = [];
+  let current = "";
+  let escaped = false;
+
+  for (const ch of row) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+
+  if (escaped) {
+    current += "\\";
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseMarkdownTableDivider(
+  line: string,
+  columnCount: number
+): TableAlignment[] | null {
+  const cells = splitMarkdownTableRow(line);
+  if (cells.length !== columnCount) return null;
+
+  const alignments: TableAlignment[] = [];
+  for (const rawCell of cells) {
+    const cell = rawCell.trim();
+    if (!/^:?-{3,}:?$/.test(cell)) return null;
+    const alignLeft = cell.startsWith(":");
+    const alignRight = cell.endsWith(":");
+    if (alignLeft && alignRight) {
+      alignments.push("center");
+    } else if (alignRight) {
+      alignments.push("right");
+    } else {
+      alignments.push("left");
+    }
+  }
+
+  return alignments;
+}
+
+function normalizeMarkdownTableRow(row: string[], targetLength: number): string[] {
+  if (row.length === targetLength) return row;
+  if (row.length > targetLength) return row.slice(0, targetLength);
+
+  const normalized = row.slice();
+  while (normalized.length < targetLength) {
+    normalized.push("");
+  }
+  return normalized;
 }
 
 function findNextNonEmptyLine(lines: string[], startIndex: number): number {

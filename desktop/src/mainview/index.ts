@@ -1,7 +1,16 @@
 import Electrobun, { Electroview } from "electrobun/view";
 import { Store } from "./lib/state.ts";
 import { h, qs } from "./lib/dom.ts";
-import { pluginToolIcon, tasksToolIcon } from "./lib/icons.ts";
+import {
+  connectorsToolIcon,
+  pluginToolIcon,
+  pullRequestsToolIcon,
+  tasksToolIcon,
+} from "./lib/icons.ts";
+import {
+  buildPullRequestFileReviewStateMap,
+  countSeenFiles,
+} from "./lib/pr-file-review.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
 import { Sidebar, type WorkspaceData } from "./components/sidebar.ts";
 import {
@@ -12,12 +21,21 @@ import {
   TasksSidebar,
   type TaskWorkspaceGroup,
 } from "./components/tasks-sidebar.ts";
+import {
+  PRsSidebar,
+  type PullRequestRepoGroup,
+  type PullRequestSidebarSection,
+} from "./components/prs-sidebar.ts";
+import { ConnectorsSidebar } from "./components/connectors-sidebar.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
+import { ConnectorsView } from "./components/connectors-view.ts";
 import { ChatView } from "./components/chat-view.ts";
 import { DiffView } from "./components/diff-view.ts";
-import { FilesPanel } from "./components/files-panel.ts";
+import { FilesPanel, type FileListView } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
+import { CommitModal } from "./components/commit-modal.ts";
 import { TasksView } from "./components/tasks-view.ts";
+import { PRView } from "./components/pr-view.ts";
 import type {
   SessionInfo,
   Snapshot,
@@ -26,6 +44,7 @@ import type {
   DiffFile,
   DiffScope,
   BranchCommit,
+  CommitContext,
   Activity,
   HistorySession,
   ToolApprovalRequest,
@@ -35,6 +54,13 @@ import type {
   TaskCardDetail,
   TaskCardSummary,
   TaskCardStatus,
+  ConnectorAuthSession,
+  ConnectorProvider,
+  PullRequestDetail,
+  PullRequestReviewThread,
+  PullRequestReviewState,
+  PullRequestSummary,
+  WorkspaceConnector,
 } from "../shared/types.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
@@ -58,6 +84,7 @@ const rpc = Electroview.defineRPC<any>({
         const state = appState.get();
         const isResultEvent = (event as any).type === "result";
         const isStopHook = isStopHookEvent(event);
+        const isDiffMutation = isDiffMutationEvent(event);
         const hasPinnedCommitDiff = activeCommitDiff
           ? activeCommitDiff.cwd === state.activeWorkspace
           : false;
@@ -67,8 +94,9 @@ const rpc = Electroview.defineRPC<any>({
         if (
           state.activeSessionId === sessionId
           && state.activeWorkspace
+          && state.viewMode === "workspaces"
           && !hasPinnedCommitDiff
-          && (isResultEvent || isDiffMutationEvent(event))
+          && (isResultEvent || isDiffMutation)
         ) {
           workspaceFileCache.delete(state.activeWorkspace);
           scheduleDiffRefresh(
@@ -80,10 +108,22 @@ const rpc = Electroview.defineRPC<any>({
         if (
           state.activeSessionId === sessionId
           && state.activeWorkspace
+          && state.viewMode === "workspaces"
           && diffView?.isBranchPanelVisible
           && (isResultEvent || isStopHook)
         ) {
           scheduleBranchHistoryRefresh(
+            state.activeWorkspace,
+            isResultEvent ? 0 : 120
+          );
+        }
+        if (
+          state.activeSessionId === sessionId
+          && state.activeWorkspace
+          && state.viewMode === "workspaces"
+          && (isResultEvent || isStopHook || isDiffMutation)
+        ) {
+          scheduleCommitContextRefresh(
             state.activeWorkspace,
             isResultEvent ? 0 : 120
           );
@@ -144,13 +184,14 @@ const rpc = Electroview.defineRPC<any>({
         live.delete(sessionId);
         appState.update((s) => ({ ...s, liveSessions: live }));
         // Refresh diff when a session ends (changes may have been made)
-        if (state.activeWorkspace) {
+        if (state.activeWorkspace && state.viewMode === "workspaces") {
           if (!hasPinnedCommitDiff) {
             loadDiff(state.activeWorkspace);
           }
           if (diffView.isBranchPanelVisible) {
             scheduleBranchHistoryRefresh(state.activeWorkspace, 0);
           }
+          scheduleCommitContextRefresh(state.activeWorkspace, 0);
         }
       },
       tasksChanged: ({
@@ -178,7 +219,8 @@ const _electrobun = new Electrobun.Electroview({ rpc });
 
 type AppState = {
   snapshot: Snapshot | null;
-  viewMode: "workspaces" | "plugins" | "tasks";
+  viewMode: "workspaces" | "plugins" | "tasks" | "prs" | "connectors";
+  filesListViewMode: FileListView;
   workspaces: string[];
   expandedWorkspaces: Set<string>;
   activeWorkspace: string | null;
@@ -186,6 +228,7 @@ type AppState = {
   diffScope: DiffScope;
   branchHistory: Record<string, BranchCommit[]>; // workspace path → commit history
   loadedBranchHistory: Set<string>; // workspace paths that have fetched branch history
+  commitContextByWorkspace: Record<string, CommitContext>; // workspace path → commit context
   historySessions: Record<string, HistorySession[]>; // workspace path → history
   liveSessions: Set<string>; // session IDs with running processes
   customSessionNames: Record<string, string>; // sessionId → custom name
@@ -196,6 +239,20 @@ type AppState = {
   tasksLoading: boolean;
   selectedTaskId: string | null;
   selectedTaskDetail: TaskCardDetail | null;
+  connectorsByWorkspace: Record<string, WorkspaceConnector[]>;
+  connectorsLoading: boolean;
+  connectorAuthSession: ConnectorAuthSession | null;
+  assignedPullRequests: PullRequestSummary[];
+  openedPullRequests: PullRequestSummary[];
+  pullRequestsLoading: boolean;
+  pullRequestsError: string | null;
+  pullRequestsFetchedAt: number | null;
+  selectedPullRequest: { repo: string; number: number } | null;
+  selectedPullRequestDetail: PullRequestDetail | null;
+  pullRequestDetailLoading: boolean;
+  pullRequestDetailError: string | null;
+  selectedPullRequestCommitSha: string | null;
+  pullRequestReviewState: PullRequestReviewState | null;
 };
 
 type SessionUsageEstimate = {
@@ -210,9 +267,13 @@ type AppSpawnedSessionMeta = {
   updatedAt: string;
 };
 
+const FILES_LIST_VIEW_MODE_STORAGE_KEY = "claudex.filesListViewMode";
+const INITIAL_FILES_LIST_VIEW_MODE = loadPersistedFilesListViewMode();
+
 const appState = new Store<AppState>({
   snapshot: null,
   viewMode: "workspaces",
+  filesListViewMode: INITIAL_FILES_LIST_VIEW_MODE,
   workspaces: [],
   expandedWorkspaces: new Set(),
   activeWorkspace: null,
@@ -220,6 +281,7 @@ const appState = new Store<AppState>({
   diffScope: "last_turn",
   branchHistory: {},
   loadedBranchHistory: new Set(),
+  commitContextByWorkspace: {},
   historySessions: {},
   liveSessions: new Set(),
   customSessionNames: {},
@@ -230,6 +292,20 @@ const appState = new Store<AppState>({
   tasksLoading: false,
   selectedTaskId: null,
   selectedTaskDetail: null,
+  connectorsByWorkspace: {},
+  connectorsLoading: false,
+  connectorAuthSession: null,
+  assignedPullRequests: [],
+  openedPullRequests: [],
+  pullRequestsLoading: false,
+  pullRequestsError: null,
+  pullRequestsFetchedAt: null,
+  selectedPullRequest: null,
+  selectedPullRequestDetail: null,
+  pullRequestDetailLoading: false,
+  pullRequestDetailError: null,
+  selectedPullRequestCommitSha: null,
+  pullRequestReviewState: null,
 });
 
 // ── Components ───────────────────────────────────────────────────
@@ -238,17 +314,27 @@ let panelLayout: PanelLayout;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
 let tasksSidebar: TasksSidebar;
+let prsSidebar: PRsSidebar;
+let connectorsSidebar: ConnectorsSidebar;
 let pluginsPreview: PluginsPreview;
 let tasksView: TasksView;
+let prView: PRView;
+let connectorsView: ConnectorsView;
 let chatView: ChatView;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
+let commitModal: CommitModal;
 let sidebarPrimaryPluginsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryTasksBtn: HTMLButtonElement | null = null;
+let sidebarPrimaryPRsBtn: HTMLButtonElement | null = null;
+let sidebarPrimaryConnectorsBtn: HTMLButtonElement | null = null;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let commitContextRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let connectorAuthPollTimer: ReturnType<typeof setTimeout> | null = null;
 const WORKSPACE_FILE_CACHE_MS = 30_000;
+const PULL_REQUEST_CACHE_TTL_MS = 5 * 60_000;
 const workspaceFileCache = new Map<string, {
   files: string[];
   loadedAt: number;
@@ -263,15 +349,31 @@ const appSpawnedSessions = new Map<string, AppSpawnedSessionMeta>();
 const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
 let prevBranchWorkspace: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
+let prevConnectorsWorkspace: string | null = null;
 let activeCommitDiff: { cwd: string; hash: string } | null = null;
+let cachedPullRequestDiff: {
+  repo: string;
+  number: number;
+  commitSha: string | null;
+  files: DiffFile[];
+  loadedAt: number;
+} | null = null;
 let prevViewMode: AppState["viewMode"] | null = null;
+let prevChatPanelFixed: boolean | null = null;
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
 
   // Create 3-column panel layout
   panelLayout = new PanelLayout(panelsContainer, [
-    { id: "workspaces", minWidth: 200, defaultWidth: 0, hidden: true },
+    {
+      id: "workspaces",
+      minWidth: 0,
+      defaultWidth: 15,
+      fixedPercent: 15,
+      resizable: false,
+      hidden: true,
+    },
     { id: "chat", minWidth: 280, defaultWidth: 35 },
     { id: "diff", minWidth: 320, defaultWidth: 65 },
   ]);
@@ -292,9 +394,19 @@ function init(): void {
     class: "sidebar-mode-view sidebar-mode-view-tasks",
     hidden: true,
   });
+  const prsSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-prs",
+    hidden: true,
+  });
+  const connectorsSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-connectors",
+    hidden: true,
+  });
   sidebarViews.appendChild(workspacesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
   sidebarViews.appendChild(tasksSidebarHost);
+  sidebarViews.appendChild(prsSidebarHost);
+  sidebarViews.appendChild(connectorsSidebarHost);
 
   sidebarPrimaryPluginsBtn = h("button", {
     class: "sidebar-primary-btn",
@@ -322,9 +434,37 @@ function init(): void {
     h("span", { class: "sidebar-primary-label" }, ["Tasks"]),
   ]) as HTMLButtonElement;
 
+  sidebarPrimaryPRsBtn = h("button", {
+    class: "sidebar-primary-btn",
+    onclick: () => {
+      void enterPullRequestsMode();
+    },
+  }, [
+    pullRequestsToolIcon("sidebar-primary-icon"),
+    h("span", { class: "sidebar-primary-label" }, ["PRs"]),
+  ]) as HTMLButtonElement;
+
+  sidebarPrimaryConnectorsBtn = h("button", {
+    class: "sidebar-primary-btn",
+    onclick: () => {
+      appState.update((s) => ({ ...s, viewMode: "connectors" }));
+      panelLayout.showPanel("workspaces");
+      qs("#btn-toggle-workspaces")?.classList.add("active");
+      const workspacePath = appState.get().activeWorkspace;
+      if (workspacePath) {
+        void loadWorkspaceConnectors(workspacePath, true);
+      }
+    },
+  }, [
+    connectorsToolIcon("sidebar-primary-icon"),
+    h("span", { class: "sidebar-primary-label" }, ["Connectors"]),
+  ]) as HTMLButtonElement;
+
   const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
     sidebarPrimaryPluginsBtn,
     sidebarPrimaryTasksBtn,
+    sidebarPrimaryPRsBtn,
+    sidebarPrimaryConnectorsBtn,
   ]);
 
   const sidebarShell = h("div", { class: "sidebar-shell" }, [
@@ -464,6 +604,29 @@ function init(): void {
     onCreateTask: (workspacePath) => {
       void createTaskInWorkspace(workspacePath);
     },
+    onBack: () => {
+      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+    },
+  });
+
+  prsSidebar = new PRsSidebar(prsSidebarHost, {
+    onSelectPullRequest: (repo, number) => {
+      appState.update((s) => ({
+        ...s,
+        selectedPullRequest: { repo, number },
+        selectedPullRequestCommitSha: null,
+      }));
+      void loadPullRequestDetail(repo, number, true);
+    },
+    onBack: () => {
+      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+    },
+    onRefresh: () => {
+      void refreshPullRequests();
+    },
+  });
+
+  connectorsSidebar = new ConnectorsSidebar(connectorsSidebarHost, {
     onBack: () => {
       appState.update((s) => ({ ...s, viewMode: "workspaces" }));
     },
@@ -625,6 +788,13 @@ function init(): void {
     onFetchSource: async (sourceId) => {
       await (rpc as any).request.fetchTaskSource({ sourceId });
     },
+    onOpenConnectors: () => {
+      appState.update((s) => ({ ...s, viewMode: "connectors" }));
+      const workspacePath = appState.get().activeWorkspace;
+      if (workspacePath) {
+        void loadWorkspaceConnectors(workspacePath, true);
+      }
+    },
     onRunAction: async (taskId, action) => {
       const detail = appState.get().selectedTaskDetail;
       const workspacePath = detail?.workspacePath ?? appState.get().activeWorkspace ?? null;
@@ -674,20 +844,103 @@ function init(): void {
       }
     },
   });
+  prView = new PRView(chatPanel, {
+    onSelectCommit: (commitSha) => {
+      appState.update((s) => ({
+        ...s,
+        selectedPullRequestCommitSha: commitSha,
+      }));
+      void loadSelectedPullRequestDiff();
+    },
+    onOpenPullRequest: (url) => {
+      void openExternalUrl(url);
+    },
+    onSelectFile: (path) => {
+      diffView.showFile(path);
+      filesPanel.setActiveFile(path);
+    },
+    onToggleFileSeen: (path, seen) => {
+      void setPullRequestFileSeen(path, seen);
+    },
+    onFilesViewModeChange: (mode) => {
+      setGlobalFilesListViewMode(mode);
+    },
+  });
+  connectorsView = new ConnectorsView(chatPanel, {
+    onConnect: async (provider) => {
+      const workspacePath = appState.get().activeWorkspace;
+      if (!workspacePath) {
+        throw new Error("No active workspace");
+      }
+
+      const authSession: ConnectorAuthSession = await (rpc as any).request.startConnectorAuth({
+        workspacePath,
+        provider,
+      });
+      appState.update((s) => ({
+        ...s,
+        connectorAuthSession: authSession,
+      }));
+
+      if (authSession.authorizeUrl) {
+        await openExternalUrl(authSession.authorizeUrl);
+      }
+      syncConnectorAuthPollTimer(appState.get());
+      if (authSession.status !== "pending") {
+        await loadWorkspaceConnectors(workspacePath, true);
+      }
+    },
+    onDisconnect: async (provider) => {
+      const workspacePath = appState.get().activeWorkspace;
+      if (!workspacePath) {
+        throw new Error("No active workspace");
+      }
+      await (rpc as any).request.disconnectWorkspaceConnector({
+        workspacePath,
+        provider,
+      });
+      appState.update((s) => ({
+        ...s,
+        connectorAuthSession: null,
+      }));
+      await loadWorkspaceConnectors(workspacePath, true);
+    },
+    onOpenAuthLink: async (provider) => {
+      const authSession = appState.get().connectorAuthSession;
+      const authorizeUrl = authSession?.provider === provider
+        ? authSession.authorizeUrl
+        : null;
+      if (!authorizeUrl) return;
+      await openExternalUrl(authorizeUrl);
+    },
+  });
 
   // Diff panel
+  commitModal = new CommitModal();
   diffView = new DiffView(diffPanel, {
     onBranchPanelToggle: (visible) => {
       const activeWorkspace = appState.get().activeWorkspace;
       if (!visible || !activeWorkspace) return;
       void loadBranchHistory(activeWorkspace, true);
     },
+    onCommitClick: () => {
+      void openCommitDialogForWorkspace();
+    },
     onRequestFullFile: async (path) => {
+      if (appState.get().viewMode !== "workspaces") {
+        throw new Error("Full file view is only available in workspace mode");
+      }
       const cwd = appState.get().activeWorkspace;
       if (!cwd) {
         throw new Error("No active workspace");
       }
       return (rpc as any).request.getFileContent({ cwd, path });
+    },
+    onToggleFileSeen: (path, seen) => {
+      void setPullRequestFileSeen(path, seen);
+    },
+    onReplyReviewThread: async (thread, body) => {
+      await replyPullRequestReviewThread(thread, body);
     },
   });
 
@@ -699,9 +952,15 @@ function init(): void {
     onScopeChange: (scope) => {
       appState.update((s) => ({ ...s, diffScope: scope }));
       const state = appState.get();
-      if (state.activeWorkspace) {
+      if (state.viewMode === "workspaces" && state.activeWorkspace) {
         loadDiff(state.activeWorkspace, scope);
       }
+    },
+    onToggleFileSeen: (path, seen) => {
+      void setPullRequestFileSeen(path, seen);
+    },
+    onViewModeChange: (mode) => {
+      setGlobalFilesListViewMode(mode);
     },
   });
 
@@ -739,16 +998,42 @@ function init(): void {
 
   // Keyboard shortcuts
   document.addEventListener("keydown", (e) => {
-    const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key === "b") {
+    const mod = (e.metaKey || e.ctrlKey) && !e.altKey;
+    if (!mod) return;
+
+    if (e.key === "1") {
       e.preventDefault();
       panelLayout.togglePanel("workspaces");
       qs("#btn-toggle-workspaces")?.classList.toggle(
         "active",
         panelLayout.isPanelVisible("workspaces")
       );
+      return;
     }
-    if (mod && e.key === "n") {
+
+    if (e.key === "2") {
+      e.preventDefault();
+      panelLayout.togglePanel("chat");
+      return;
+    }
+
+    if (e.key === "4") {
+      e.preventDefault();
+      if (appState.get().viewMode === "workspaces") {
+        diffView.toggleFilesPanel();
+      }
+      return;
+    }
+
+    if (e.key === "5") {
+      e.preventDefault();
+      if (appState.get().viewMode === "workspaces") {
+        diffView.toggleBranchPanel();
+      }
+      return;
+    }
+
+    if (e.key === "n") {
       e.preventDefault();
       const state = appState.get();
       if (state.activeWorkspace) {
@@ -758,8 +1043,10 @@ function init(): void {
       } else {
         openWorkspace();
       }
+      return;
     }
-    if (mod && e.key === "o") {
+
+    if (e.key === "o") {
       e.preventDefault();
       openWorkspace();
     }
@@ -767,6 +1054,17 @@ function init(): void {
 
   // State subscription — rebuild sidebar on every snapshot or workspace change
   appState.subscribe((state) => {
+    const shouldFixChatPanel = state.viewMode === "workspaces" || state.viewMode === "prs";
+    if (shouldFixChatPanel !== prevChatPanelFixed) {
+      panelLayout.setPanelSizing(
+        "chat",
+        shouldFixChatPanel
+          ? { fixedPercent: 35, resizable: false }
+          : { fixedPercent: null, resizable: true }
+      );
+      prevChatPanelFixed = shouldFixChatPanel;
+    }
+
     const viewModeChanged = prevViewMode !== null && prevViewMode !== state.viewMode;
     const sidebarWidthBeforeSwitch = viewModeChanged ? wsPanel.offsetWidth : 0;
 
@@ -780,30 +1078,75 @@ function init(): void {
     );
     const isPluginsMode = state.viewMode === "plugins";
     const isTasksMode = state.viewMode === "tasks";
+    const isPRMode = state.viewMode === "prs";
+    const isConnectorsMode = state.viewMode === "connectors";
     const taskGroups = buildTaskWorkspaceGroups(state);
+    const pullRequestSections = buildPullRequestSidebarSections(state);
+    const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
+    const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
+    const pullRequestTotalFiles = state.selectedPullRequestDetail?.files.length ?? 0;
+    const activeWorkspaceConnectors = resolveActiveWorkspaceConnectors(state);
+    const activeWorkspaceAuthSession = state.connectorAuthSession?.workspacePath === state.activeWorkspace
+      ? state.connectorAuthSession
+      : null;
 
-    sidebarPrimaryActions.hidden = isPluginsMode || isTasksMode;
-    workspacesSidebarHost.hidden = isPluginsMode || isTasksMode;
+    sidebarPrimaryActions.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
+    workspacesSidebarHost.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
     tasksSidebarHost.hidden = !isTasksMode;
+    prsSidebarHost.hidden = !isPRMode;
+    connectorsSidebarHost.hidden = !isConnectorsMode;
     sidebarPrimaryPluginsBtn?.classList.toggle("active", isPluginsMode);
     sidebarPrimaryTasksBtn?.classList.toggle("active", isTasksMode);
+    sidebarPrimaryPRsBtn?.classList.toggle("active", isPRMode);
+    sidebarPrimaryConnectorsBtn?.classList.toggle("active", isConnectorsMode);
 
     pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
     pluginsSidebar.setSelection(pluginsSelection);
     tasksSidebar.render(taskGroups, { loading: state.tasksLoading });
     tasksSidebar.setSelection(state.selectedTaskId);
+    prsSidebar.render(pullRequestSections, {
+      loading: state.pullRequestsLoading,
+      error: state.pullRequestsError,
+    });
+    prsSidebar.setSelection(state.selectedPullRequest);
     pluginsPreview.render(state.plugins, pluginsSelection, {
       loading: state.pluginsLoading,
     });
     tasksView.render(state.selectedTaskDetail, {
       loading: state.tasksLoading && Boolean(state.selectedTaskId),
     });
+    prView.render(state.selectedPullRequestDetail, {
+      loading: state.pullRequestDetailLoading,
+      error: state.pullRequestDetailError,
+      selectedCommitSha: state.selectedPullRequestCommitSha,
+      seenCount: pullRequestSeenCount,
+      totalFiles: pullRequestTotalFiles,
+      fileReviewState: pullRequestReviewMap,
+      filesViewMode: state.filesListViewMode,
+    });
+    connectorsView.render(activeWorkspaceConnectors, {
+      loading: state.connectorsLoading,
+      authSession: activeWorkspaceAuthSession,
+      workspacePath: state.activeWorkspace,
+    });
 
-    chatView.element.hidden = isPluginsMode || isTasksMode;
+    chatView.element.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
     pluginsPreview.setVisible(isPluginsMode);
     tasksView.setVisible(isTasksMode);
-    if (isPluginsMode || isTasksMode) {
+    prView.setVisible(isPRMode);
+    connectorsView.setVisible(isConnectorsMode);
+
+    if (state.activeWorkspace && state.activeWorkspace !== prevConnectorsWorkspace) {
+      prevConnectorsWorkspace = state.activeWorkspace;
+      void loadWorkspaceConnectors(state.activeWorkspace, false);
+    } else if (!state.activeWorkspace) {
+      prevConnectorsWorkspace = null;
+    }
+
+    syncConnectorAuthPollTimer(state);
+
+    if (isPluginsMode || isTasksMode || isConnectorsMode) {
       panelLayout.hidePanel("diff");
       if (sidebarWidthBeforeSwitch > 0) {
         panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
@@ -811,11 +1154,50 @@ function init(): void {
       prevViewMode = state.viewMode;
       return;
     }
+
     panelLayout.showPanel("diff");
     if (sidebarWidthBeforeSwitch > 0) {
       panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
     }
+
+    filesPanel.setReviewMode(isPRMode);
+    filesPanel.setViewMode(state.filesListViewMode);
+    filesPanel.setFileReviewState(
+      isPRMode ? pullRequestReviewMap : new Map()
+    );
+    diffView.setReviewMode(isPRMode);
+    diffView.setFileReviewState(
+      isPRMode ? pullRequestReviewMap : new Map()
+    );
+    syncCommitButtonVisibility(state);
+    if (state.viewMode !== "workspaces" && commitModal.isOpen) {
+      commitModal.close();
+    }
+    if (isPRMode && !state.selectedPullRequestDetail) {
+      filesPanel.clear();
+      diffView.clear();
+    }
+    if (isPRMode && diffView.isBranchPanelVisible) {
+      diffView.setBranchPanelVisible(false, false);
+    }
+
+    if (
+      viewModeChanged
+      && prevViewMode === "prs"
+      && state.viewMode === "workspaces"
+      && state.activeWorkspace
+    ) {
+      clearCommitDiffSelection(state.activeWorkspace);
+      void loadDiff(state.activeWorkspace, state.diffScope);
+      ensureBranchHistory(state.activeWorkspace);
+    }
+
     prevViewMode = state.viewMode;
+
+    if (isPRMode) {
+      branchPanel.clear();
+      return;
+    }
 
     chatView.setHeader(
       resolveActiveSessionTitle(state),
@@ -939,6 +1321,105 @@ function ensureBranchHistory(cwd: string): void {
   void loadBranchHistory(cwd, false);
 }
 
+async function loadCommitContext(cwd: string): Promise<void> {
+  if (!cwd) return;
+  try {
+    const context: CommitContext = await (rpc as any).request.getCommitContext({ cwd });
+    appState.update((s) => ({
+      ...s,
+      commitContextByWorkspace: {
+        ...s.commitContextByWorkspace,
+        [cwd]: context,
+      },
+    }));
+  } catch (err) {
+    console.error("Failed to load commit context:", err);
+    appState.update((s) => ({
+      ...s,
+      commitContextByWorkspace: {
+        ...s.commitContextByWorkspace,
+        [cwd]: emptyCommitContext(),
+      },
+    }));
+  }
+}
+
+function scheduleCommitContextRefresh(cwd: string, delayMs: number): void {
+  if (commitContextRefreshTimer) {
+    clearTimeout(commitContextRefreshTimer);
+  }
+  commitContextRefreshTimer = setTimeout(() => {
+    commitContextRefreshTimer = null;
+    void loadCommitContext(cwd);
+  }, delayMs);
+}
+
+function syncCommitButtonVisibility(state: AppState): void {
+  const activeWorkspace = state.activeWorkspace;
+  const commitContext = activeWorkspace
+    ? state.commitContextByWorkspace[activeWorkspace]
+    : null;
+  const visible = state.viewMode === "workspaces"
+    && Boolean(activeWorkspace)
+    && Boolean(commitContext?.hasChanges);
+  diffView.setCommitButtonVisible(visible);
+}
+
+async function openCommitDialogForWorkspace(): Promise<void> {
+  const state = appState.get();
+  const cwd = state.activeWorkspace;
+  if (!cwd || state.viewMode !== "workspaces") return;
+
+  await loadCommitContext(cwd);
+  const commitContext = appState.get().commitContextByWorkspace[cwd];
+  if (!commitContext?.hasChanges) {
+    syncCommitButtonVisibility(appState.get());
+    return;
+  }
+
+  commitModal.open({
+    context: commitContext,
+    onGenerate: async (includeUnstaged) => {
+      const response: { message: string } = await (rpc as any).request.generateCommitMessage({
+        cwd,
+        includeUnstaged,
+      });
+      return response.message ?? "";
+    },
+    onSubmit: async ({ message, includeUnstaged, mode }) => {
+      try {
+        const result = await (rpc as any).request.performCommit({
+          cwd,
+          message,
+          includeUnstaged,
+          mode,
+        });
+        await refreshWorkspaceAfterCommit(cwd);
+        return result;
+      } catch (err) {
+        const text = err instanceof Error ? err.message : String(err);
+        if (/^Commit [0-9a-f]{4,}/i.test(text)) {
+          await refreshWorkspaceAfterCommit(cwd);
+        }
+        throw err;
+      }
+    },
+  });
+}
+
+async function refreshWorkspaceAfterCommit(cwd: string): Promise<void> {
+  const state = appState.get();
+  const activeWorkspace = state.activeWorkspace;
+  const isWorkspaceVisible = state.viewMode === "workspaces" && activeWorkspace === cwd;
+
+  if (isWorkspaceVisible) {
+    await loadDiff(cwd, state.diffScope);
+  } else {
+    await loadCommitContext(cwd);
+  }
+  await loadBranchHistory(cwd, true);
+}
+
 function clearCommitDiffSelection(cwd: string): void {
   if (!activeCommitDiff || activeCommitDiff.cwd !== cwd) return;
   activeCommitDiff = null;
@@ -952,10 +1433,22 @@ function clearCommitDiffSelection(cwd: string): void {
 function applyDiffFiles(files: DiffFile[]): void {
   filesPanel.render(files);
   if (files.length > 0) {
-    const firstPath = files[0].path;
-    filesPanel.setActiveFile(firstPath);
+    const state = appState.get();
+    const isPRMode = state.viewMode === "prs";
+    const reviewThreads = isPRMode
+      ? resolveSelectedPullRequestThreads(state)
+      : [];
+    const reviewMap = isPRMode
+      ? resolveSelectedPullRequestReviewMap(state)
+      : null;
+    diffView.setReviewThreads(reviewThreads);
+    const firstUnseenPath = reviewMap
+      ? (files.find((file) => !reviewMap.get(file.path)?.seen)?.path ?? null)
+      : null;
+    const activePath = isPRMode ? firstUnseenPath : files[0].path;
+    filesPanel.setActiveFile(activePath);
     diffView.setFiles(files, {
-      activeFile: firstPath,
+      activeFile: activePath,
       scrollToActive: false,
     });
   } else {
@@ -984,6 +1477,8 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
     console.error("Failed to load diff:", err);
     filesPanel.clear();
     diffView.clear();
+  } finally {
+    void loadCommitContext(cwd);
   }
 }
 
@@ -998,6 +1493,8 @@ async function loadCommitDiff(cwd: string, commitHash: string): Promise<void> {
     console.error("Failed to load commit diff:", err);
     filesPanel.clear();
     diffView.clear();
+  } finally {
+    void loadCommitContext(cwd);
   }
 }
 
@@ -1023,6 +1520,56 @@ function scheduleBranchHistoryRefresh(cwd: string, delayMs: number): void {
     branchHistoryRefreshTimer = null;
     void loadBranchHistory(cwd, true);
   }, delayMs);
+}
+
+function syncConnectorAuthPollTimer(state: AppState): void {
+  const auth = state.connectorAuthSession;
+  if (!auth || auth.status !== "pending") {
+    if (connectorAuthPollTimer) {
+      clearTimeout(connectorAuthPollTimer);
+      connectorAuthPollTimer = null;
+    }
+    return;
+  }
+
+  if (connectorAuthPollTimer) return;
+  connectorAuthPollTimer = setTimeout(() => {
+    connectorAuthPollTimer = null;
+    void pollConnectorAuthStatus();
+  }, 900);
+}
+
+async function pollConnectorAuthStatus(): Promise<void> {
+  const current = appState.get().connectorAuthSession;
+  if (!current || current.status !== "pending") return;
+
+  try {
+    const next: ConnectorAuthSession = await (rpc as any).request.getConnectorAuthStatus({
+      authSessionId: current.id,
+    });
+    appState.update((s) => ({
+      ...s,
+      connectorAuthSession: next,
+    }));
+    if (next.status !== "pending") {
+      await loadWorkspaceConnectors(next.workspacePath, true);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appState.update((s) => ({
+      ...s,
+      connectorAuthSession: s.connectorAuthSession
+        ? {
+            ...s.connectorAuthSession,
+            status: "failed",
+            error: message || "Failed to read OAuth status",
+            updatedAt: new Date().toISOString(),
+          }
+        : null,
+    }));
+  }
+
+  syncConnectorAuthPollTimer(appState.get());
 }
 
 function isDiffMutationEvent(event: ClaudeStreamEvent): boolean {
@@ -1093,6 +1640,23 @@ function extractHookEventName(value: unknown, depth = 0): string {
   return "";
 }
 
+function emptyCommitContext(): CommitContext {
+  return {
+    branch: "(unknown)",
+    hasChanges: false,
+    stagedFiles: 0,
+    stagedAdditions: 0,
+    stagedDeletions: 0,
+    unstagedFiles: 0,
+    unstagedAdditions: 0,
+    unstagedDeletions: 0,
+    untrackedFiles: 0,
+    totalFiles: 0,
+    totalAdditions: 0,
+    totalDeletions: 0,
+  };
+}
+
 async function loadWorkspaces(): Promise<void> {
   try {
     const workspaces: string[] = await (rpc as any).request.getWorkspaces({});
@@ -1114,6 +1678,7 @@ async function loadWorkspaces(): Promise<void> {
       // Load diff and history for first workspace
       loadDiff(workspaces[0], appState.get().diffScope);
       loadSessionHistory(workspaces[0]);
+      loadWorkspaceConnectors(workspaces[0], false);
       for (const wsPath of workspaces) {
         ensureBranchHistory(wsPath);
       }
@@ -1159,6 +1724,42 @@ async function loadPlugins(force = false): Promise<void> {
     appState.update((s) => ({
       ...s,
       pluginsLoading: false,
+    }));
+  }
+}
+
+async function loadWorkspaceConnectors(
+  workspacePath: string,
+  force = false
+): Promise<void> {
+  if (!workspacePath) return;
+  const state = appState.get();
+  const alreadyLoaded = Array.isArray(state.connectorsByWorkspace[workspacePath]);
+  if (state.connectorsLoading && !force) return;
+  if (alreadyLoaded && !force) return;
+
+  appState.update((s) => ({
+    ...s,
+    connectorsLoading: true,
+  }));
+
+  try {
+    const connectors: WorkspaceConnector[] = await (rpc as any).request.getWorkspaceConnectors({
+      workspacePath,
+    });
+    appState.update((s) => ({
+      ...s,
+      connectorsLoading: false,
+      connectorsByWorkspace: {
+        ...s.connectorsByWorkspace,
+        [workspacePath]: connectors,
+      },
+    }));
+  } catch (err) {
+    console.error("Failed to load workspace connectors:", err);
+    appState.update((s) => ({
+      ...s,
+      connectorsLoading: false,
     }));
   }
 }
@@ -1280,6 +1881,305 @@ async function loadTaskDetail(taskId: string, keepSelection = false): Promise<vo
   }
 }
 
+async function loadPullRequests(force = false): Promise<void> {
+  const state = appState.get();
+  if (state.pullRequestsLoading && !force) return;
+
+  appState.update((s) => ({
+    ...s,
+    pullRequestsLoading: true,
+    pullRequestsError: null,
+  }));
+
+  try {
+    const [assignedPullRequests, openedPullRequests] = await Promise.all([
+      (rpc as any).request.getAssignedPullRequests({
+        limit: 120,
+      }) as Promise<PullRequestSummary[]>,
+      (rpc as any).request.getOpenedPullRequests({
+        limit: 120,
+      }) as Promise<PullRequestSummary[]>,
+    ]);
+
+    const allPullRequests = mergePullRequestLists(assignedPullRequests, openedPullRequests);
+
+    const currentSelection = appState.get().selectedPullRequest;
+    const selectedExists = currentSelection
+      ? allPullRequests.some((pr) => pr.repo === currentSelection.repo && pr.number === currentSelection.number)
+      : false;
+    const nextSelection = selectedExists ? currentSelection : null;
+
+    appState.update((s) => {
+      const selectionChanged = !isSamePullRequestSelection(s.selectedPullRequest, nextSelection);
+      if (selectionChanged) {
+        cachedPullRequestDiff = null;
+      }
+      return {
+        ...s,
+        assignedPullRequests,
+        openedPullRequests,
+        pullRequestsLoading: false,
+        pullRequestsError: null,
+        pullRequestsFetchedAt: Date.now(),
+        selectedPullRequest: nextSelection,
+        selectedPullRequestCommitSha: selectionChanged ? null : s.selectedPullRequestCommitSha,
+        selectedPullRequestDetail: selectionChanged ? null : s.selectedPullRequestDetail,
+        pullRequestReviewState: selectionChanged ? null : s.pullRequestReviewState,
+      };
+    });
+
+    if (!nextSelection) {
+      if (appState.get().viewMode === "prs") {
+        diffView.clear();
+        filesPanel.clear();
+      }
+      return;
+    }
+
+    const nextState = appState.get();
+    const loadedSelection = nextState.selectedPullRequestDetail;
+    const shouldLoadDetail = !loadedSelection
+      || loadedSelection.repo !== nextSelection.repo
+      || loadedSelection.number !== nextSelection.number;
+
+    if (shouldLoadDetail) {
+      await loadPullRequestDetail(nextSelection.repo, nextSelection.number, true);
+    }
+  } catch (err) {
+    const message = formatPullRequestError(err);
+    console.error("Failed to load pull requests:", err);
+    appState.update((s) => ({
+      ...s,
+      pullRequestsLoading: false,
+      pullRequestsError: message,
+    }));
+  }
+}
+
+async function loadPullRequestDetail(
+  repo: string,
+  number: number,
+  keepSelection = false
+): Promise<void> {
+  appState.update((s) => ({
+    ...s,
+    selectedPullRequest: keepSelection ? s.selectedPullRequest : { repo, number },
+    pullRequestDetailLoading: true,
+    pullRequestDetailError: null,
+  }));
+
+  try {
+    const [detail, reviewState] = await Promise.all([
+      (rpc as any).request.getPullRequestDetail({ repo, number }),
+      (rpc as any).request.getPullRequestReviewState({ repo, number }),
+    ]) as [PullRequestDetail, PullRequestReviewState | null];
+
+    appState.update((s) => {
+      const existingCommitSha = s.selectedPullRequestCommitSha;
+      const commitStillExists = existingCommitSha
+        ? detail.commits.some((commit) => commit.sha === existingCommitSha)
+        : false;
+      return {
+        ...s,
+        selectedPullRequest: { repo, number },
+        selectedPullRequestDetail: detail,
+        pullRequestReviewState: reviewState,
+        selectedPullRequestCommitSha: commitStillExists ? existingCommitSha : null,
+        pullRequestDetailLoading: false,
+        pullRequestDetailError: null,
+      };
+    });
+
+    await loadSelectedPullRequestDiff();
+  } catch (err) {
+    const message = formatPullRequestError(err);
+    console.error("Failed to load pull request detail:", err);
+    appState.update((s) => ({
+      ...s,
+      pullRequestDetailLoading: false,
+      pullRequestDetailError: message,
+      selectedPullRequestDetail: null,
+      pullRequestReviewState: null,
+    }));
+    diffView.clear();
+    filesPanel.clear();
+  }
+}
+
+async function loadSelectedPullRequestDiff(): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  if (!selection || !detail) {
+    cachedPullRequestDiff = null;
+    diffView.clear();
+    filesPanel.clear();
+    return;
+  }
+
+  try {
+    const files: DiffFile[] = await (rpc as any).request.getPullRequestDiff({
+      repo: selection.repo,
+      number: selection.number,
+      commitSha: state.selectedPullRequestCommitSha ?? null,
+    });
+    cachedPullRequestDiff = {
+      repo: selection.repo,
+      number: selection.number,
+      commitSha: state.selectedPullRequestCommitSha ?? null,
+      files,
+      loadedAt: Date.now(),
+    };
+    applyDiffFiles(files);
+  } catch (err) {
+    console.error("Failed to load pull request diff:", err);
+    cachedPullRequestDiff = null;
+    filesPanel.clear();
+    diffView.clear();
+  }
+}
+
+async function setPullRequestFileSeen(path: string, seen: boolean): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  if (!selection || !detail) return;
+
+  const fileMeta = detail.files.find((file) => file.path === path) ?? null;
+
+  try {
+    const nextReviewState: PullRequestReviewState = await (rpc as any).request.setPullRequestFileSeen({
+      repo: selection.repo,
+      number: selection.number,
+      headSha: detail.headSha,
+      filePath: path,
+      fileSha: fileMeta?.sha ?? null,
+      seen,
+    });
+    appState.update((s) => ({
+      ...s,
+      pullRequestReviewState: nextReviewState,
+    }));
+  } catch (err) {
+    console.error("Failed to update pull request review state:", err);
+  }
+}
+
+async function replyPullRequestReviewThread(
+  thread: PullRequestReviewThread,
+  body: string
+): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  if (!selection || !detail) {
+    throw new Error("No pull request selected");
+  }
+
+  const rootCommentId = resolveReviewThreadRootCommentId(thread);
+  if (!rootCommentId) {
+    throw new Error("Could not identify the review thread root comment");
+  }
+
+  try {
+    await (rpc as any).request.replyPullRequestReviewComment({
+      repo: selection.repo,
+      number: selection.number,
+      commentId: rootCommentId,
+      body,
+    });
+  } catch (err) {
+    throw new Error(formatPullRequestError(err));
+  }
+
+  await loadPullRequestDetail(selection.repo, selection.number, true);
+}
+
+async function markAllPullRequestFilesSeen(): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  if (!selection || !detail) return;
+
+  try {
+    const nextReviewState: PullRequestReviewState = await (rpc as any).request.markPullRequestFilesSeen({
+      repo: selection.repo,
+      number: selection.number,
+      headSha: detail.headSha,
+      files: detail.files.map((file) => ({
+        path: file.path,
+        sha: file.sha,
+      })),
+    });
+    appState.update((s) => ({
+      ...s,
+      pullRequestReviewState: nextReviewState,
+    }));
+  } catch (err) {
+    console.error("Failed to mark pull request files as seen:", err);
+  }
+}
+
+async function refreshPullRequests(): Promise<void> {
+  const currentState = appState.get();
+  if (currentState.pullRequestsLoading || currentState.pullRequestDetailLoading) return;
+
+  await loadPullRequests(true);
+  const selection = appState.get().selectedPullRequest;
+  if (!selection) return;
+  await loadPullRequestDetail(selection.repo, selection.number, true);
+}
+
+async function enterPullRequestsMode(): Promise<void> {
+  appState.update((s) => ({ ...s, viewMode: "prs" }));
+  panelLayout.showPanel("workspaces");
+  qs("#btn-toggle-workspaces")?.classList.add("active");
+
+  const state = appState.get();
+  if (state.pullRequestsLoading || state.pullRequestDetailLoading) return;
+
+  if (isPullRequestCacheExpired(state)) {
+    await refreshPullRequests();
+    return;
+  }
+
+  if (state.selectedPullRequest && state.selectedPullRequestDetail) {
+    if (!applyCachedSelectedPullRequestDiff(state)) {
+      await loadSelectedPullRequestDiff();
+    }
+    return;
+  }
+
+  if (state.selectedPullRequest) {
+    await loadPullRequestDetail(state.selectedPullRequest.repo, state.selectedPullRequest.number, true);
+  }
+}
+
+async function openExternalUrl(url: string): Promise<void> {
+  try {
+    await (rpc as any).request.openExternalUrl({ url });
+  } catch (err) {
+    console.error("Failed to open external URL:", err);
+  }
+}
+
+function isPullRequestCacheExpired(state: AppState): boolean {
+  if (state.pullRequestsFetchedAt == null) return true;
+  return (Date.now() - state.pullRequestsFetchedAt) >= PULL_REQUEST_CACHE_TTL_MS;
+}
+
+function applyCachedSelectedPullRequestDiff(state: AppState): boolean {
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  const commitSha = state.selectedPullRequestCommitSha ?? null;
+  if (!selection || !detail || !cachedPullRequestDiff) return false;
+  if (cachedPullRequestDiff.repo !== selection.repo) return false;
+  if (cachedPullRequestDiff.number !== selection.number) return false;
+  if (cachedPullRequestDiff.commitSha !== commitSha) return false;
+  applyDiffFiles(cachedPullRequestDiff.files);
+  return true;
+}
+
 async function createTaskInWorkspace(workspacePath: string): Promise<void> {
   try {
     const detail: TaskCardDetail = await (rpc as any).request.createTask({
@@ -1326,6 +2226,7 @@ async function openWorkspace(): Promise<void> {
     loadSessionHistory(dir);
     ensureBranchHistory(dir);
     loadWorkspaceTasks(dir);
+    loadWorkspaceConnectors(dir, true);
   } catch (err) {
     console.error("Failed to pick directory:", err);
   }
@@ -1336,6 +2237,9 @@ async function removeWorkspace(path: string): Promise<void> {
     await (rpc as any).request.removeWorkspace({ path });
     workspaceFileCache.delete(path);
     slashCommandCache.delete(path);
+    if (commitModal.isOpen && appState.get().activeWorkspace === path) {
+      commitModal.close();
+    }
     if (activeCommitDiff?.cwd === path) {
       activeCommitDiff = null;
     }
@@ -1346,19 +2250,27 @@ async function removeWorkspace(path: string): Promise<void> {
       expanded.delete(path);
       loadedBranchHistory.delete(path);
       const branchHistory = { ...s.branchHistory };
+      const commitContextByWorkspace = { ...s.commitContextByWorkspace };
       const tasksByWorkspace = { ...s.tasksByWorkspace };
+      const connectorsByWorkspace = { ...s.connectorsByWorkspace };
       delete branchHistory[path];
+      delete commitContextByWorkspace[path];
       delete tasksByWorkspace[path];
+      delete connectorsByWorkspace[path];
       const selectedTaskRemoved = s.selectedTaskDetail?.workspacePath === path;
+      const authSessionRemoved = s.connectorAuthSession?.workspacePath === path;
       return {
         ...s,
         workspaces,
         expandedWorkspaces: expanded,
         branchHistory,
+        commitContextByWorkspace,
         tasksByWorkspace,
+        connectorsByWorkspace,
         loadedBranchHistory,
         selectedTaskId: selectedTaskRemoved ? null : s.selectedTaskId,
         selectedTaskDetail: selectedTaskRemoved ? null : s.selectedTaskDetail,
+        connectorAuthSession: authSessionRemoved ? null : s.connectorAuthSession,
         activeWorkspace: s.activeWorkspace === path
           ? (workspaces[0] ?? null)
           : s.activeWorkspace,
@@ -1368,6 +2280,7 @@ async function removeWorkspace(path: string): Promise<void> {
     const nextWorkspace = appState.get().activeWorkspace;
     if (nextWorkspace) {
       ensureBranchHistory(nextWorkspace);
+      void loadWorkspaceConnectors(nextWorkspace, false);
     }
     loadAllWorkspaceTasks();
   } catch (err) {
@@ -1487,6 +2400,42 @@ function compareSlashCommandEntries(a: SlashCommandEntry, b: SlashCommandEntry):
   return a.name.localeCompare(b.name);
 }
 
+function resolveActiveWorkspaceConnectors(state: AppState): WorkspaceConnector[] {
+  if (!state.activeWorkspace) return [];
+  const loaded = state.connectorsByWorkspace[state.activeWorkspace];
+  if (Array.isArray(loaded) && loaded.length > 0) {
+    const withDefaults = [
+      loaded.find((entry) => entry.provider === "slack")
+        ?? defaultWorkspaceConnector(state.activeWorkspace, "slack"),
+      loaded.find((entry) => entry.provider === "jira")
+        ?? defaultWorkspaceConnector(state.activeWorkspace, "jira"),
+    ];
+    return withDefaults;
+  }
+  return [
+    defaultWorkspaceConnector(state.activeWorkspace, "slack"),
+    defaultWorkspaceConnector(state.activeWorkspace, "jira"),
+  ];
+}
+
+function defaultWorkspaceConnector(
+  workspacePath: string,
+  provider: ConnectorProvider
+): WorkspaceConnector {
+  return {
+    workspacePath,
+    provider,
+    status: "disconnected",
+    externalWorkspaceId: null,
+    externalWorkspaceName: null,
+    externalUserId: null,
+    scopes: [],
+    tokenExpiresAt: null,
+    lastError: null,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 function resolvePluginSelection(
@@ -1545,6 +2494,147 @@ function findTaskSummaryById(
     if (found) return found;
   }
   return null;
+}
+
+function buildPullRequestRepoGroups(
+  pullRequests: PullRequestSummary[]
+): PullRequestRepoGroup[] {
+  const byRepo = new Map<string, PullRequestSummary[]>();
+
+  for (const pullRequest of pullRequests) {
+    const list = byRepo.get(pullRequest.repo) ?? [];
+    list.push(pullRequest);
+    byRepo.set(pullRequest.repo, list);
+  }
+
+  const groups: PullRequestRepoGroup[] = [];
+  for (const [repo, prs] of byRepo) {
+    prs.sort((a, b) => {
+      const tsA = Date.parse(a.updatedAt);
+      const tsB = Date.parse(b.updatedAt);
+      if (Number.isFinite(tsA) && Number.isFinite(tsB) && tsA !== tsB) {
+        return tsB - tsA;
+      }
+      return a.number - b.number;
+    });
+    groups.push({ repo, prs });
+  }
+
+  groups.sort((a, b) => a.repo.localeCompare(b.repo));
+  return groups;
+}
+
+function buildPullRequestSidebarSections(state: AppState): PullRequestSidebarSection[] {
+  return [
+    {
+      id: "assigned_to_me",
+      label: "Assigned to me",
+      groups: buildPullRequestRepoGroups(state.assignedPullRequests),
+      emptyLabel: "No assigned PRs",
+    },
+    {
+      id: "opened_by_me",
+      label: "Opened by me",
+      groups: buildPullRequestRepoGroups(state.openedPullRequests),
+      emptyLabel: "No opened PRs",
+    },
+  ];
+}
+
+function mergePullRequestLists(...lists: PullRequestSummary[][]): PullRequestSummary[] {
+  const byKey = new Map<string, PullRequestSummary>();
+  for (const list of lists) {
+    for (const pr of list) {
+      byKey.set(`${pr.repo}#${pr.number}`, pr);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function resolveSelectedPullRequestReviewMap(state: AppState) {
+  if (!state.selectedPullRequestDetail) return new Map();
+  return buildPullRequestFileReviewStateMap(
+    state.selectedPullRequestDetail.files,
+    state.pullRequestReviewState,
+    state.selectedPullRequestDetail.headSha
+  );
+}
+
+function setGlobalFilesListViewMode(mode: FileListView): void {
+  const normalized: FileListView = mode === "tree" ? "tree" : "flat";
+  if (appState.get().filesListViewMode === normalized) return;
+  persistFilesListViewMode(normalized);
+  appState.update((s) => ({
+    ...s,
+    filesListViewMode: normalized,
+  }));
+}
+
+function resolveSelectedPullRequestThreads(state: AppState): PullRequestReviewThread[] {
+  if (!state.selectedPullRequestDetail) return [];
+  if (state.selectedPullRequestCommitSha) return [];
+  return state.selectedPullRequestDetail.conversation.filter(
+    (item): item is PullRequestReviewThread => item.kind === "review_thread"
+  );
+}
+
+function isSamePullRequestSelection(
+  left: { repo: string; number: number } | null,
+  right: { repo: string; number: number } | null
+): boolean {
+  if (!left || !right) return left === right;
+  return left.repo === right.repo && left.number === right.number;
+}
+
+function resolveReviewThreadRootCommentId(thread: PullRequestReviewThread): string | null {
+  if (!Array.isArray(thread.comments) || thread.comments.length === 0) return null;
+  const root = thread.comments.find((comment) => !comment.inReplyToId) ?? thread.comments[0];
+  const id = Number(root?.id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  return String(Math.trunc(id));
+}
+
+function formatPullRequestError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("gh executable")
+    || normalized.includes("command not found")
+    || normalized.includes("executable file not found")
+  ) {
+    return "GitHub CLI is not installed. Install `gh` and retry.";
+  }
+
+  if (
+    normalized.includes("not logged in")
+    || normalized.includes("gh auth login")
+    || normalized.includes("requires authentication")
+    || normalized.includes("bad credentials")
+  ) {
+    return "GitHub CLI is not authenticated. Run `gh auth login`.";
+  }
+
+  const firstLine = message.split(/\r?\n/).find((line) => line.trim().length > 0);
+  if (firstLine) return firstLine.trim();
+  return "Failed to load pull request data";
+}
+
+function loadPersistedFilesListViewMode(): FileListView {
+  try {
+    const value = localStorage.getItem(FILES_LIST_VIEW_MODE_STORAGE_KEY);
+    return value === "tree" ? "tree" : "flat";
+  } catch {
+    return "flat";
+  }
+}
+
+function persistFilesListViewMode(mode: FileListView): void {
+  try {
+    localStorage.setItem(FILES_LIST_VIEW_MODE_STORAGE_KEY, mode);
+  } catch {
+    // non-fatal
+  }
 }
 
 function buildWorkspaceData(state: AppState): WorkspaceData[] {

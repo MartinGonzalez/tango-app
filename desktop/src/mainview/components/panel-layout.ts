@@ -5,6 +5,8 @@ export type PanelConfig = {
   minWidth: number;
   defaultWidth: number; // percentage of total (0-100), or 0 for hidden
   hidden?: boolean;
+  fixedPercent?: number; // fixed percentage of total width while visible
+  resizable?: boolean; // defaults to false when fixedPercent is set
 };
 
 /**
@@ -42,7 +44,9 @@ export class PanelLayout {
         el: panel,
         config: cfg,
         hidden: cfg.hidden ?? false,
-        currentWidth: cfg.hidden ? 0 : cfg.defaultWidth,
+        currentWidth: cfg.hidden
+          ? 0
+          : this.#initialCurrentPercent(cfg),
       });
 
       this.#el.appendChild(panel);
@@ -82,7 +86,9 @@ export class PanelLayout {
     this.#captureCurrentWidths();
     state.hidden = false;
     state.el.classList.remove("panel-hidden");
-    if (state.currentWidth <= 0) {
+    if (this.#isFixedPanel(state.config)) {
+      state.currentWidth = this.#fixedPercent(state.config);
+    } else if (state.currentWidth <= 0) {
       state.currentWidth = this.#initialPercent(state.config);
     }
     state.el.style.width = "";
@@ -113,9 +119,45 @@ export class PanelLayout {
     return !(this.#panels.get(id)?.hidden ?? true);
   }
 
+  setPanelSizing(
+    id: string,
+    options: {
+      fixedPercent?: number | null;
+      resizable?: boolean;
+    }
+  ): void {
+    const state = this.#panels.get(id);
+    if (!state) return;
+
+    if (options.fixedPercent !== undefined) {
+      const next = options.fixedPercent;
+      if (next == null || !Number.isFinite(next) || next <= 0) {
+        delete state.config.fixedPercent;
+      } else {
+        state.config.fixedPercent = next;
+      }
+    }
+
+    if (options.resizable !== undefined) {
+      state.config.resizable = options.resizable;
+    }
+
+    if (!state.hidden && this.#isFixedPanel(state.config)) {
+      state.currentWidth = this.#fixedPercent(state.config);
+    }
+
+    this.#rebalance();
+  }
+
   preservePanelPixelWidth(id: string, pixelWidth: number): void {
     const state = this.#panels.get(id);
-    if (!state || state.hidden || !Number.isFinite(pixelWidth) || pixelWidth <= 0) {
+    if (
+      !state
+      || state.hidden
+      || !this.#isPanelResizable(state)
+      || !Number.isFinite(pixelWidth)
+      || pixelWidth <= 0
+    ) {
       return;
     }
 
@@ -163,8 +205,15 @@ export class PanelLayout {
     const leftPanel = this.#panels.get(leftId)!;
     const rightPanel = this.#panels.get(rightId)!;
 
-    // Skip if either panel is hidden
-    if (leftPanel.hidden || rightPanel.hidden) return;
+    // Skip if either panel is hidden or not resizable.
+    if (
+      leftPanel.hidden
+      || rightPanel.hidden
+      || !this.#isPanelResizable(leftPanel)
+      || !this.#isPanelResizable(rightPanel)
+    ) {
+      return;
+    }
 
     this.#dragging = {
       handleIndex,
@@ -220,17 +269,52 @@ export class PanelLayout {
   #rebalance(): void {
     const visible = this.#visiblePanels();
     if (visible.length > 0) {
-      let total = visible.reduce((sum, state) => sum + Math.max(0, state.currentWidth), 0);
-      if (total <= 0) {
-        const even = 100 / visible.length;
-        for (const state of visible) state.currentWidth = even;
-        total = 100;
-      }
-      for (const state of visible) {
-        const grow = Math.max(0.1, (state.currentWidth / total) * 100);
-        state.el.style.width = "";
-        state.el.style.flex = `${grow} 1 0px`;
-        state.el.style.minWidth = state.config.minWidth + "px";
+      const fixed = visible.filter((state) => this.#isFixedPanel(state.config));
+      const fluid = visible.filter((state) => !this.#isFixedPanel(state.config));
+
+      if (fluid.length === 0) {
+        // When only fixed panels are visible, fill available width to avoid empty space.
+        const total = fixed.reduce(
+          (sum, state) => sum + Math.max(0.1, this.#fixedPercent(state.config)),
+          0
+        );
+        for (const state of fixed) {
+          const grow = Math.max(0.1, (this.#fixedPercent(state.config) / total) * 100);
+          state.currentWidth = grow;
+          state.el.style.width = "";
+          state.el.style.flex = `${grow} 1 0px`;
+          state.el.style.minWidth = state.config.minWidth + "px";
+        }
+      } else {
+        const fixedTotal = fixed.reduce(
+          (sum, state) => sum + this.#fixedPercent(state.config),
+          0
+        );
+        const remaining = Math.max(0, 100 - fixedTotal);
+
+        for (const state of fixed) {
+          const percent = this.#fixedPercent(state.config);
+          state.currentWidth = percent;
+          state.el.style.width = "";
+          state.el.style.flex = `0 0 ${percent}%`;
+          state.el.style.minWidth = state.config.minWidth + "px";
+        }
+
+        let totalFluid = fluid.reduce((sum, state) => sum + Math.max(0, state.currentWidth), 0);
+        if (totalFluid <= 0) {
+          const even = remaining / fluid.length;
+          for (const state of fluid) {
+            state.currentWidth = even;
+          }
+          totalFluid = remaining;
+        }
+        for (const state of fluid) {
+          const grow = Math.max(0.1, (state.currentWidth / totalFluid) * remaining);
+          state.currentWidth = grow;
+          state.el.style.width = "";
+          state.el.style.flex = `${grow} 1 0px`;
+          state.el.style.minWidth = state.config.minWidth + "px";
+        }
       }
     }
 
@@ -252,6 +336,7 @@ export class PanelLayout {
     if (totalWidth <= 0) return;
 
     for (const state of visible) {
+      if (this.#isFixedPanel(state.config)) continue;
       state.currentWidth = (state.el.offsetWidth / totalWidth) * 100;
     }
   }
@@ -270,9 +355,34 @@ export class PanelLayout {
     for (let i = 0; i < this.#handles.length; i++) {
       const left = this.#panels.get(this.#order[i]);
       const right = this.#panels.get(this.#order[i + 1]);
-      const show = Boolean(left && right && !left.hidden && !right.hidden);
+      const show = Boolean(
+        left
+        && right
+        && !left.hidden
+        && !right.hidden
+        && this.#isPanelResizable(left)
+        && this.#isPanelResizable(right)
+      );
       this.#handles[i].style.display = show ? "" : "none";
     }
+  }
+
+  #isFixedPanel(config: PanelConfig): boolean {
+    return Number.isFinite(config.fixedPercent) && (config.fixedPercent ?? 0) > 0;
+  }
+
+  #fixedPercent(config: PanelConfig): number {
+    return clamp(config.fixedPercent ?? 0, 0, 100);
+  }
+
+  #isPanelResizable(state: PanelState): boolean {
+    if (this.#isFixedPanel(state.config)) return false;
+    return state.config.resizable ?? true;
+  }
+
+  #initialCurrentPercent(config: PanelConfig): number {
+    if (this.#isFixedPanel(config)) return this.#fixedPercent(config);
+    return config.defaultWidth;
   }
 
   #initialPercent(config: PanelConfig): number {

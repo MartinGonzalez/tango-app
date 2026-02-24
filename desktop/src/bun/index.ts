@@ -17,6 +17,11 @@ import {
   clearLastTurnDiffForWorkspace,
 } from "./diff-provider.ts";
 import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
+import {
+  generateCommitMessage,
+  getCommitContext,
+  performCommit,
+} from "./commit-provider.ts";
 import { listSessionsForWorkspace } from "./session-history.ts";
 import { WorkspaceStore } from "./workspace-store.ts";
 import { ApprovalServer } from "./approval-server.ts";
@@ -35,7 +40,16 @@ import {
   getInstalledPlugins,
   invalidateInstalledPluginsCache,
 } from "./plugins.ts";
+import {
+  getAssignedPullRequests,
+  getOpenedPullRequests,
+  getPullRequestDetail,
+  getPullRequestDiff,
+  replyPullRequestReviewComment,
+} from "./pr-provider.ts";
 import { TaskRepository } from "./task-repository.ts";
+import { PRReviewStore } from "./pr-review-store.ts";
+import { ConnectorsRepository } from "./connectors-repository.ts";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
@@ -48,6 +62,7 @@ import type {
   Activity,
   TaskAction,
   TaskCardStatus,
+  ConnectorProvider,
   TaskSourceKind,
 } from "../shared/types.ts";
 
@@ -60,7 +75,9 @@ const sessions = new SessionManager();
 const workspaces = new WorkspaceStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
-const taskRepository = new TaskRepository();
+const connectors = new ConnectorsRepository();
+const taskRepository = new TaskRepository(undefined, connectors);
+const prReviewStore = new PRReviewStore();
 
 let latestSnapshot: Snapshot | null = null;
 let mainRPC: any = null;
@@ -420,6 +437,35 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getBranchHistory(cwd, limit);
       },
 
+      getCommitContext: async ({ cwd }: { cwd: string }) => {
+        return getCommitContext(cwd);
+      },
+
+      generateCommitMessage: async ({
+        cwd,
+        includeUnstaged,
+      }: {
+        cwd: string;
+        includeUnstaged?: boolean;
+      }) => {
+        const message = await generateCommitMessage(cwd, includeUnstaged ?? true);
+        return { message };
+      },
+
+      performCommit: async ({
+        cwd,
+        message,
+        includeUnstaged,
+        mode,
+      }: {
+        cwd: string;
+        message: string;
+        includeUnstaged?: boolean;
+        mode?: "commit" | "commit_and_push";
+      }) => {
+        return performCommit(cwd, message, includeUnstaged ?? true, mode ?? "commit");
+      },
+
       getWorkspaces: async () => {
         await workspaces.load();
         return workspaces.getAll();
@@ -659,6 +705,141 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return taskRepository.getTaskRuns(taskId, limit ?? 20);
       },
 
+      getWorkspaceConnectors: async ({
+        workspacePath,
+      }: {
+        workspacePath: string;
+      }) => {
+        if (!workspacePath) return [];
+        return connectors.listWorkspaceConnectors(workspacePath);
+      },
+
+      startConnectorAuth: async ({
+        workspacePath,
+        provider,
+      }: {
+        workspacePath: string;
+        provider: ConnectorProvider;
+      }) => {
+        return connectors.startConnectorAuth(workspacePath, provider);
+      },
+
+      getConnectorAuthStatus: async ({
+        authSessionId,
+      }: {
+        authSessionId: string;
+      }) => {
+        return connectors.getConnectorAuthStatus(authSessionId);
+      },
+
+      disconnectWorkspaceConnector: async ({
+        workspacePath,
+        provider,
+      }: {
+        workspacePath: string;
+        provider: ConnectorProvider;
+      }) => {
+        await connectors.disconnectWorkspaceConnector(workspacePath, provider);
+      },
+
+      getAssignedPullRequests: async ({ limit }: { limit?: number }) => {
+        return getAssignedPullRequests(limit);
+      },
+
+      getOpenedPullRequests: async ({ limit }: { limit?: number }) => {
+        return getOpenedPullRequests(limit);
+      },
+
+      getPullRequestDetail: async ({
+        repo,
+        number,
+      }: {
+        repo: string;
+        number: number;
+      }) => {
+        return getPullRequestDetail(repo, number);
+      },
+
+      getPullRequestDiff: async ({
+        repo,
+        number,
+        commitSha,
+      }: {
+        repo: string;
+        number: number;
+        commitSha?: string | null;
+      }) => {
+        return getPullRequestDiff(repo, number, commitSha ?? null);
+      },
+
+      getPullRequestReviewState: async ({
+        repo,
+        number,
+      }: {
+        repo: string;
+        number: number;
+      }) => {
+        return prReviewStore.get(repo, number);
+      },
+
+      setPullRequestFileSeen: async ({
+        repo,
+        number,
+        headSha,
+        filePath,
+        fileSha,
+        seen,
+      }: {
+        repo: string;
+        number: number;
+        headSha: string;
+        filePath: string;
+        fileSha: string | null;
+        seen: boolean;
+      }) => {
+        return prReviewStore.setFileSeen({
+          repo,
+          number,
+          headSha,
+          filePath,
+          fileSha,
+          seen,
+        });
+      },
+
+      markPullRequestFilesSeen: async ({
+        repo,
+        number,
+        headSha,
+        files,
+      }: {
+        repo: string;
+        number: number;
+        headSha: string;
+        files: Array<{ path: string; sha: string | null }>;
+      }) => {
+        return prReviewStore.markFilesSeen({
+          repo,
+          number,
+          headSha,
+          files,
+        });
+      },
+
+      replyPullRequestReviewComment: async ({
+        repo,
+        number,
+        commentId,
+        body,
+      }: {
+        repo: string;
+        number: number;
+        commentId: string;
+        body: string;
+      }) => {
+        await replyPullRequestReviewComment(repo, number, commentId, body);
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
@@ -687,6 +868,28 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           if (exitCode !== 0) {
             const stderr = await new Response(proc.stderr).text();
             throw new Error(stderr || `Failed to open path in Finder (${exitCode})`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(msg);
+        }
+      },
+
+      openExternalUrl: async ({ url }: { url: string }) => {
+        const normalized = String(url ?? "").trim();
+        if (!normalized) return;
+        if (!/^https?:\/\//i.test(normalized)) {
+          throw new Error("Only http(s) URLs are allowed");
+        }
+        try {
+          const proc = Bun.spawn(["open", normalized], {
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          const exitCode = await proc.exited;
+          if (exitCode !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            throw new Error(stderr || `Failed to open URL (${exitCode})`);
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -940,8 +1143,23 @@ ApplicationMenu.setApplicationMenu([
     submenu: [
       {
         label: "Toggle Sidebar",
-        accelerator: "CmdOrCtrl+B",
+        accelerator: "CmdOrCtrl+1",
         action: "toggle-sidebar",
+      },
+      {
+        label: "Toggle Second Panel",
+        accelerator: "CmdOrCtrl+2",
+        action: "toggle-second-panel",
+      },
+      {
+        label: "Toggle Files Changed",
+        accelerator: "CmdOrCtrl+4",
+        action: "toggle-files-changed",
+      },
+      {
+        label: "Toggle Git History",
+        accelerator: "CmdOrCtrl+5",
+        action: "toggle-git-history",
       },
       { type: "separator" },
       {
@@ -971,6 +1189,7 @@ mainRPC = mainWindow.webview.rpc;
 mainWindow.on("close", () => {
   watcher.stop();
   approvals.stop();
+  connectors.close();
   taskRepository.close();
   Utils.quit();
 });
@@ -986,6 +1205,8 @@ approvals.onApprovalRequest((req) => {
 
 await workspaces.load();
 await sessionNames.load();
+await prReviewStore.load();
+await connectors.start();
 await ensureServer();
 approvals.start(4243);
 watcher.start();

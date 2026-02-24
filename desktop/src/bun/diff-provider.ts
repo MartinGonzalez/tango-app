@@ -1,7 +1,7 @@
 import type { DiffFile, DiffHunk, DiffLine, DiffScope } from "../shared/types.ts";
 import { parseDiff } from "../mainview/components/diff-parser.ts";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -12,6 +12,10 @@ import { join, relative } from "node:path";
 // - lastTurnDiffBySession: per-session diffs computed when turns finish
 
 type FileSnapshot = { content: string; mtime: number };
+type GitWorkspaceContext = {
+  repoRoot: string;
+  workspacePrefix: string;
+};
 type WorkspaceSnapshotState = {
   allBaseline: Map<string, FileSnapshot> | null;
   turnBaseline: Map<string, FileSnapshot> | null;
@@ -197,8 +201,9 @@ export async function getDiff(
     return state.lastTurnDiffBySession.get(selectedSessionId) ?? [];
   }
 
-  if (await hasGit(cwd)) {
-    return getGitDiff(cwd);
+  const gitContext = await getGitWorkspaceContext(cwd);
+  if (gitContext) {
+    return getGitDiff(cwd, gitContext);
   }
 
   await ensureDiffBaseline(cwd);
@@ -408,17 +413,12 @@ function getPersistedLastTurnDiffPath(cwd: string): string {
 
 // ── Git-based diff ──────────────────────────────────────────────
 
-async function hasGit(cwd: string): Promise<boolean> {
+async function getGitDiff(
+  cwd: string,
+  gitContext?: GitWorkspaceContext
+): Promise<DiffFile[]> {
   try {
-    const s = await stat(join(cwd, ".git"));
-    return s.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-async function getGitDiff(cwd: string): Promise<DiffFile[]> {
-  try {
+    if (!gitContext && !(await getGitWorkspaceContext(cwd))) return [];
     const [trackedOutput, untrackedPaths] = await Promise.all([
       runGitStdout(cwd, ["diff", "HEAD"]),
       listUntrackedFiles(cwd),
@@ -459,6 +459,32 @@ async function runGitStdout(cwd: string, args: string[]): Promise<string> {
   const exitCode = await proc.exited;
   if (exitCode !== 0) return "";
   return stdout;
+}
+
+async function getGitWorkspaceContext(cwd: string): Promise<GitWorkspaceContext | null> {
+  const repoRootRaw = (await runGitStdout(cwd, ["rev-parse", "--show-toplevel"])).trim();
+  if (!repoRootRaw) return null;
+
+  const [repoRoot, resolvedCwd] = await Promise.all([
+    realpath(repoRootRaw).catch(() => repoRootRaw),
+    realpath(cwd).catch(() => cwd),
+  ]);
+
+  const rawPrefix = relative(repoRoot, resolvedCwd);
+  if (rawPrefix.startsWith("..")) return null;
+
+  const workspacePrefix = rawPrefix === "" || rawPrefix === "."
+    ? ""
+    : normalizeRelativePath(rawPrefix);
+
+  return {
+    repoRoot,
+    workspacePrefix,
+  };
+}
+
+function normalizeRelativePath(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
 async function listUntrackedFiles(cwd: string): Promise<string[]> {
@@ -546,8 +572,7 @@ async function getSnapshotDiffFromBaseline(
   cwd: string,
   baseline: Map<string, FileSnapshot>
 ): Promise<DiffFile[]> {
-  const current = new Map<string, FileSnapshot>();
-  await walkDir(cwd, cwd, current);
+  const current = await captureWorkspaceSnapshot(cwd);
 
   const diffs: DiffFile[] = [];
 
@@ -594,8 +619,77 @@ async function captureWorkspaceSnapshot(
   cwd: string
 ): Promise<Map<string, FileSnapshot>> {
   const files = new Map<string, FileSnapshot>();
+  const gitContext = await getGitWorkspaceContext(cwd);
+  if (gitContext) {
+    await captureGitWorkspaceSnapshot(cwd, gitContext, files);
+    return files;
+  }
   await walkDir(cwd, cwd, files);
   return files;
+}
+
+async function captureGitWorkspaceSnapshot(
+  cwd: string,
+  gitContext: GitWorkspaceContext,
+  files: Map<string, FileSnapshot>
+): Promise<void> {
+  const trackedAndUntracked = await listGitWorkspaceFiles(gitContext);
+  for (const relPath of trackedAndUntracked) {
+    if (!relPath) continue;
+    const fileName = relPath.split("/").pop() ?? relPath;
+    const ext = fileName.includes(".")
+      ? "." + fileName.split(".").pop()!.toLowerCase()
+      : "";
+    if (IGNORE_EXTENSIONS.has(ext)) continue;
+
+    const fullPath = join(cwd, relPath);
+    try {
+      const s = await stat(fullPath);
+      if (!s.isFile()) continue;
+      if (s.size > MAX_FILE_SIZE) continue;
+
+      const content = await readFile(fullPath, "utf-8");
+      files.set(relPath, { content, mtime: s.mtimeMs });
+    } catch {
+      // Skip unreadable files
+    }
+  }
+}
+
+async function listGitWorkspaceFiles(gitContext: GitWorkspaceContext): Promise<string[]> {
+  const proc = Bun.spawn(
+    ["git", "ls-files", "-co", "--exclude-standard", "--full-name", "-z"],
+    {
+      cwd: gitContext.repoRoot,
+      stdout: "pipe",
+      stderr: "ignore",
+    }
+  );
+
+  const bytes = await new Response(proc.stdout).arrayBuffer();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0 || bytes.byteLength === 0) {
+    return [];
+  }
+
+  const prefix = gitContext.workspacePrefix;
+  const text = new TextDecoder().decode(bytes);
+  const files = text
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .map((path) => normalizeRelativePath(path));
+
+  if (!prefix) {
+    files.sort((a, b) => a.localeCompare(b));
+    return files;
+  }
+
+  const prefixWithSlash = `${prefix}/`;
+  const scoped = files
+    .filter((path) => path.startsWith(prefixWithSlash))
+    .map((path) => path.slice(prefixWithSlash.length));
+  scoped.sort((a, b) => a.localeCompare(b));
+  return scoped;
 }
 
 // ── File walking ────────────────────────────────────────────────

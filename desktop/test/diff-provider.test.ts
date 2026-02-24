@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DiffFile } from "../src/shared/types.ts";
@@ -55,6 +55,24 @@ describe("diff-provider getDiff", () => {
     expect(byPath(diff, "tracked.txt")?.status).toBe("modified");
   });
 
+  test("filters .gitignore entries from all-scope diff in nested workspaces", async () => {
+    const workspace = join(repoDir, "src");
+    await mkdir(workspace, { recursive: true });
+    await mkdir(join(workspace, "bin"), { recursive: true });
+    await mkdir(join(workspace, "obj"), { recursive: true });
+    await writeFile(join(repoDir, ".gitignore"), "src/bin/\nsrc/obj/\n", "utf-8");
+    await writeFile(join(workspace, "keep.txt"), "keep me", "utf-8");
+    await writeFile(join(workspace, "bin", "generated.log"), "ignored", "utf-8");
+    await writeFile(join(workspace, "obj", "build.tmp"), "ignored", "utf-8");
+
+    const diff = await getDiff(workspace, "all");
+    const paths = diff.map((file) => file.path);
+
+    expect(paths).toContain("keep.txt");
+    expect(paths).not.toContain("bin/generated.log");
+    expect(paths).not.toContain("obj/build.tmp");
+  });
+
   test("persists last-turn diff across module reloads", async () => {
     await beginTurnDiff(repoDir, "session-persist");
     await writeFile(join(repoDir, "tracked.txt"), "line one\nline two\n", "utf-8");
@@ -108,6 +126,29 @@ describe("diff-provider getDiff", () => {
     expect(byPath(sessionA, "tracked.txt")?.status).toBe("modified");
     expect(byPath(sessionB, "tracked.txt")?.status).toBe("modified");
     expect(missing).toEqual([]);
+  });
+
+  test("filters .gitignore entries from last-turn snapshot diff", async () => {
+    const workspace = join(repoDir, "nested");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(repoDir, ".gitignore"), "nested/bin/\nnested/obj/\n", "utf-8");
+
+    await beginTurnDiff(workspace, "session-ignore");
+
+    await writeFile(join(workspace, "visible.txt"), "visible", "utf-8");
+    await mkdir(join(workspace, "bin"), { recursive: true });
+    await writeFile(join(workspace, "bin", "generated.log"), "ignored", "utf-8");
+    await mkdir(join(workspace, "obj"), { recursive: true });
+    await writeFile(join(workspace, "obj", "build.tmp"), "ignored", "utf-8");
+
+    await finalizeTurnDiff(workspace, "session-ignore");
+    const diff = await getDiff(workspace, "last_turn", "session-ignore");
+    const paths = diff.map((file) => file.path);
+
+    expect(paths).toContain("visible.txt");
+    expect(paths).not.toContain("bin/generated.log");
+    expect(paths).not.toContain("obj/build.tmp");
+    await clearLastTurnDiffForWorkspace(workspace).catch(() => {});
   });
 });
 

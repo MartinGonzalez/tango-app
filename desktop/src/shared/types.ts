@@ -158,6 +158,29 @@ export type BranchCommit = {
   isPushed: boolean;
 };
 
+export type CommitActionMode = "commit" | "commit_and_push";
+
+export type CommitContext = {
+  branch: string;
+  hasChanges: boolean;
+  stagedFiles: number;
+  stagedAdditions: number;
+  stagedDeletions: number;
+  unstagedFiles: number;
+  unstagedAdditions: number;
+  unstagedDeletions: number;
+  untrackedFiles: number;
+  totalFiles: number;
+  totalAdditions: number;
+  totalDeletions: number;
+};
+
+export type CommitExecutionResult = {
+  commitHash: string;
+  branch: string;
+  pushed: boolean;
+};
+
 // ── Stream event types (claude -p --output-format stream-json --verbose) ──
 // These match the real output of `claude -p --output-format stream-json --verbose`
 
@@ -345,6 +368,178 @@ export type TaskCardDetail = {
   updatedAt: string;
 };
 
+// ── Connectors types ──────────────────────────────────────────
+
+export type ConnectorProvider = "slack" | "jira";
+
+export type ConnectorStatus = "connected" | "disconnected" | "error";
+
+export type WorkspaceConnector = {
+  workspacePath: string;
+  provider: ConnectorProvider;
+  status: ConnectorStatus;
+  externalWorkspaceId: string | null;
+  externalWorkspaceName: string | null;
+  externalUserId: string | null;
+  scopes: string[];
+  tokenExpiresAt: string | null;
+  lastError: string | null;
+  updatedAt: string;
+};
+
+export type ConnectorAuthSessionStatus =
+  | "pending"
+  | "completed"
+  | "failed"
+  | "expired";
+
+export type ConnectorAuthSession = {
+  id: string;
+  workspacePath: string;
+  provider: ConnectorProvider;
+  status: ConnectorAuthSessionStatus;
+  authorizeUrl: string | null;
+  error: string | null;
+  expiresAt: string;
+  updatedAt: string;
+};
+
+// ── Pull request types ──────────────────────────────────────────
+
+export type PullRequestSummary = {
+  repo: string;
+  number: number;
+  title: string;
+  authorLogin: string;
+  authorIsBot: boolean;
+  isDraft: boolean;
+  updatedAt: string;
+  url: string;
+};
+
+export type PullRequestCheckType = "check_run" | "status_context" | "other";
+
+export type PullRequestCheck = {
+  id: string;
+  type: PullRequestCheckType;
+  name: string;
+  workflowName: string | null;
+  status: string;
+  conclusion: string | null;
+  url: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+export type PullRequestCommit = {
+  sha: string;
+  shortSha: string;
+  messageHeadline: string;
+  messageBody: string;
+  authoredDate: string;
+  committedDate: string;
+  authorLogin: string;
+  authorName: string;
+};
+
+export type PullRequestFileMeta = {
+  path: string;
+  previousPath: string | null;
+  status: DiffFile["status"];
+  additions: number;
+  deletions: number;
+  sha: string | null;
+};
+
+export type PullRequestIssueComment = {
+  kind: "issue_comment";
+  id: string;
+  authorLogin: string;
+  authorAssociation: string | null;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  url: string | null;
+};
+
+export type PullRequestReviewEvent = {
+  kind: "review";
+  id: string;
+  authorLogin: string;
+  authorAssociation: string | null;
+  state: string;
+  body: string;
+  commitSha: string | null;
+  createdAt: string;
+  submittedAt: string | null;
+};
+
+export type PullRequestReviewThreadComment = {
+  id: string;
+  authorLogin: string;
+  authorAssociation: string | null;
+  body: string;
+  path: string;
+  line: number | null;
+  originalLine: number | null;
+  side: string | null;
+  commitSha: string | null;
+  createdAt: string;
+  updatedAt: string;
+  inReplyToId: string | null;
+};
+
+export type PullRequestReviewThread = {
+  kind: "review_thread";
+  id: string;
+  path: string;
+  line: number | null;
+  originalLine: number | null;
+  side: string | null;
+  isResolved: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+  comments: PullRequestReviewThreadComment[];
+};
+
+export type PullRequestConversationItem =
+  | PullRequestIssueComment
+  | PullRequestReviewEvent
+  | PullRequestReviewThread;
+
+export type PullRequestDetail = {
+  repo: string;
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  state: string;
+  isDraft: boolean;
+  authorLogin: string;
+  authorName: string;
+  authorIsBot: boolean;
+  baseRefName: string;
+  headRefName: string;
+  headSha: string;
+  reviewDecision: string | null;
+  mergeStateStatus: string | null;
+  createdAt: string;
+  updatedAt: string;
+  checks: PullRequestCheck[];
+  commits: PullRequestCommit[];
+  files: PullRequestFileMeta[];
+  conversation: PullRequestConversationItem[];
+  warnings: string[];
+};
+
+export type PullRequestReviewState = {
+  repo: string;
+  number: number;
+  reviewedHeadSha: string | null;
+  viewedFiles: Record<string, { sha: string | null; seenAt: string }>;
+  updatedAt: string;
+};
+
 // ── RPC contract ─────────────────────────────────────────────────
 
 export type AppRPC = {
@@ -412,6 +607,23 @@ export type AppRPC = {
       getBranchHistory: {
         params: { cwd: string; limit?: number };
         response: BranchCommit[];
+      };
+      getCommitContext: {
+        params: { cwd: string };
+        response: CommitContext;
+      };
+      generateCommitMessage: {
+        params: { cwd: string; includeUnstaged?: boolean };
+        response: { message: string };
+      };
+      performCommit: {
+        params: {
+          cwd: string;
+          message: string;
+          includeUnstaged?: boolean;
+          mode?: CommitActionMode;
+        };
+        response: CommitExecutionResult;
       };
       getWorkspaces: {
         params: {};
@@ -497,6 +709,77 @@ export type AppRPC = {
         params: { taskId: string; limit?: number };
         response: TaskRun[];
       };
+      getWorkspaceConnectors: {
+        params: { workspacePath: string };
+        response: WorkspaceConnector[];
+      };
+      startConnectorAuth: {
+        params: {
+          workspacePath: string;
+          provider: ConnectorProvider;
+        };
+        response: ConnectorAuthSession;
+      };
+      getConnectorAuthStatus: {
+        params: { authSessionId: string };
+        response: ConnectorAuthSession;
+      };
+      disconnectWorkspaceConnector: {
+        params: {
+          workspacePath: string;
+          provider: ConnectorProvider;
+        };
+        response: void;
+      };
+      getAssignedPullRequests: {
+        params: { limit?: number };
+        response: PullRequestSummary[];
+      };
+      getOpenedPullRequests: {
+        params: { limit?: number };
+        response: PullRequestSummary[];
+      };
+      getPullRequestDetail: {
+        params: { repo: string; number: number };
+        response: PullRequestDetail;
+      };
+      getPullRequestDiff: {
+        params: { repo: string; number: number; commitSha?: string | null };
+        response: DiffFile[];
+      };
+      getPullRequestReviewState: {
+        params: { repo: string; number: number };
+        response: PullRequestReviewState | null;
+      };
+      setPullRequestFileSeen: {
+        params: {
+          repo: string;
+          number: number;
+          headSha: string;
+          filePath: string;
+          fileSha: string | null;
+          seen: boolean;
+        };
+        response: PullRequestReviewState;
+      };
+      markPullRequestFilesSeen: {
+        params: {
+          repo: string;
+          number: number;
+          headSha: string;
+          files: Array<{ path: string; sha: string | null }>;
+        };
+        response: PullRequestReviewState;
+      };
+      replyPullRequestReviewComment: {
+        params: {
+          repo: string;
+          number: number;
+          commentId: string;
+          body: string;
+        };
+        response: void;
+      };
       getFileContent: {
         params: { cwd: string; path: string; maxBytes?: number };
         response: WorkspaceFileContent;
@@ -511,6 +794,10 @@ export type AppRPC = {
       };
       openInFinder: {
         params: { path: string };
+        response: void;
+      };
+      openExternalUrl: {
+        params: { url: string };
         response: void;
       };
       pickDirectory: {

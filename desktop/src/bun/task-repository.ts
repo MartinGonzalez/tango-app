@@ -10,6 +10,17 @@ import type {
 import { buildTaskActionPrompt } from "./task-prompts.ts";
 import { fetchTaskSourceFromUrl, inferSourceKindFromUrl } from "./task-source-fetcher.ts";
 import { TasksStore } from "./tasks-store.ts";
+import { fetchSlackSourceFromPermalink } from "./slack-source-fetcher.ts";
+import {
+  fetchJiraSourceFromUrl,
+  type JiraSourceFetchResult,
+} from "./jira-source-fetcher.ts";
+import type { JiraAuthContext } from "./connectors-repository.ts";
+
+type ConnectorsAccess = {
+  getSlackAccessToken: (workspacePath: string) => Promise<string>;
+  getJiraAuthContext: (workspacePath: string) => Promise<JiraAuthContext>;
+};
 
 type UpdateTaskPatch = {
   title?: string;
@@ -33,9 +44,11 @@ export type PreparedTaskRun = {
 
 export class TaskRepository {
   #store: TasksStore;
+  #connectors: ConnectorsAccess | null;
 
-  constructor(store?: TasksStore) {
+  constructor(store?: TasksStore, connectors?: ConnectorsAccess | null) {
     this.#store = store ?? new TasksStore();
+    this.#connectors = connectors ?? null;
   }
 
   close(): void {
@@ -148,6 +161,85 @@ export class TaskRepository {
         fetchHttpStatus: null,
         fetchError: "Source has no URL",
         fetchedAt: null,
+      });
+    }
+
+    if (source.kind === "slack") {
+      if (!this.#connectors) {
+        return this.#store.updateTaskSource(sourceId, {
+          fetchStatus: "network_error",
+          fetchHttpStatus: null,
+          fetchError: "Connect Slack in Connectors to fetch this source",
+          fetchedAt: null,
+        });
+      }
+
+      let accessToken: string;
+      try {
+        accessToken = await this.#connectors.getSlackAccessToken(task.workspacePath);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return this.#store.updateTaskSource(sourceId, {
+          fetchStatus: "network_error",
+          fetchHttpStatus: null,
+          fetchError: message || "Connect Slack in Connectors to fetch this source",
+          fetchedAt: null,
+        });
+      }
+
+      const slackResult = await fetchSlackSourceFromPermalink(source.url, accessToken, {
+        messageLimit: 30,
+      });
+      return this.#store.updateTaskSource(sourceId, {
+        kind: slackResult.kind,
+        sourceTitle: slackResult.title,
+        contentText: slackResult.content,
+        fetchStatus: slackResult.fetchStatus,
+        fetchHttpStatus: slackResult.httpStatus,
+        fetchError: slackResult.error,
+        fetchedAt: slackResult.fetchedAt,
+      });
+    }
+
+    if (source.kind === "jira") {
+      if (!this.#connectors) {
+        return this.#store.updateTaskSource(sourceId, {
+          fetchStatus: "network_error",
+          fetchHttpStatus: null,
+          fetchError: "Connect Jira in Connectors to fetch this source",
+          fetchedAt: null,
+        });
+      }
+
+      let jiraAuth: JiraAuthContext;
+      try {
+        jiraAuth = await this.#connectors.getJiraAuthContext(task.workspacePath);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return this.#store.updateTaskSource(sourceId, {
+          fetchStatus: "network_error",
+          fetchHttpStatus: null,
+          fetchError: message || "Connect Jira in Connectors to fetch this source",
+          fetchedAt: null,
+        });
+      }
+
+      const jiraResult: JiraSourceFetchResult = await fetchJiraSourceFromUrl(
+        source.url,
+        jiraAuth,
+        {
+          commentLimit: 30,
+        }
+      );
+
+      return this.#store.updateTaskSource(sourceId, {
+        kind: jiraResult.kind,
+        sourceTitle: jiraResult.title,
+        contentText: jiraResult.content,
+        fetchStatus: jiraResult.fetchStatus,
+        fetchHttpStatus: jiraResult.httpStatus,
+        fetchError: jiraResult.error,
+        fetchedAt: jiraResult.fetchedAt,
       });
     }
 

@@ -1,10 +1,13 @@
 import { h, clearChildren } from "../lib/dom.ts";
 import { menuDotsIcon, workspaceBranchIcon } from "../lib/icons.ts";
+import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type {
   DiffFile,
   DiffLine,
+  PullRequestReviewThread,
   WorkspaceFileContent,
 } from "../../shared/types.ts";
+import { renderMarkdown } from "./chat-view.ts";
 import Prism from "prismjs";
 import "prismjs/components/prism-clike";
 import "prismjs/components/prism-javascript";
@@ -31,7 +34,13 @@ import "prismjs/components/prism-php";
 
 export type DiffViewCallbacks = {
   onBranchPanelToggle?: (visible: boolean) => void;
+  onCommitClick?: () => void;
   onRequestFullFile?: (path: string) => Promise<WorkspaceFileContent>;
+  onToggleFileSeen?: (path: string, seen: boolean) => void;
+  onReplyReviewThread?: (
+    thread: PullRequestReviewThread,
+    body: string
+  ) => Promise<void> | void;
 };
 
 type FullFileLoadState = {
@@ -62,6 +71,7 @@ export class DiffView {
   #branchHostEl: HTMLElement;
   #filesToggleBtn: HTMLButtonElement;
   #branchToggleBtn: HTMLButtonElement;
+  #commitBtn: HTMLButtonElement;
   #callbacks: DiffViewCallbacks;
   #files: DiffFile[] = [];
   #activeFile: string | null = null;
@@ -73,10 +83,20 @@ export class DiffView {
   #fullFileLoadState = new Map<string, FullFileLoadState>();
   #fullFileRequestIds = new Map<string, number>();
   #openActionsFilePath: string | null = null;
+  #reviewMode = false;
+  #fileReviewState = new Map<string, PullRequestFileReviewState>();
+  #reviewThreads: PullRequestReviewThread[] = [];
+  #reviewThreadsByPath = new Map<string, PullRequestReviewThread[]>();
+  #threadExpanded = new Map<string, boolean>();
+  #threadReplyComposerOpen = new Map<string, boolean>();
+  #threadReplyDraft = new Map<string, string>();
+  #threadReplySubmitting = new Set<string>();
+  #threadReplyError = new Map<string, string>();
   #onGlobalClick: (event: MouseEvent) => void;
   #onGlobalKeyDown: (event: KeyboardEvent) => void;
   #fileSectionEls = new Map<string, HTMLDetailsElement>();
   #fileActionsMenus = new Map<string, HTMLElement>();
+  #commitButtonVisible = false;
 
   constructor(container: HTMLElement, callbacks: DiffViewCallbacks = {}) {
     this.#callbacks = callbacks;
@@ -112,6 +132,13 @@ export class DiffView {
       onclick: () => this.toggleBranchPanel(),
     }, [workspaceBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
 
+    this.#commitBtn = h("button", {
+      class: "dv-commit-btn",
+      title: "Commit changes",
+      hidden: true,
+      onclick: () => this.#callbacks.onCommitClick?.(),
+    }, ["Commit"]) as HTMLButtonElement;
+
     this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
       h("span", { class: "dv-file-label" }, [""]),
       h("span", { class: "dv-toolbar-spacer" }),
@@ -127,6 +154,7 @@ export class DiffView {
       }, ["Split"]),
       this.#filesToggleBtn,
       this.#branchToggleBtn,
+      this.#commitBtn,
     ]);
 
     this.#contentEl = h("div", { class: "dv-content" });
@@ -159,9 +187,13 @@ export class DiffView {
     const nextFullState = new Map<string, FullFileLoadState>();
     const nextRequestIds = new Map<string, number>();
     for (const file of files) {
+      const reviewState = this.#fileReviewState.get(file.path);
+      const defaultExpanded = this.#reviewMode && reviewState?.seen
+        ? false
+        : autoExpandByDefault;
       nextExpanded.set(
         file.path,
-        this.#fileExpanded.get(file.path) ?? autoExpandByDefault
+        this.#fileExpanded.get(file.path) ?? defaultExpanded
       );
       if (this.#fullFileVisible.has(file.path)) {
         nextVisible.add(file.path);
@@ -234,10 +266,95 @@ export class DiffView {
     this.#fullFileRequestIds.clear();
     this.#fileSectionEls.clear();
     this.#fileActionsMenus.clear();
+    this.#fileReviewState.clear();
+    this.#reviewThreads = [];
+    this.#reviewThreadsByPath.clear();
+    this.#threadExpanded.clear();
+    this.#threadReplyComposerOpen.clear();
+    this.#threadReplyDraft.clear();
+    this.#threadReplySubmitting.clear();
+    this.#threadReplyError.clear();
     this.#openActionsFilePath = null;
     const label = this.#toolbarEl.querySelector(".dv-file-label");
     if (label) label.textContent = "";
     this.#contentEl.replaceChildren(h("div", { class: "dv-empty" }, ["No changes"]));
+  }
+
+  setReviewMode(enabled: boolean): void {
+    this.#reviewMode = enabled;
+    this.#el.classList.toggle("review-mode", enabled);
+    this.#branchToggleBtn.hidden = enabled;
+    this.#commitBtn.hidden = enabled || !this.#commitButtonVisible;
+    if (enabled) {
+      this.#fullFileVisible.clear();
+      this.#fullFileLoadState.clear();
+      this.#fullFileRequestIds.clear();
+    }
+    if (enabled && this.#branchPanelVisible) {
+      this.setBranchPanelVisible(false, false);
+    }
+    if (enabled && this.#openActionsFilePath) {
+      this.#closeActionsMenu();
+    }
+    this.#renderDiff(false);
+  }
+
+  setFileReviewState(state: Map<string, PullRequestFileReviewState>): void {
+    this.#fileReviewState = new Map(state);
+
+    if (this.#reviewMode) {
+      for (const file of this.#files) {
+        const review = this.#fileReviewState.get(file.path);
+        if (review?.seen && file.path !== this.#activeFile) {
+          this.#fileExpanded.set(file.path, false);
+        }
+      }
+    }
+
+    this.#renderDiff(false);
+  }
+
+  setReviewThreads(threads: PullRequestReviewThread[]): void {
+    this.#reviewThreads = [...threads];
+    const byPath = new Map<string, PullRequestReviewThread[]>();
+    const validIds = new Set<string>();
+    for (const thread of threads) {
+      const path = String(thread.path ?? "").trim();
+      if (!path) continue;
+      const anchorLine = thread.line ?? thread.originalLine;
+      if (anchorLine == null) continue;
+      validIds.add(thread.id);
+      const list = byPath.get(path) ?? [];
+      list.push(thread);
+      byPath.set(path, list);
+    }
+    for (const threadId of this.#threadExpanded.keys()) {
+      if (!validIds.has(threadId)) {
+        this.#threadExpanded.delete(threadId);
+      }
+    }
+    for (const threadId of this.#threadReplyComposerOpen.keys()) {
+      if (!validIds.has(threadId)) {
+        this.#threadReplyComposerOpen.delete(threadId);
+      }
+    }
+    for (const threadId of this.#threadReplyDraft.keys()) {
+      if (!validIds.has(threadId)) {
+        this.#threadReplyDraft.delete(threadId);
+      }
+    }
+    for (const threadId of this.#threadReplyError.keys()) {
+      if (!validIds.has(threadId)) {
+        this.#threadReplyError.delete(threadId);
+      }
+    }
+    for (const threadId of this.#threadReplySubmitting) {
+      if (!validIds.has(threadId)) {
+        this.#threadReplySubmitting.delete(threadId);
+      }
+    }
+    this.#reviewThreadsByPath = byPath;
+    this.#renderDiff(false);
   }
 
   #renderDiff(scrollToActive = true): void {
@@ -267,6 +384,8 @@ export class DiffView {
   }
 
   #renderFileSection(file: DiffFile): HTMLElement {
+    const review = this.#fileReviewState.get(file.path);
+    const attention = review?.attention ?? null;
     const statusSymbol = {
       added: "+",
       deleted: "\u2212",
@@ -278,9 +397,10 @@ export class DiffView {
       adds > 0 ? h("span", { class: "dv-delta-add" }, [`+${adds}`]) : null as any,
       dels > 0 ? h("span", { class: "dv-delta-del" }, [`-${dels}`]) : null as any,
     ].filter(Boolean) as HTMLElement[];
+    const threadCommentCount = this.#countThreadCommentsForFile(file.path);
 
     const details = h("details", {
-      class: `dv-file-section${file.path === this.#activeFile ? " active" : ""}`,
+      class: `dv-file-section${file.path === this.#activeFile ? " active" : ""}${review?.seen ? " seen" : ""}${attention ? ` has-attention attention-${attention}` : ""}`,
       dataset: { filePath: file.path },
     }) as HTMLDetailsElement;
     details.open = this.#fileExpanded.get(file.path) ?? true;
@@ -291,6 +411,24 @@ export class DiffView {
         h("span", { class: "dv-file-main" }, [
           h("span", { class: "dv-file-path" }, [file.path]),
           delta.length > 0 ? h("span", { class: "dv-file-delta" }, delta) : null as any,
+          this.#reviewMode && review?.seen
+            ? h("span", { class: "dv-review-chip dv-review-chip-seen" }, ["Seen"])
+            : null as any,
+          this.#reviewMode && attention
+            ? h("span", { class: `dv-review-chip dv-review-chip-${attention}` }, [
+                attention === "new" ? "New" : "Updated",
+              ])
+            : null as any,
+          this.#reviewMode && threadCommentCount > 0
+            ? h("span", { class: "dv-thread-count-chip", title: `${threadCommentCount} comment${threadCommentCount === 1 ? "" : "s"}` }, [
+                h("span", {
+                  class: "dv-thread-count-icon",
+                  "aria-hidden": "true",
+                  innerHTML: threadCountIconSvg(),
+                }),
+                h("span", { class: "dv-thread-count-value" }, [String(threadCommentCount)]),
+              ])
+            : null as any,
         ].filter(Boolean)),
         file.isBinary ? h("span", { class: "dv-file-binary" }, ["bin"]) : null as any,
         this.#renderFileActions(file),
@@ -332,50 +470,76 @@ export class DiffView {
     const isMenuOpen = this.#openActionsFilePath === file.path;
     const isFullVisible = this.#fullFileVisible.has(file.path);
     const actionLabel = isFullVisible ? "Hide full" : "Show full";
+    const isSeen = this.#fileReviewState.get(file.path)?.seen ?? false;
+    const canToggleSeen = this.#reviewMode && Boolean(this.#callbacks.onToggleFileSeen);
+    const showMenu = !this.#reviewMode;
 
     const actions = h("div", { class: "dv-file-actions" });
 
-    const menuButton = h("button", {
-      class: "dv-file-actions-btn",
-      title: "More actions",
-      "aria-label": `More actions for ${file.path}`,
-      onclick: (event: Event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.#toggleFileActionsMenu(file.path);
-      },
-    }, [menuDotsIcon()]) as HTMLButtonElement;
+    if (canToggleSeen) {
+      const seenToggle = h("button", {
+        class: `dv-seen-toggle${isSeen ? " active" : ""}`,
+        title: isSeen ? "Mark as unread" : "Mark as read",
+        "aria-label": isSeen
+          ? `Mark ${file.path} as unread`
+          : `Mark ${file.path} as read`,
+        "aria-pressed": String(isSeen),
+        onclick: (event: Event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.#callbacks.onToggleFileSeen?.(file.path, !isSeen);
+        },
+      }, [isSeen ? "\u2713" : "\u2610"]) as HTMLButtonElement;
+      actions.appendChild(seenToggle);
+    }
 
-    const actionButton = h("button", {
-      class: "dv-file-actions-item",
-      onclick: (event: Event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.#openActionsFilePath = null;
-        this.#toggleShowFullFile(file.path);
-      },
-    }, [actionLabel]) as HTMLButtonElement;
+    if (showMenu) {
+      const menuButton = h("button", {
+        class: "dv-file-actions-btn",
+        title: "More actions",
+        "aria-label": `More actions for ${file.path}`,
+        onclick: (event: Event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.#toggleFileActionsMenu(file.path);
+        },
+      }, [menuDotsIcon()]) as HTMLButtonElement;
 
-    const menu = h("div", {
-      class: "dv-file-actions-menu",
-      hidden: !isMenuOpen,
-    }, [actionButton]);
-    menu.addEventListener("mousedown", (event) => event.stopPropagation());
-    menu.addEventListener("click", (event) => event.stopPropagation());
+      const actionButton = h("button", {
+        class: "dv-file-actions-item",
+        onclick: (event: Event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.#openActionsFilePath = null;
+          this.#toggleShowFullFile(file.path);
+        },
+      }, [actionLabel]) as HTMLButtonElement;
+
+      const menu = h("div", {
+        class: "dv-file-actions-menu",
+        hidden: !isMenuOpen,
+      }, [actionButton]);
+      menu.addEventListener("mousedown", (event) => event.stopPropagation());
+      menu.addEventListener("click", (event) => event.stopPropagation());
+      actions.appendChild(menuButton);
+      actions.appendChild(menu);
+      this.#fileActionsMenus.set(file.path, menu);
+    } else {
+      this.#fileActionsMenus.delete(file.path);
+    }
 
     actions.addEventListener("mousedown", (event) => event.stopPropagation());
     actions.addEventListener("click", (event) => event.stopPropagation());
-    actions.appendChild(menuButton);
-    actions.appendChild(menu);
-    this.#fileActionsMenus.set(file.path, menu);
     return actions;
   }
 
   #toggleFileActionsMenu(path: string): void {
+    if (this.#reviewMode) return;
     this.#setOpenActionsFilePath(this.#openActionsFilePath === path ? null : path);
   }
 
   #toggleShowFullFile(path: string): void {
+    if (this.#reviewMode) return;
     if (this.#fullFileVisible.has(path)) {
       this.#fullFileVisible.delete(path);
       this.#rerenderFileSection(path);
@@ -499,6 +663,224 @@ export class DiffView {
     return container;
   }
 
+  #collectThreadsForLine(
+    filePath: string,
+    oldLineNo: number | null,
+    newLineNo: number | null
+  ): PullRequestReviewThread[] {
+    if (!this.#reviewMode) return [];
+    const threads = this.#reviewThreadsByPath.get(filePath);
+    if (!threads || threads.length === 0) return [];
+
+    const matches = new Map<string, PullRequestReviewThread>();
+    for (const thread of threads) {
+      const anchorLine = thread.line ?? thread.originalLine;
+      if (anchorLine == null) continue;
+      const side = normalizeReviewThreadSide(thread);
+
+      if (
+        (side === "LEFT" || side === "BOTH")
+        && oldLineNo != null
+        && oldLineNo === anchorLine
+      ) {
+        matches.set(thread.id, thread);
+      }
+      if (
+        (side === "RIGHT" || side === "BOTH")
+        && newLineNo != null
+        && newLineNo === anchorLine
+      ) {
+        matches.set(thread.id, thread);
+      }
+    }
+
+    return [...matches.values()].sort(compareReviewThreadsByDate);
+  }
+
+  #countThreadCommentsForFile(filePath: string): number {
+    if (!this.#reviewMode) return 0;
+    const threads = this.#reviewThreadsByPath.get(filePath);
+    if (!threads || threads.length === 0) return 0;
+
+    let total = 0;
+    for (const thread of threads) {
+      total += thread.comments.length;
+    }
+    return total;
+  }
+
+  #renderThreadRow(
+    threads: PullRequestReviewThread[],
+    columnCount: number
+  ): HTMLElement {
+    const bubble = h("div", { class: "dv-thread-bubble" });
+    for (const thread of threads) {
+      bubble.appendChild(this.#renderThreadCard(thread));
+    }
+
+    return h("tr", { class: "dv-thread-row" }, [
+      h("td", { class: "dv-thread-cell", colspan: String(columnCount) }, [bubble]),
+    ]);
+  }
+
+  #renderThreadCard(thread: PullRequestReviewThread): HTMLElement {
+    const label = formatReviewThreadAnchor(thread);
+    const commentCount = thread.comments.length;
+    const card = h("details", { class: "dv-thread-card" }) as HTMLDetailsElement;
+    card.open = this.#threadExpanded.get(thread.id) ?? false;
+    card.addEventListener("toggle", () => {
+      this.#threadExpanded.set(thread.id, card.open);
+    });
+
+    card.appendChild(
+      h("summary", { class: "dv-thread-card-head" }, [
+        h("span", { class: "dv-thread-card-head-left" }, [
+          h("span", { class: "dv-thread-card-caret", "aria-hidden": "true" }, ["\u25B8"]),
+          h("span", { class: "dv-thread-card-label" }, [`Comment on line ${label}`]),
+        ]),
+        h("span", { class: "dv-thread-card-head-right" }, [
+          h("span", { class: "dv-thread-card-count" }, [`${commentCount} comment${commentCount === 1 ? "" : "s"}`]),
+          thread.isResolved
+            ? h("span", { class: "dv-thread-card-resolved" }, ["Resolved"])
+            : null as any,
+        ].filter(Boolean)),
+      ])
+    );
+
+    for (const comment of thread.comments) {
+      card.appendChild(
+        h("div", { class: "dv-thread-comment" }, [
+          h("div", { class: "dv-thread-comment-head" }, [
+            h("span", { class: "dv-thread-comment-author" }, [`@${comment.authorLogin}`]),
+            h("span", { class: "dv-thread-comment-time" }, [formatReviewThreadTime(comment.createdAt)]),
+          ]),
+          h("div", {
+            class: "dv-thread-comment-body",
+            innerHTML: renderMarkdown(comment.body || "_No content_"),
+          }),
+        ])
+      );
+    }
+
+    const replyComposer = this.#renderThreadReplyComposer(thread);
+    if (replyComposer) {
+      card.appendChild(replyComposer);
+    }
+
+    return card;
+  }
+
+  #renderThreadReplyComposer(thread: PullRequestReviewThread): HTMLElement | null {
+    if (!this.#callbacks.onReplyReviewThread) return null;
+
+    const threadId = thread.id;
+    const composerOpen = this.#threadReplyComposerOpen.get(threadId) ?? false;
+    const draft = this.#threadReplyDraft.get(threadId) ?? "";
+    const submitting = this.#threadReplySubmitting.has(threadId);
+    const errorMessage = this.#threadReplyError.get(threadId) ?? "";
+    const holder = h("div", { class: "dv-thread-reply" });
+
+    if (!composerOpen) {
+      holder.appendChild(
+        h("button", {
+          class: "dv-thread-reply-trigger",
+          type: "button",
+          onclick: (event: Event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.#threadReplyComposerOpen.set(threadId, true);
+            this.#threadReplyError.delete(threadId);
+            this.#rerenderFileSection(thread.path);
+          },
+        }, ["Reply"])
+      );
+      return holder;
+    }
+
+    const textarea = h("textarea", {
+      class: "dv-thread-reply-input",
+      rows: "3",
+      placeholder: "Write a reply",
+      disabled: submitting,
+      oninput: (event: Event) => {
+        const value = (event.target as HTMLTextAreaElement).value;
+        this.#threadReplyDraft.set(threadId, value);
+        if (this.#threadReplyError.has(threadId)) {
+          this.#threadReplyError.delete(threadId);
+          this.#rerenderFileSection(thread.path);
+        }
+      },
+    }) as HTMLTextAreaElement;
+    textarea.value = draft;
+
+    const cancelButton = h("button", {
+      class: "dv-thread-reply-btn ghost",
+      type: "button",
+      disabled: submitting,
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#threadReplyComposerOpen.set(threadId, false);
+        this.#threadReplyError.delete(threadId);
+        this.#rerenderFileSection(thread.path);
+      },
+    }, ["Cancel"]);
+
+    const sendButton = h("button", {
+      class: "dv-thread-reply-btn",
+      type: "button",
+      disabled: submitting,
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.#submitThreadReply(thread);
+      },
+    }, [submitting ? "Sending..." : "Comment"]);
+
+    holder.appendChild(textarea);
+    if (errorMessage) {
+      holder.appendChild(h("div", { class: "dv-thread-reply-error" }, [errorMessage]));
+    }
+    holder.appendChild(h("div", { class: "dv-thread-reply-actions" }, [
+      cancelButton,
+      sendButton,
+    ]));
+
+    return holder;
+  }
+
+  async #submitThreadReply(thread: PullRequestReviewThread): Promise<void> {
+    const callback = this.#callbacks.onReplyReviewThread;
+    if (!callback) return;
+
+    const threadId = thread.id;
+    const replyBody = (this.#threadReplyDraft.get(threadId) ?? "").trim();
+    if (!replyBody) {
+      this.#threadReplyError.set(threadId, "Reply cannot be empty.");
+      this.#rerenderFileSection(thread.path);
+      return;
+    }
+
+    this.#threadReplySubmitting.add(threadId);
+    this.#threadReplyError.delete(threadId);
+    this.#rerenderFileSection(thread.path);
+
+    try {
+      await callback(thread, replyBody);
+      this.#threadReplyDraft.delete(threadId);
+      this.#threadReplyComposerOpen.set(threadId, false);
+      this.#threadReplyError.delete(threadId);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Failed to send reply";
+      this.#threadReplyError.set(threadId, message || "Failed to send reply");
+    } finally {
+      this.#threadReplySubmitting.delete(threadId);
+      this.#rerenderFileSection(thread.path);
+    }
+  }
+
   #buildUnifiedTable(file: DiffFile): HTMLElement {
     const table = h("table", { class: "diff-table unified" });
 
@@ -531,6 +913,15 @@ export class DiffView {
             }),
           ])
         );
+
+        const threads = this.#collectThreadsForLine(
+          file.path,
+          line.oldLineNo ?? null,
+          line.newLineNo ?? null
+        );
+        if (threads.length > 0) {
+          table.appendChild(this.#renderThreadRow(threads, 2));
+        }
       }
     }
 
@@ -577,6 +968,15 @@ export class DiffView {
             }),
           ])
         );
+
+        const threads = this.#collectThreadsForLine(
+          file.path,
+          left?.oldLineNo ?? null,
+          right?.newLineNo ?? null
+        );
+        if (threads.length > 0) {
+          table.appendChild(this.#renderThreadRow(threads, 4));
+        }
       }
     }
 
@@ -600,6 +1000,9 @@ export class DiffView {
   }
 
   #setOpenActionsFilePath(path: string | null): void {
+    if (this.#reviewMode) {
+      path = null;
+    }
     const previousPath = this.#openActionsFilePath;
     if (previousPath === path) return;
 
@@ -662,6 +1065,10 @@ export class DiffView {
   }
 
   setBranchPanelVisible(visible: boolean, notify = true): void {
+    if (this.#reviewMode) {
+      visible = false;
+    }
+
     if (visible && this.#filesPanelVisible) {
       this.setFilesPanelVisible(false);
     }
@@ -677,7 +1084,13 @@ export class DiffView {
   }
 
   toggleBranchPanel(): void {
+    if (this.#reviewMode) return;
     this.setBranchPanelVisible(!this.#branchPanelVisible);
+  }
+
+  setCommitButtonVisible(visible: boolean): void {
+    this.#commitButtonVisible = visible;
+    this.#commitBtn.hidden = this.#reviewMode || !visible;
   }
 
   get filesPanelHost(): HTMLElement {
@@ -695,6 +1108,53 @@ export class DiffView {
   get element(): HTMLElement {
     return this.#el;
   }
+}
+
+function normalizeReviewThreadSide(
+  thread: PullRequestReviewThread
+): "LEFT" | "RIGHT" | "BOTH" {
+  const side = String(thread.side ?? "").toUpperCase();
+  if (side === "LEFT") return "LEFT";
+  if (side === "RIGHT") return "RIGHT";
+  if (thread.originalLine != null && thread.line == null) return "LEFT";
+  if (thread.line != null) return "RIGHT";
+  return "BOTH";
+}
+
+function threadCountIconSvg(): string {
+  return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4.5 4.8h11a2.3 2.3 0 0 1 2.3 2.3v6a2.3 2.3 0 0 1 -2.3 2.3H9.2l-3.7 2.8v-2.8H4.5a2.3 2.3 0 0 1 -2.3 -2.3v-6a2.3 2.3 0 0 1 2.3 -2.3Z" stroke-linejoin="round"/></svg>';
+}
+
+function formatReviewThreadAnchor(thread: PullRequestReviewThread): string {
+  const anchorLine = thread.line ?? thread.originalLine;
+  const side = normalizeReviewThreadSide(thread);
+  if (anchorLine == null) return thread.path;
+  if (side === "LEFT") return `L${anchorLine}`;
+  if (side === "RIGHT") return `R${anchorLine}`;
+  return String(anchorLine);
+}
+
+function compareReviewThreadsByDate(
+  left: PullRequestReviewThread,
+  right: PullRequestReviewThread
+): number {
+  const tsA = Date.parse(left.createdAt);
+  const tsB = Date.parse(right.createdAt);
+  if (Number.isFinite(tsA) && Number.isFinite(tsB) && tsA !== tsB) {
+    return tsA - tsB;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function formatReviewThreadTime(value: string): string {
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return "";
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function countFileChanges(file: DiffFile): { adds: number; dels: number } {

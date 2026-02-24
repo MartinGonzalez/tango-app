@@ -41,6 +41,7 @@ export type TasksViewCallbacks = {
   onRemoveSource: (sourceId: string) => Promise<void>;
   onFetchSource: (sourceId: string) => Promise<void>;
   onRunAction: (taskId: string, action: TaskAction) => Promise<void>;
+  onOpenConnectors?: () => void;
 };
 
 export class TasksView {
@@ -193,9 +194,11 @@ export class TasksView {
       "data-focus-id": `task:${task.id}:notes`,
       placeholder: "Task notes",
       oninput: (event: Event) => {
-        const value = (event.target as HTMLTextAreaElement).value;
+        const textarea = event.target as HTMLTextAreaElement;
+        const value = textarea.value;
         this.#setTaskDraft(task.id, { notes: value });
         this.#queueTaskPatch(task.id, { notes: value });
+        this.#syncExpandedTextareaHeight(textarea, taskFieldUi.expanded);
       },
       onblur: () => this.#clearTaskDraftFields(task.id, ["notes"]),
     }) as HTMLTextAreaElement;
@@ -209,9 +212,11 @@ export class TasksView {
       "data-focus-id": `task:${task.id}:plan`,
       placeholder: "Plan markdown",
       oninput: (event: Event) => {
-        const value = (event.target as HTMLTextAreaElement).value;
+        const textarea = event.target as HTMLTextAreaElement;
+        const value = textarea.value;
         this.#setTaskDraft(task.id, { planMarkdown: value || null });
         this.#queueTaskPatch(task.id, { planMarkdown: value || null });
+        this.#syncExpandedTextareaHeight(textarea, taskFieldUi.expanded);
       },
       onblur: () => this.#clearTaskDraftFields(task.id, ["planMarkdown"]),
     }) as HTMLTextAreaElement;
@@ -483,6 +488,11 @@ export class TasksView {
       ])
     );
 
+    if (!isRenderedMode) {
+      this.#syncExpandedTextareaHeight(notesInput, taskFieldUi.expanded);
+      this.#syncExpandedTextareaHeight(planInput, taskFieldUi.expanded);
+    }
+
     restoreFocus(this.#bodyEl, focusSnapshot);
   }
 
@@ -554,6 +564,13 @@ export class TasksView {
     const fetchLabel = source.httpStatus
       ? `${source.fetchStatus} (${source.httpStatus})`
       : source.fetchStatus;
+    const normalizedError = String(source.error ?? "").toLowerCase();
+    const showOpenConnectors = Boolean(source.error)
+      && typeof this.#callbacks.onOpenConnectors === "function"
+      && (
+        (source.kind === "slack" && normalizedError.includes("connect slack in connectors"))
+        || (source.kind === "jira" && normalizedError.includes("connect jira in connectors"))
+      );
 
     return h("div", { class: "tasks-source-card" }, [
       h("div", { class: "tasks-source-head" }, [
@@ -569,6 +586,15 @@ export class TasksView {
         ? h("div", { class: "tasks-source-error" }, [source.error])
         : h("div", { class: "tasks-source-error", hidden: true }),
       h("div", { class: "tasks-source-actions" }, [
+        showOpenConnectors
+          ? h("button", {
+              class: "tasks-btn",
+              disabled: readOnly,
+              onclick: () => {
+                this.#callbacks.onOpenConnectors?.();
+              },
+            }, ["Open Connectors"])
+          : h("div", { hidden: true }),
         h("button", {
           class: "tasks-btn",
           disabled: readOnly,
@@ -816,6 +842,26 @@ export class TasksView {
       if (key.startsWith(prefix)) return true;
     }
     return false;
+  }
+
+  #syncExpandedTextareaHeight(textarea: HTMLTextAreaElement, expanded: boolean): void {
+    textarea.style.height = "";
+    textarea.style.overflowY = "";
+    if (!expanded) return;
+    if (!textarea.isConnected) return;
+
+    textarea.style.height = "auto";
+
+    const computed = window.getComputedStyle(textarea);
+    const borderTop = Number.parseFloat(computed.borderTopWidth || "0") || 0;
+    const borderBottom = Number.parseFloat(computed.borderBottomWidth || "0") || 0;
+    const minHeight = textarea.classList.contains("tasks-plan-textarea") ? 120 : 78;
+    const maxHeight = Math.max(Math.floor(window.innerHeight * 0.72), minHeight);
+    const desiredHeight = textarea.scrollHeight + borderTop + borderBottom + 12;
+    const clampedHeight = Math.min(Math.max(desiredHeight, minHeight), maxHeight);
+
+    textarea.style.height = `${Math.ceil(clampedHeight)}px`;
+    textarea.style.overflowY = desiredHeight > maxHeight ? "auto" : "hidden";
   }
 
   async #confirmTaskDeletion(taskTitle: string): Promise<boolean> {

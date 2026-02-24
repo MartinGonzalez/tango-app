@@ -104,7 +104,6 @@ export class Sidebar {
   }
 
   #renderWorkspace(ws: WorkspaceData): HTMLElement {
-    const chevron = ws.expanded ? "\u25BC" : "\u25B6";
     const activeCount = ws.sessions.filter(
       (s) => s.activity === "working" || s.activity === "waiting_for_input"
     ).length;
@@ -116,10 +115,16 @@ export class Sidebar {
       "div",
       {
         class: "ws-folder-header",
+        role: "button",
+        tabindex: "0",
         onclick: () => this.#callbacks.onToggleWorkspace(ws.path),
+        onkeydown: (event: KeyboardEvent) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          this.#callbacks.onToggleWorkspace(ws.path);
+        },
       },
       [
-        h("span", { class: "ws-chevron" }, [chevron]),
         h("div", { class: "ws-folder-meta" }, [
           h("span", { class: "ws-folder-name" }, [ws.name]),
           h("span", { class: "ws-folder-branch" }, [

@@ -86,7 +86,10 @@ The diff panel shows:
 
 - `Cmd+N` — New session
 - `Cmd+O` — Open workspace
-- `Cmd+B` — Toggle sidebar
+- `Cmd+1` — Toggle sidebar
+- `Cmd+2` — Toggle second panel
+- `Cmd+4` — Toggle files changed (workspace mode)
+- `Cmd+5` — Toggle git history (workspace mode)
 - `Enter` — Send prompt (Shift+Enter for newline)
 
 ## Configuration
