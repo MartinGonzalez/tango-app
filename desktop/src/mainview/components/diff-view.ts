@@ -41,6 +41,12 @@ export type DiffViewCallbacks = {
     thread: PullRequestReviewThread,
     body: string
   ) => Promise<void> | void;
+  onCreateReviewComment?: (params: {
+    path: string;
+    line: number;
+    side: "LEFT" | "RIGHT";
+    body: string;
+  }) => Promise<void> | void;
 };
 
 type FullFileLoadState = {
@@ -49,6 +55,15 @@ type FullFileLoadState = {
   truncated: boolean;
   isBinary: boolean;
   message: string;
+};
+
+type InlineCommentTarget = {
+  key: string;
+  path: string;
+  side: "LEFT" | "RIGHT";
+  line: number;
+  oldLineNo: number | null;
+  newLineNo: number | null;
 };
 
 type SetFilesOptions = {
@@ -92,6 +107,10 @@ export class DiffView {
   #threadReplyDraft = new Map<string, string>();
   #threadReplySubmitting = new Set<string>();
   #threadReplyError = new Map<string, string>();
+  #inlineCommentTarget: InlineCommentTarget | null = null;
+  #inlineCommentDraft = "";
+  #inlineCommentSubmitting = false;
+  #inlineCommentError: string | null = null;
   #onGlobalClick: (event: MouseEvent) => void;
   #onGlobalKeyDown: (event: KeyboardEvent) => void;
   #fileSectionEls = new Map<string, HTMLDetailsElement>();
@@ -113,8 +132,14 @@ export class DiffView {
       this.#closeActionsMenu();
     };
     this.#onGlobalKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !this.#openActionsFilePath) return;
-      this.#closeActionsMenu();
+      if (event.key !== "Escape") return;
+      if (this.#openActionsFilePath) {
+        this.#closeActionsMenu();
+        return;
+      }
+      if (this.#inlineCommentTarget && !this.#inlineCommentSubmitting) {
+        this.#closeInlineCommentComposer();
+      }
     };
 
     this.#filesToggleBtn = h("button", {
@@ -225,6 +250,12 @@ export class DiffView {
     if (this.#openActionsFilePath && !nextPaths.has(this.#openActionsFilePath)) {
       this.#openActionsFilePath = null;
     }
+    if (this.#inlineCommentTarget && !nextPaths.has(this.#inlineCommentTarget.path)) {
+      this.#inlineCommentTarget = null;
+      this.#inlineCommentDraft = "";
+      this.#inlineCommentSubmitting = false;
+      this.#inlineCommentError = null;
+    }
     this.#renderDiff(options.scrollToActive ?? true);
   }
 
@@ -274,6 +305,10 @@ export class DiffView {
     this.#threadReplyDraft.clear();
     this.#threadReplySubmitting.clear();
     this.#threadReplyError.clear();
+    this.#inlineCommentTarget = null;
+    this.#inlineCommentDraft = "";
+    this.#inlineCommentSubmitting = false;
+    this.#inlineCommentError = null;
     this.#openActionsFilePath = null;
     const label = this.#toolbarEl.querySelector(".dv-file-label");
     if (label) label.textContent = "";
@@ -295,6 +330,12 @@ export class DiffView {
     }
     if (enabled && this.#openActionsFilePath) {
       this.#closeActionsMenu();
+    }
+    if (!enabled && this.#inlineCommentTarget) {
+      this.#inlineCommentTarget = null;
+      this.#inlineCommentDraft = "";
+      this.#inlineCommentSubmitting = false;
+      this.#inlineCommentError = null;
     }
     this.#renderDiff(false);
   }
@@ -881,6 +922,189 @@ export class DiffView {
     }
   }
 
+  #canCreateReviewComments(): boolean {
+    return this.#reviewMode && Boolean(this.#callbacks.onCreateReviewComment);
+  }
+
+  #resolveUnifiedCommentTarget(filePath: string, line: DiffLine): InlineCommentTarget | null {
+    if (!this.#canCreateReviewComments()) return null;
+
+    if (line.type === "delete" && line.oldLineNo != null) {
+      return {
+        key: `${filePath}:LEFT:${line.oldLineNo}`,
+        path: filePath,
+        side: "LEFT",
+        line: line.oldLineNo,
+        oldLineNo: line.oldLineNo,
+        newLineNo: line.newLineNo ?? null,
+      };
+    }
+
+    if ((line.type === "add" || line.type === "context") && line.newLineNo != null) {
+      return {
+        key: `${filePath}:RIGHT:${line.newLineNo}`,
+        path: filePath,
+        side: "RIGHT",
+        line: line.newLineNo,
+        oldLineNo: line.oldLineNo ?? null,
+        newLineNo: line.newLineNo,
+      };
+    }
+
+    return null;
+  }
+
+  #resolveSplitCommentTarget(
+    filePath: string,
+    line: DiffLine | null,
+    side: "LEFT" | "RIGHT"
+  ): InlineCommentTarget | null {
+    if (!this.#canCreateReviewComments() || !line) return null;
+    const lineNo = side === "LEFT" ? line.oldLineNo : line.newLineNo;
+    if (lineNo == null) return null;
+
+    return {
+      key: `${filePath}:${side}:${lineNo}`,
+      path: filePath,
+      side,
+      line: lineNo,
+      oldLineNo: line.oldLineNo ?? null,
+      newLineNo: line.newLineNo ?? null,
+    };
+  }
+
+  #isInlineCommentTarget(target: InlineCommentTarget | null): boolean {
+    if (!target || !this.#inlineCommentTarget) return false;
+    return this.#inlineCommentTarget.key === target.key;
+  }
+
+  #openInlineCommentComposer(target: InlineCommentTarget): void {
+    if (!this.#canCreateReviewComments()) return;
+
+    const previousTarget = this.#inlineCommentTarget;
+    const hasChangedTarget = !previousTarget || previousTarget.key !== target.key;
+    const previousPath = previousTarget?.path ?? null;
+    this.#inlineCommentTarget = target;
+    this.#inlineCommentError = null;
+    if (hasChangedTarget) {
+      this.#inlineCommentDraft = "";
+    }
+
+    if (previousPath && previousPath !== target.path) {
+      this.#rerenderFileSection(previousPath);
+    }
+    this.#rerenderFileSection(target.path);
+  }
+
+  #closeInlineCommentComposer(): void {
+    const target = this.#inlineCommentTarget;
+    if (!target) return;
+    const path = target.path;
+    this.#inlineCommentTarget = null;
+    this.#inlineCommentDraft = "";
+    this.#inlineCommentSubmitting = false;
+    this.#inlineCommentError = null;
+    this.#rerenderFileSection(path);
+  }
+
+  #renderInlineCommentRow(
+    target: InlineCommentTarget,
+    columnCount: number
+  ): HTMLElement {
+    const label = target.side === "LEFT"
+      ? `L${target.line}`
+      : `R${target.line}`;
+
+    const textarea = h("textarea", {
+      class: "dv-inline-comment-input",
+      rows: "3",
+      placeholder: "Write a comment",
+      disabled: this.#inlineCommentSubmitting,
+      oninput: (event: Event) => {
+        this.#inlineCommentDraft = (event.target as HTMLTextAreaElement).value;
+        if (this.#inlineCommentError) {
+          this.#inlineCommentError = null;
+          this.#rerenderFileSection(target.path);
+        }
+      },
+    }) as HTMLTextAreaElement;
+    textarea.value = this.#inlineCommentDraft;
+
+    const cancelButton = h("button", {
+      class: "dv-inline-comment-btn ghost",
+      type: "button",
+      disabled: this.#inlineCommentSubmitting,
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#closeInlineCommentComposer();
+      },
+    }, ["Cancel"]);
+
+    const sendButton = h("button", {
+      class: "dv-inline-comment-btn",
+      type: "button",
+      disabled: this.#inlineCommentSubmitting,
+      onclick: (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.#submitInlineComment(target);
+      },
+    }, [this.#inlineCommentSubmitting ? "Sending..." : "Comment"]);
+
+    return h("tr", { class: "dv-thread-row dv-inline-comment-row" }, [
+      h("td", { class: "dv-thread-cell", colspan: String(columnCount) }, [
+        h("div", { class: "dv-thread-bubble dv-inline-comment-bubble" }, [
+          h("div", { class: "dv-inline-comment-head" }, [
+            h("span", { class: "dv-inline-comment-label" }, [`Comment on line ${label}`]),
+          ]),
+          textarea,
+          this.#inlineCommentError
+            ? h("div", { class: "dv-inline-comment-error" }, [this.#inlineCommentError])
+            : null as any,
+          h("div", { class: "dv-inline-comment-actions" }, [
+            cancelButton,
+            sendButton,
+          ]),
+        ]),
+      ]),
+    ]);
+  }
+
+  async #submitInlineComment(target: InlineCommentTarget): Promise<void> {
+    const callback = this.#callbacks.onCreateReviewComment;
+    if (!callback) return;
+    if (!this.#inlineCommentTarget || this.#inlineCommentTarget.key !== target.key) return;
+
+    const body = this.#inlineCommentDraft.trim();
+    if (!body) {
+      this.#inlineCommentError = "Comment cannot be empty.";
+      this.#rerenderFileSection(target.path);
+      return;
+    }
+
+    this.#inlineCommentSubmitting = true;
+    this.#inlineCommentError = null;
+    this.#rerenderFileSection(target.path);
+
+    try {
+      await callback({
+        path: target.path,
+        line: target.line,
+        side: target.side,
+        body,
+      });
+      this.#closeInlineCommentComposer();
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Failed to send comment";
+      this.#inlineCommentError = message || "Failed to send comment";
+      this.#inlineCommentSubmitting = false;
+      this.#rerenderFileSection(target.path);
+    }
+  }
+
   #buildUnifiedTable(file: DiffFile): HTMLElement {
     const table = h("table", { class: "diff-table unified" });
 
@@ -899,18 +1123,41 @@ export class DiffView {
           : line.type === "delete"
           ? line.oldLineNo
           : (line.newLineNo ?? line.oldLineNo);
+        const commentTarget = this.#resolveUnifiedCommentTarget(file.path, line);
+        const commentTargetActive = this.#isInlineCommentTarget(commentTarget);
+
+        const lineNoCell = h("td", {
+          class: `line-no${commentTarget ? " dv-commentable-cell" : ""}${commentTargetActive ? " dv-comment-target-cell" : ""}`,
+          onclick: commentTarget
+            ? (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.#openInlineCommentComposer(commentTarget);
+              }
+            : undefined,
+        }, [
+          lineNo != null ? String(lineNo) : "",
+        ]);
+        const contentCell = h("td", {
+          class: `line-content${commentTarget ? " dv-commentable-cell" : ""}${commentTargetActive ? " dv-comment-target-cell" : ""}`,
+          onclick: commentTarget
+            ? (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.#openInlineCommentComposer(commentTarget);
+              }
+            : undefined,
+          innerHTML: line.content
+            ? highlightCodeLine(line.content, file.path)
+            : "&nbsp;",
+        });
 
         table.appendChild(
-          h("tr", { class: lineClass }, [
-            h("td", { class: "line-no" }, [
-              lineNo != null ? String(lineNo) : "",
-            ]),
-            h("td", {
-              class: "line-content",
-              innerHTML: line.content
-                ? highlightCodeLine(line.content, file.path)
-                : "&nbsp;",
-            }),
+          h("tr", {
+            class: `${lineClass}${commentTarget ? " dv-commentable-line" : ""}${commentTargetActive ? " dv-comment-target-line" : ""}`,
+          }, [
+            lineNoCell,
+            contentCell,
           ])
         );
 
@@ -921,6 +1168,10 @@ export class DiffView {
         );
         if (threads.length > 0) {
           table.appendChild(this.#renderThreadRow(threads, 2));
+        }
+
+        if (commentTarget && commentTargetActive) {
+          table.appendChild(this.#renderInlineCommentRow(commentTarget, 2));
         }
       }
     }
@@ -946,26 +1197,75 @@ export class DiffView {
       for (const [left, right] of pairs) {
         const leftLineClass = left ? ` diff-${left.type}` : "";
         const rightLineClass = right ? ` diff-${right.type}` : "";
+        const leftTarget = this.#resolveSplitCommentTarget(file.path, left, "LEFT");
+        const rightTarget = this.#resolveSplitCommentTarget(file.path, right, "RIGHT");
+        const leftTargetActive = this.#isInlineCommentTarget(leftTarget);
+        const rightTargetActive = this.#isInlineCommentTarget(rightTarget);
+        const activeTarget = leftTargetActive
+          ? leftTarget
+          : rightTargetActive
+            ? rightTarget
+            : null;
+
+        const leftNoCell = h("td", {
+          class: `line-no${leftLineClass}${leftTarget ? " dv-commentable-cell" : ""}${leftTargetActive ? " dv-comment-target-cell" : ""}`,
+          onclick: leftTarget
+            ? (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.#openInlineCommentComposer(leftTarget);
+              }
+            : undefined,
+        }, [
+          left?.oldLineNo != null ? String(left.oldLineNo) : "",
+        ]);
+        const leftContentCell = h("td", {
+          class: `line-content${leftLineClass}${leftTarget ? " dv-commentable-cell" : ""}${leftTargetActive ? " dv-comment-target-cell" : ""}`,
+          onclick: leftTarget
+            ? (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.#openInlineCommentComposer(leftTarget);
+              }
+            : undefined,
+          innerHTML: left
+            ? (left.content ? highlightCodeLine(left.content, file.path) : "&nbsp;")
+            : "",
+        });
+        const rightNoCell = h("td", {
+          class: `line-no${rightLineClass}${rightTarget ? " dv-commentable-cell" : ""}${rightTargetActive ? " dv-comment-target-cell" : ""}`,
+          onclick: rightTarget
+            ? (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.#openInlineCommentComposer(rightTarget);
+              }
+            : undefined,
+        }, [
+          right?.newLineNo != null ? String(right.newLineNo) : "",
+        ]);
+        const rightContentCell = h("td", {
+          class: `line-content${rightLineClass}${rightTarget ? " dv-commentable-cell" : ""}${rightTargetActive ? " dv-comment-target-cell" : ""}`,
+          onclick: rightTarget
+            ? (event: Event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.#openInlineCommentComposer(rightTarget);
+              }
+            : undefined,
+          innerHTML: right
+            ? (right.content ? highlightCodeLine(right.content, file.path) : "&nbsp;")
+            : "",
+        });
+
         table.appendChild(
-          h("tr", { class: "diff-line" }, [
-            h("td", { class: `line-no${leftLineClass}` }, [
-              left?.oldLineNo != null ? String(left.oldLineNo) : "",
-            ]),
-            h("td", {
-              class: `line-content${leftLineClass}`,
-              innerHTML: left
-                ? (left.content ? highlightCodeLine(left.content, file.path) : "&nbsp;")
-                : "",
-            }),
-            h("td", { class: `line-no${rightLineClass}` }, [
-              right?.newLineNo != null ? String(right.newLineNo) : "",
-            ]),
-            h("td", {
-              class: `line-content${rightLineClass}`,
-              innerHTML: right
-                ? (right.content ? highlightCodeLine(right.content, file.path) : "&nbsp;")
-                : "",
-            }),
+          h("tr", {
+            class: `diff-line${(leftTarget || rightTarget) ? " dv-commentable-line" : ""}${activeTarget ? " dv-comment-target-line" : ""}`,
+          }, [
+            leftNoCell,
+            leftContentCell,
+            rightNoCell,
+            rightContentCell,
           ])
         );
 
@@ -976,6 +1276,10 @@ export class DiffView {
         );
         if (threads.length > 0) {
           table.appendChild(this.#renderThreadRow(threads, 4));
+        }
+
+        if (activeTarget) {
+          table.appendChild(this.#renderInlineCommentRow(activeTarget, 4));
         }
       }
     }

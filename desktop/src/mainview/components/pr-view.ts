@@ -442,10 +442,14 @@ export class PRView {
           h("span", { class: `pr-agent-review-level-badge is-${normalizeReviewLevelClass(item.level)}` }, [item.level]),
         ]),
         actionButton,
-        h("div", {
-          class: "pr-agent-review-suggestion-body plugins-preview-markdown chat-bubble assistant",
-          innerHTML: renderMarkdown(item.content || "_No details_"),
-        }),
+        h("h4", { class: "pr-agent-review-suggestion-focus-title", title: item.title }, [
+          item.title || `Suggestion ${index + 1}`,
+        ]),
+        h("div", { class: "pr-agent-review-suggestion-sections" }, [
+          this.#renderSuggestionSection("Why", item.reason || "_No reason provided_"),
+          this.#renderSuggestionSection("Solution/Solutions", item.solutions || "_No solutions provided_"),
+          this.#renderSuggestionSection("Benefit", item.benefit || "_No benefit provided_"),
+        ]),
         errorMessage
           ? h("div", { class: "pr-agent-review-action-error" }, [errorMessage])
           : null as any,
@@ -454,17 +458,24 @@ export class PRView {
 
     return h("div", { class: "pr-agent-review-structured" }, [
       h("section", { class: "pr-agent-review-block" }, [
-        h("h3", { class: "pr-view-section-title" }, ["Metadata"]),
-        metadataRows.length > 0
-          ? h("div", { class: "pr-agent-review-metadata-list" }, metadataRows)
-          : h("div", { class: "pr-view-section-empty" }, ["No metadata"]),
+        h("h3", { class: "pr-view-section-title" }, ["PR Description"]),
+        h("div", {
+          class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
+          innerHTML: renderMarkdown(review.pr_description || "_No PR description_"),
+        }),
       ]),
       h("section", { class: "pr-agent-review-block" }, [
-        h("h3", { class: "pr-view-section-title" }, ["PR Summary"]),
+        h("h3", { class: "pr-view-section-title" }, ["Summary"]),
         h("div", {
           class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
           innerHTML: renderMarkdown(review.pr_summary || "_No summary_"),
         }),
+      ]),
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["Metadata"]),
+        metadataRows.length > 0
+          ? h("div", { class: "pr-agent-review-metadata-list" }, metadataRows)
+          : h("div", { class: "pr-view-section-empty" }, ["No metadata"]),
       ]),
       h("section", { class: "pr-agent-review-block" }, [
         h("h3", { class: "pr-view-section-title" }, ["Strengths"]),
@@ -480,8 +491,8 @@ export class PRView {
           innerHTML: renderMarkdown(review.improvements || "_No improvements_"),
         }),
       ]),
-      h("section", { class: "pr-agent-review-block" }, [
-        h("h3", { class: "pr-view-section-title" }, ["Suggestions"]),
+      h("section", { class: "pr-agent-review-suggestions-section" }, [
+        h("h2", { class: "pr-agent-review-suggestions-heading" }, ["Suggestions"]),
         suggestions.length > 0
           ? suggestionsPanel
           : h("div", { class: "pr-view-section-empty" }, ["No suggestions"]),
@@ -493,6 +504,16 @@ export class PRView {
           innerHTML: renderMarkdown(review.final_veredic || "_No final veredic_"),
         }),
       ]),
+    ]);
+  }
+
+  #renderSuggestionSection(title: string, markdown: string): HTMLElement {
+    return h("section", { class: "pr-agent-review-suggestion-section" }, [
+      h("h5", { class: "pr-agent-review-suggestion-section-title" }, [title]),
+      h("div", {
+        class: "pr-agent-review-suggestion-section-body pr-agent-review-suggestion-body plugins-preview-markdown chat-bubble assistant",
+        innerHTML: renderMarkdown(markdown),
+      }),
     ]);
   }
 

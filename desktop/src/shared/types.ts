@@ -569,12 +569,17 @@ export type PullRequestAgentReviewLevel =
 
 export type PullRequestAgentReviewSuggestion = {
   level: PullRequestAgentReviewLevel;
+  title: string;
+  reason: string;
+  solutions: string;
+  benefit: string;
   content: string;
   applied: boolean;
 };
 
 export type PullRequestAgentReviewData = {
   metadata: Record<string, string>;
+  pr_description: string;
   pr_summary: string;
   strengths: string;
   improvements: string;
@@ -846,6 +851,18 @@ export type AppRPC = {
           repo: string;
           number: number;
           commentId: string;
+          body: string;
+        };
+        response: void;
+      };
+      createPullRequestReviewComment: {
+        params: {
+          repo: string;
+          number: number;
+          commitSha: string;
+          path: string;
+          line: number;
+          side: "LEFT" | "RIGHT";
           body: string;
         };
         response: void;

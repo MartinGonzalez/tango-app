@@ -4837,6 +4837,18 @@ button {
   gap: 10px;
 }
 
+.pr-agent-review-suggestions-section {
+  display: grid;
+  gap: 10px;
+}
+
+.pr-agent-review-suggestions-heading {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+}
+
 .pr-agent-review-structured {
   display: grid;
   gap: 12px;
@@ -4911,6 +4923,38 @@ button {
   word-break: break-word;
 }
 
+.pr-agent-review-suggestion-focus-title {
+  margin: 2px 84px 0 0;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-review-suggestion-sections {
+  display: grid;
+  gap: 8px;
+}
+
+.pr-agent-review-suggestion-section {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.pr-agent-review-suggestion-section-title {
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .pr-agent-review-level-badge {
   flex-shrink: 0;
   font-size: 10px;
@@ -4953,6 +4997,10 @@ button {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.pr-agent-review-suggestion-section-body {
+  margin-top: 0;
 }
 
 .pr-agent-review-suggestion-body .code-block {
@@ -6044,6 +6092,92 @@ button {
   font-size: 11px;
 }
 
+.dv-inline-comment-bubble {
+  width: 100%;
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(17, 24, 39, 0.5);
+}
+
+.dv-inline-comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.dv-inline-comment-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dv-inline-comment-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 76px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(20, 20, 19, 0.7);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+}
+
+.dv-inline-comment-input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.55);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.dv-inline-comment-input:disabled {
+  opacity: 0.75;
+}
+
+.dv-inline-comment-actions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dv-inline-comment-btn {
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 7px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+}
+
+.dv-inline-comment-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.24);
+}
+
+.dv-inline-comment-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.dv-inline-comment-btn.ghost {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.dv-inline-comment-btn.ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dv-inline-comment-error {
+  margin-top: 8px;
+  color: #fca5a5;
+  font-size: 11px;
+}
+
 /* ── Diff table ──────────────────────────────────────────────── */
 
 .diff-table {
@@ -6076,6 +6210,22 @@ button {
 .line-content {
   padding-left: 8px !important;
   color: var(--text);
+}
+
+.dv-commentable-cell {
+  cursor: pointer;
+}
+
+.dv-commentable-cell:hover {
+  box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.08);
+}
+
+.dv-comment-target-cell {
+  box-shadow: inset 0 0 0 9999px rgba(59, 130, 246, 0.13);
+}
+
+.dv-comment-target-line .dv-comment-target-cell.line-no {
+  color: #93c5fd;
 }
 
 .diff-hunk-header td {

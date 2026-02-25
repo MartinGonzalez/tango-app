@@ -270,6 +270,88 @@ export class PullRequestProvider {
     ]);
   }
 
+  async createPullRequestReviewComment(
+    repo: string,
+    number: number,
+    params: {
+      commitSha: string;
+      path: string;
+      line: number;
+      side: "LEFT" | "RIGHT";
+      body: string;
+    }
+  ): Promise<void> {
+    const commitSha = String(params.commitSha ?? "").trim();
+    const path = String(params.path ?? "").trim();
+    const line = toInteger(params.line);
+    const side = String(params.side ?? "").trim().toUpperCase();
+    const body = String(params.body ?? "").trim();
+    const endpoint = `repos/${repo}/pulls/${number}/comments`;
+
+    if (!commitSha) {
+      throw new GhCommandError({
+        code: "api_error",
+        message: "Invalid pull request commit sha",
+        args: ["api", endpoint, "-X", "POST"],
+        stderr: "Invalid pull request commit sha",
+        exitCode: 1,
+      });
+    }
+    if (!path) {
+      throw new GhCommandError({
+        code: "api_error",
+        message: "Invalid pull request file path",
+        args: ["api", endpoint, "-X", "POST"],
+        stderr: "Invalid pull request file path",
+        exitCode: 1,
+      });
+    }
+    if (line <= 0) {
+      throw new GhCommandError({
+        code: "api_error",
+        message: "Invalid pull request line number",
+        args: ["api", endpoint, "-X", "POST"],
+        stderr: "Invalid pull request line number",
+        exitCode: 1,
+      });
+    }
+    if (side !== "LEFT" && side !== "RIGHT") {
+      throw new GhCommandError({
+        code: "api_error",
+        message: "Invalid pull request review side",
+        args: ["api", endpoint, "-X", "POST"],
+        stderr: "Invalid pull request review side",
+        exitCode: 1,
+      });
+    }
+    if (!body) {
+      throw new GhCommandError({
+        code: "api_error",
+        message: "Comment body cannot be empty",
+        args: ["api", endpoint, "-X", "POST"],
+        stderr: "Comment body cannot be empty",
+        exitCode: 1,
+      });
+    }
+
+    await runGhText(this.#run, [
+      "api",
+      endpoint,
+      "-X",
+      "POST",
+      "-f",
+      `body=${body}`,
+      "-f",
+      `commit_id=${commitSha}`,
+      "-f",
+      `path=${path}`,
+      "-f",
+      `side=${side}`,
+      "-F",
+      `line=${line}`,
+    ]);
+  }
+
   async #loadOptionalPagedArray<T>(
     args: string[],
     label: string,
@@ -326,6 +408,20 @@ export async function replyPullRequestReviewComment(
   body: string
 ): Promise<void> {
   return pullRequestProvider.replyPullRequestReviewComment(repo, number, commentId, body);
+}
+
+export async function createPullRequestReviewComment(
+  repo: string,
+  number: number,
+  params: {
+    commitSha: string;
+    path: string;
+    line: number;
+    side: "LEFT" | "RIGHT";
+    body: string;
+  }
+): Promise<void> {
+  return pullRequestProvider.createPullRequestReviewComment(repo, number, params);
 }
 
 export function normalizePullRequestChecks(input: unknown): PullRequestCheck[] {

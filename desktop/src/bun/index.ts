@@ -47,6 +47,7 @@ import {
   getPullRequestDetail,
   getPullRequestDiff,
   replyPullRequestReviewComment,
+  createPullRequestReviewComment,
 } from "./pr-provider.ts";
 import { TaskRepository } from "./task-repository.ts";
 import { PRReviewStore } from "./pr-review-store.ts";
@@ -913,6 +914,32 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         await replyPullRequestReviewComment(repo, number, commentId, body);
       },
 
+      createPullRequestReviewComment: async ({
+        repo,
+        number,
+        commitSha,
+        path,
+        line,
+        side,
+        body,
+      }: {
+        repo: string;
+        number: number;
+        commitSha: string;
+        path: string;
+        line: number;
+        side: "LEFT" | "RIGHT";
+        body: string;
+      }) => {
+        await createPullRequestReviewComment(repo, number, {
+          commitSha,
+          path,
+          line,
+          side,
+          body,
+        });
+      },
+
       getPullRequestAgentReviews: async ({
         repo,
         number,
@@ -1058,7 +1085,10 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           reviewVersion: normalizedReviewVersion,
           suggestionIndex: normalizedSuggestionIndex,
           suggestionLevel: suggestion.level,
-          suggestionContent: suggestion.content,
+          suggestionTitle: suggestion.title,
+          suggestionReason: suggestion.reason,
+          suggestionSolutions: suggestion.solutions,
+          suggestionBenefit: suggestion.benefit,
         });
 
         const sessionId = await sessions.spawn(
@@ -1344,7 +1374,10 @@ function buildPullRequestAgentApplyPrompt(params: {
   reviewVersion: number;
   suggestionIndex: number;
   suggestionLevel: string;
-  suggestionContent: string;
+  suggestionTitle: string;
+  suggestionReason: string;
+  suggestionSolutions: string;
+  suggestionBenefit: string;
 }): string {
   const repo = String(params.repo ?? "").trim();
   const number = Math.max(1, Math.trunc(params.number));
@@ -1352,10 +1385,11 @@ function buildPullRequestAgentApplyPrompt(params: {
   const reviewVersion = Math.max(1, Math.trunc(params.reviewVersion));
   const suggestionIndex = Math.max(0, Math.trunc(params.suggestionIndex));
   const suggestionLevel = String(params.suggestionLevel ?? "").trim() || "Unknown";
-  const suggestionContent = String(params.suggestionContent ?? "").trim();
-  const safeIssueSummary = collapseWhitespace(
-    suggestionContent.split(/\r?\n/, 1)[0] || `suggestion ${suggestionIndex + 1}`
-  ).slice(0, 120);
+  const suggestionTitle = String(params.suggestionTitle ?? "").trim() || `Suggestion ${suggestionIndex + 1}`;
+  const suggestionReason = String(params.suggestionReason ?? "").trim();
+  const suggestionSolutions = String(params.suggestionSolutions ?? "").trim();
+  const suggestionBenefit = String(params.suggestionBenefit ?? "").trim();
+  const safeIssueSummary = collapseWhitespace(suggestionTitle).slice(0, 120);
 
   return [
     "Apply one actionable item from an Agent Review to a pull request branch.",
@@ -1368,8 +1402,14 @@ function buildPullRequestAgentApplyPrompt(params: {
     `Suggestion Index: ${suggestionIndex}`,
     `Suggestion Level: ${suggestionLevel}`,
     "",
-    "Suggestion Content (markdown):",
-    suggestionContent || "(no details provided)",
+    "Suggestion:",
+    `Title: ${suggestionTitle}`,
+    "Why:",
+    suggestionReason || "(not provided)",
+    "Solution/Solutions:",
+    suggestionSolutions || "(not provided)",
+    "Benefit:",
+    suggestionBenefit || "(not provided)",
     "",
     "Requirements:",
     "1. Create a temporary directory with `mktemp -d` and ensure cleanup at the end.",

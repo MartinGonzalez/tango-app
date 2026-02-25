@@ -60,6 +60,7 @@ export class PRAgentReviewProvider {
     const payload: Record<string, unknown> = {
       [AGENT_REVIEW_PLACEHOLDER_KEY]: true,
       metadata: buildBaseMetadata(run),
+      pr_description: "",
       pr_summary: "",
       strengths: "",
       improvements: "",
@@ -73,6 +74,7 @@ export class PRAgentReviewProvider {
     const message = String(error ?? "Agent review failed").trim() || "Agent review failed";
     const payload: PullRequestAgentReviewData = {
       metadata: buildBaseMetadata(run),
+      pr_description: "",
       pr_summary: "",
       strengths: "",
       improvements: "",
@@ -246,6 +248,13 @@ export function buildAgentReviewPrompt(params: {
     "2. Focus on concrete engineering feedback: correctness, risks, tests, maintainability, and rollout impact.",
     "3. Keep summaries concise and specific.",
     "",
+    "Suggestion structure (mandatory for every `suggestions[]` item):",
+    "- `title`: short and specific (max ~10 words).",
+    "- `reason`: 2-3 short lines explaining why this should change now.",
+    "- `solutions`: concise actionable fix; include markdown bullets/snippet only if needed.",
+    "- `benefit`: 1-2 short lines with concrete gains from applying the change.",
+    "- Keep each suggestion concise. Avoid long paragraphs and avoid repeating PR summary content.",
+    "",
     "Required output schema (top-level JSON object):",
     "{",
     '  "metadata": {',
@@ -256,13 +265,17 @@ export function buildAgentReviewPrompt(params: {
     '    "head_branch": "<feature branch>",',
     '    "head_sha": "<head sha>"',
     "  },",
+    '  "pr_description": "<3-6 concise bullet points describing exactly what changed in this PR>",',
     '  "pr_summary": "<5-10 lines max>",',
     '  "strengths": "<5-10 lines max>",',
     '  "improvements": "<5-10 lines max>",',
     '  "suggestions": [',
     "    {",
     '      "level": "Low | Medium | Important | Critical",',
-    '      "content": "<markdown details for one suggestion>",',
+    '      "title": "<short suggestion title>",',
+    '      "reason": "<why this should change now>",',
+    '      "solutions": "<actionable solution(s), markdown allowed>",',
+    '      "benefit": "<what we gain with this change>",',
     '      "applied": false',
     "    }",
     "  ],",
@@ -272,7 +285,10 @@ export function buildAgentReviewPrompt(params: {
     "Hard constraints:",
     "- Write valid JSON only to the output file (no comments, no trailing commas).",
     "- Include all required keys exactly as specified.",
+    "- Do not add extra keys inside `suggestions[]`.",
+    "- `pr_description` should be concise bullet points (markdown list).",
     "- `suggestions[].applied` must always be `false` in generated reviews.",
+    "- Every suggestion must include non-empty `title`, `reason`, `solutions`, and `benefit`.",
     "- If no suggestions, return an empty array.",
     "- Use GitHub CLI with `-R <owner/repo>` when not in the repository directory.",
     "",
@@ -360,20 +376,27 @@ function normalizeAgentReviewData(input: unknown): {
   if (!metadata) {
     return {
       review: null,
-      parseError: "Field `metadata` must be an object of string values",
+      parseError: "Field `metadata` must be an object",
     };
   }
 
-  const prSummary = asStringOrNull(src.pr_summary);
-  const strengths = asStringOrNull(src.strengths);
-  const improvements = asStringOrNull(src.improvements);
-  const finalVeredic = asStringOrNull(src.final_veredic);
-  if (prSummary == null || strengths == null || improvements == null || finalVeredic == null) {
-    return {
-      review: null,
-      parseError: "Fields `pr_summary`, `strengths`, `improvements`, and `final_veredic` must be strings",
-    };
-  }
+  const prSummary = firstNonEmpty(
+    normalizeRichTextField(src.pr_summary),
+    normalizeRichTextField(src.summary)
+  ) ?? "";
+  const prDescription = firstNonEmpty(
+    normalizeRichTextField(src.pr_description),
+    normalizeRichTextField(src.prDescription),
+    normalizeRichTextField(src.description),
+    normalizeRichTextField(metadata.pr_description),
+    prSummary
+  ) ?? "";
+  const strengths = normalizeRichTextField(src.strengths) ?? "";
+  const improvements = normalizeRichTextField(src.improvements) ?? "";
+  const finalVeredic = firstNonEmpty(
+    normalizeRichTextField(src.final_veredic),
+    normalizeRichTextField(src.final_verdict)
+  ) ?? "";
 
   if (!Array.isArray(src.suggestions)) {
     return {
@@ -397,6 +420,7 @@ function normalizeAgentReviewData(input: unknown): {
   return {
     review: {
       metadata,
+      pr_description: prDescription,
       pr_summary: prSummary,
       strengths,
       improvements,
@@ -414,10 +438,9 @@ function normalizeMetadata(input: unknown): Record<string, string> | null {
 
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(input)) {
-    if (typeof value !== "string") {
-      return null;
-    }
-    out[String(key)] = value;
+    const normalized = normalizeMetadataValue(value);
+    if (normalized == null) continue;
+    out[String(key)] = normalized;
   }
   return out;
 }
@@ -429,16 +452,61 @@ function normalizeSuggestion(input: unknown): PullRequestAgentReviewSuggestion |
 
   const src = input as Record<string, unknown>;
   const level = asStringOrNull(src.level);
-  const content = asStringOrNull(src.content);
-  if (!level || !content) return null;
+  if (!level) return null;
   if (!ALLOWED_REVIEW_LEVELS.has(level as PullRequestAgentReviewLevel)) {
     return null;
   }
   if (typeof src.applied !== "boolean") return null;
 
+  const titleInput = asStringOrNull(src.title);
+  const reasonInput = asStringOrNull(src.reason);
+  const solutionsInput = asStringOrNull(src.solutions);
+  const benefitInput = asStringOrNull(src.benefit);
+  const legacyContent = asStringOrNull(src.content);
+
+  const legacy = parseSuggestionSectionsFromContent(legacyContent);
+  const reason = firstNonEmpty(
+    reasonInput,
+    legacy.reason,
+    legacyContent
+  );
+  const solutions = firstNonEmpty(
+    solutionsInput,
+    legacy.solutions
+  );
+  const benefit = firstNonEmpty(
+    benefitInput,
+    legacy.benefit
+  );
+  const inferredTitle = inferSuggestionTitle(reason, solutions, benefit);
+  const title = firstNonEmpty(
+    titleInput,
+    legacy.title,
+    inferredTitle,
+    "Suggestion"
+  );
+
+  if (!reason && !solutions && !benefit) {
+    return null;
+  }
+
+  const normalizedReason = reason || "No reason provided.";
+  const normalizedSolutions = solutions || "No solution provided.";
+  const normalizedBenefit = benefit || "No benefit provided.";
+  const normalizedTitle = title || "Suggestion";
+
   return {
     level: level as PullRequestAgentReviewLevel,
-    content,
+    title: normalizedTitle,
+    reason: normalizedReason,
+    solutions: normalizedSolutions,
+    benefit: normalizedBenefit,
+    content: buildSuggestionContentMarkdown({
+      title: normalizedTitle,
+      reason: normalizedReason,
+      solutions: normalizedSolutions,
+      benefit: normalizedBenefit,
+    }),
     applied: src.applied,
   };
 }
@@ -446,6 +514,281 @@ function normalizeSuggestion(input: unknown): PullRequestAgentReviewSuggestion |
 function asStringOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return value;
+}
+
+function normalizeMetadataValue(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => normalizeMetadataValue(item))
+      .filter((item): item is string => Boolean(item && item.trim()))
+      .map((item) => collapseWhitespace(item));
+    if (items.length === 0) return null;
+    return items.join(", ");
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeRichTextField(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : "";
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => normalizeRichTextField(item))
+      .filter((item): item is string => item != null && item.trim().length > 0);
+    if (items.length === 0) return "";
+    return items.map((item) => `- ${collapseWhitespace(item)}`).join("\n");
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([key, entryValue]) => {
+        const normalizedValue = normalizeRichTextField(entryValue);
+        if (normalizedValue == null || normalizedValue.trim().length === 0) return null;
+        return `- ${key}: ${collapseWhitespace(normalizedValue)}`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (entries.length === 0) return "";
+    return entries.join("\n");
+  }
+  return null;
+}
+
+type ParsedSuggestionSections = {
+  title: string | null;
+  reason: string | null;
+  solutions: string | null;
+  benefit: string | null;
+};
+
+type SuggestionSectionKey = "reason" | "solutions" | "benefit";
+
+function parseSuggestionSectionsFromContent(content: string | null): ParsedSuggestionSections {
+  const raw = String(content ?? "").replace(/\r\n/g, "\n");
+  if (!raw.trim()) {
+    return {
+      title: null,
+      reason: null,
+      solutions: null,
+      benefit: null,
+    };
+  }
+
+  const reasonLines: string[] = [];
+  const solutionsLines: string[] = [];
+  const benefitLines: string[] = [];
+  const prefaceLines: string[] = [];
+  let currentSection: SuggestionSectionKey | null = null;
+  let title: string | null = null;
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!title) {
+      const headingTitle = extractHeadingTitle(trimmed);
+      if (headingTitle) {
+        title = headingTitle;
+        continue;
+      }
+    }
+
+    const sectionMatch = parseSuggestionSectionHeader(trimmed);
+    if (sectionMatch) {
+      currentSection = sectionMatch.section;
+      if (sectionMatch.inlineText) {
+        getSuggestionSectionLines(
+          sectionMatch.section,
+          reasonLines,
+          solutionsLines,
+          benefitLines
+        ).push(sectionMatch.inlineText);
+      }
+      continue;
+    }
+
+    if (currentSection) {
+      getSuggestionSectionLines(
+        currentSection,
+        reasonLines,
+        solutionsLines,
+        benefitLines
+      ).push(line);
+    } else {
+      prefaceLines.push(line);
+    }
+  }
+
+  const preface = normalizeMarkdownBlock(prefaceLines);
+  let reason = normalizeMarkdownBlock(reasonLines);
+  let solutions = normalizeMarkdownBlock(solutionsLines);
+  const benefit = normalizeMarkdownBlock(benefitLines);
+
+  if (preface) {
+    if (!reason) {
+      reason = preface;
+    } else if (!solutions) {
+      solutions = preface;
+    }
+  }
+
+  return {
+    title,
+    reason: reason || null,
+    solutions: solutions || null,
+    benefit: benefit || null,
+  };
+}
+
+function parseSuggestionSectionHeader(
+  line: string
+): { section: SuggestionSectionKey; inlineText: string | null } | null {
+  if (!line) return null;
+
+  const patterns: Array<{ section: SuggestionSectionKey; regex: RegExp }> = [
+    {
+      section: "reason",
+      regex: /^(?:#{1,6}\s*)?(?:\*\*|__)?why(?:\s+change(?:\s+now)?)?(?:\*\*|__)?\s*:?\s*(.*)$/i,
+    },
+    {
+      section: "solutions",
+      regex: /^(?:#{1,6}\s*)?(?:\*\*|__)?(?:solution(?:s)?|recommendation(?:s)?)(?:\*\*|__)?\s*:?\s*(.*)$/i,
+    },
+    {
+      section: "solutions",
+      regex: /^(?:#{1,6}\s*)?(?:\*\*|__)?code snippet(?:\s*\(optional\))?(?:\*\*|__)?\s*:?\s*(.*)$/i,
+    },
+    {
+      section: "benefit",
+      regex: /^(?:#{1,6}\s*)?(?:\*\*|__)?(?:benefit(?:s)?|what we gain)(?:\*\*|__)?\s*:?\s*(.*)$/i,
+    },
+  ];
+
+  const candidates = [line, stripOuterMarkdownEmphasis(line)];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    for (const pattern of patterns) {
+      const match = candidate.match(pattern.regex);
+      if (!match) continue;
+      const inlineText = normalizeInlineMarkdown(match[1] ?? "");
+      return {
+        section: pattern.section,
+        inlineText: inlineText || null,
+      };
+    }
+  }
+
+  return null;
+}
+
+function stripOuterMarkdownEmphasis(line: string): string {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed) return "";
+  const strong = trimmed.match(/^\*\*(.+)\*\*$/);
+  if (strong?.[1]) return strong[1].trim();
+  const underscore = trimmed.match(/^__(.+)__$/);
+  if (underscore?.[1]) return underscore[1].trim();
+  return trimmed;
+}
+
+function extractHeadingTitle(line: string): string | null {
+  const match = line.match(/^#{1,6}\s+(.+?)\s*$/);
+  if (!match) return null;
+  return collapseWhitespace(match[1]);
+}
+
+function getSuggestionSectionLines(
+  section: SuggestionSectionKey,
+  reasonLines: string[],
+  solutionsLines: string[],
+  benefitLines: string[]
+): string[] {
+  if (section === "reason") return reasonLines;
+  if (section === "solutions") return solutionsLines;
+  return benefitLines;
+}
+
+function normalizeInlineMarkdown(value: string): string {
+  return collapseWhitespace(value.replace(/\s*\\n\s*/g, " "));
+}
+
+function normalizeMarkdownBlock(lines: string[] | string): string {
+  const source = Array.isArray(lines) ? lines.slice() : String(lines ?? "").split(/\r?\n/g);
+  let start = 0;
+  let end = source.length;
+  while (start < end && source[start].trim() === "") start++;
+  while (end > start && source[end - 1].trim() === "") end--;
+  return source.slice(start, end).join("\n").trim();
+}
+
+function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (value == null) continue;
+    const normalized = String(value).trim();
+    if (!normalized) continue;
+    return normalized;
+  }
+  return null;
+}
+
+function inferSuggestionTitle(
+  reason: string | null,
+  solutions: string | null,
+  benefit: string | null
+): string | null {
+  const source = firstNonEmpty(reason, solutions, benefit);
+  if (!source) return null;
+  const firstLine = source
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!firstLine) return null;
+
+  const cleaned = collapseWhitespace(
+    firstLine
+      .replace(/^[-*]\s+/, "")
+      .replace(/[`*_#]/g, "")
+  );
+
+  if (!cleaned) return null;
+  return cleaned.length > 90
+    ? `${cleaned.slice(0, 87).trimEnd()}...`
+    : cleaned;
+}
+
+function buildSuggestionContentMarkdown(params: {
+  title: string;
+  reason: string;
+  solutions: string;
+  benefit: string;
+}): string {
+  return [
+    `## ${params.title}`,
+    "",
+    "**Why:**",
+    params.reason,
+    "",
+    "**Solution/Solutions:**",
+    params.solutions,
+    "",
+    "**Benefit:**",
+    params.benefit,
+  ].join("\n").trim();
+}
+
+function collapseWhitespace(value: string): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function buildBaseMetadata(run: PullRequestAgentReviewRun): Record<string, string> {
@@ -474,7 +817,12 @@ export function renderAgentReviewMarkdown(review: PullRequestAgentReviewData): s
     lines.push("");
   }
 
-  lines.push("## PR Summary");
+  lines.push("## PR Description");
+  lines.push("");
+  lines.push(review.pr_description || "_No PR description provided._");
+  lines.push("");
+
+  lines.push("## Summary");
   lines.push("");
   lines.push(review.pr_summary || "_No summary provided._");
   lines.push("");
@@ -496,9 +844,16 @@ export function renderAgentReviewMarkdown(review: PullRequestAgentReviewData): s
   } else {
     for (let i = 0; i < review.suggestions.length; i++) {
       const suggestion = review.suggestions[i];
-      lines.push(`### ${i + 1}. ${suggestion.level}`);
+      lines.push(`### ${i + 1}. ${suggestion.title} (${suggestion.level})`);
       lines.push("");
-      lines.push(suggestion.content || "_No content_");
+      lines.push("**Why:**");
+      lines.push(suggestion.reason || "_No reason provided._");
+      lines.push("");
+      lines.push("**Solution/Solutions:**");
+      lines.push(suggestion.solutions || "_No solutions provided._");
+      lines.push("");
+      lines.push("**Benefit:**");
+      lines.push(suggestion.benefit || "_No benefit provided._");
       lines.push("");
       lines.push(`- Applied: ${suggestion.applied ? "Yes" : "No"}`);
       lines.push("");

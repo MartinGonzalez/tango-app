@@ -1023,6 +1023,9 @@ function init(): void {
     onReplyReviewThread: async (thread, body) => {
       await replyPullRequestReviewThread(thread, body);
     },
+    onCreateReviewComment: async (params) => {
+      await createPullRequestReviewComment(params);
+    },
   });
 
   // Files panel (embedded inside diff panel)
@@ -2450,6 +2453,41 @@ async function replyPullRequestReviewThread(
       number: selection.number,
       commentId: rootCommentId,
       body,
+    });
+  } catch (err) {
+    throw new Error(formatPullRequestError(err));
+  }
+
+  await loadPullRequestDetail(selection.repo, selection.number, true);
+}
+
+async function createPullRequestReviewComment(params: {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  body: string;
+}): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  const detail = state.selectedPullRequestDetail;
+  if (!selection || !detail) {
+    throw new Error("No pull request selected");
+  }
+
+  const commitSha = (state.selectedPullRequestCommitSha ?? detail.headSha ?? "").trim();
+  if (!commitSha) {
+    throw new Error("Could not resolve pull request commit SHA");
+  }
+
+  try {
+    await (rpc as any).request.createPullRequestReviewComment({
+      repo: selection.repo,
+      number: selection.number,
+      commitSha,
+      path: params.path,
+      line: Math.max(1, Math.trunc(params.line)),
+      side: params.side,
+      body: params.body,
     });
   } catch (err) {
     throw new Error(formatPullRequestError(err));

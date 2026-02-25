@@ -63,6 +63,7 @@ describe("pr-view-agent-reviews", () => {
     const run1 = createRun({ version: 1, status: "completed" });
     const run2 = createRun({ version: 2, status: "completed" });
     const documentV2: PullRequestAgentReviewDocument = createDocument(run2, {
+      pr_description: "- Changed X\n- Changed Y",
       pr_summary: "Agent Review v2 summary",
     });
 
@@ -77,7 +78,8 @@ describe("pr-view-agent-reviews", () => {
     expect(agentTab).toBeDefined();
     agentTab?.click();
 
-    expect(container.textContent || "").toContain("PR Summary");
+    expect(container.textContent || "").toContain("PR Description");
+    expect(container.textContent || "").toContain("Summary");
     expect(container.textContent || "").toContain("Agent Review v2 summary");
 
     const run1Button = Array.from(container.querySelectorAll(".pr-agent-review-run"))
@@ -113,12 +115,18 @@ describe("pr-view-agent-reviews", () => {
         suggestions: [
           {
             level: "Important",
-            content: "Suggestion A",
+            title: "Suggestion A",
+            reason: "Because this should change",
+            solutions: "Do the change",
+            benefit: "Safer behavior",
             applied: false,
           },
           {
             level: "Low",
-            content: "Suggestion B",
+            title: "Suggestion B",
+            reason: "Reason B",
+            solutions: "Solution B",
+            benefit: "Benefit B",
             applied: true,
           },
         ],
@@ -134,6 +142,9 @@ describe("pr-view-agent-reviews", () => {
     expect((actionButtons[0] as HTMLButtonElement).disabled).toBe(false);
     expect((actionButtons[1] as HTMLButtonElement).disabled).toBe(true);
     expect((actionButtons[1] as HTMLButtonElement).textContent).toContain("Applied");
+    expect(container.textContent || "").toContain("Why");
+    expect(container.textContent || "").toContain("Solution/Solutions");
+    expect(container.textContent || "").toContain("Benefit");
 
     (actionButtons[0] as HTMLButtonElement).click();
     await Promise.resolve();
@@ -199,13 +210,17 @@ function createDocument(
       repository: "acme/repo",
       pr_number: "44",
     },
+    pr_description: "- Description",
     pr_summary: "Summary",
     strengths: "Strengths",
     improvements: "Improvements",
     suggestions: [
       {
         level: "Important",
-        content: "Suggestion",
+        title: "Suggestion",
+        reason: "Reason",
+        solutions: "Solutions",
+        benefit: "Benefit",
         applied: false,
       },
     ],

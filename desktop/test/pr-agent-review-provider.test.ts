@@ -40,7 +40,13 @@ describe("pr-agent-review-provider", () => {
 
     expect(prompt).toContain("STRICT JSON");
     expect(prompt).toContain("final_veredic");
+    expect(prompt).toContain("pr_description");
     expect(prompt).toContain("applied");
+    expect(prompt).toContain("Suggestion structure");
+    expect(prompt).toContain('"title": "<short suggestion title>"');
+    expect(prompt).toContain('"reason": "<why this should change now>"');
+    expect(prompt).toContain('"solutions": "<actionable solution(s), markdown allowed>"');
+    expect(prompt).toContain('"benefit": "<what we gain with this change>"');
     expect(prompt).toContain("/tmp/review.json");
     expect(prompt).not.toContain("pr-reviewer");
   });
@@ -76,18 +82,25 @@ describe("pr-agent-review-provider", () => {
       metadata: {
         repository: "acme/repo",
       },
+      pr_description: "desc",
       pr_summary: "summary",
       strengths: "strengths",
       improvements: "improvements",
       suggestions: [
         {
           level: "Important",
-          content: "Suggestion A",
+          title: "Suggestion A",
+          reason: "Reason A",
+          solutions: "Solutions A",
+          benefit: "Benefit A",
           applied: false,
         },
         {
           level: "Low",
-          content: "Suggestion B",
+          title: "Suggestion B",
+          reason: "Reason B",
+          solutions: "Solutions B",
+          benefit: "Benefit B",
           applied: false,
         },
       ],
@@ -98,6 +111,98 @@ describe("pr-agent-review-provider", () => {
     const document = await provider.getDocument(run);
     expect(document?.review?.suggestions[0]?.applied).toBe(false);
     expect(document?.review?.suggestions[1]?.applied).toBe(true);
+  });
+
+  test("normalizes legacy suggestion content into structured fields", async () => {
+    const run = createRun(join(tempDir, "acme-repo-pr22-agent-review.json"));
+    const provider = new PRAgentReviewProvider({
+      baseDir: tempDir,
+      homeDir: tempDir,
+      getWorkspacePaths: () => [],
+    });
+
+    await writeFile(run.filePath, JSON.stringify({
+      metadata: { repository: "acme/repo" },
+      pr_description: "desc",
+      pr_summary: "summary",
+      strengths: "strengths",
+      improvements: "improvements",
+      suggestions: [
+        {
+          level: "Important",
+          content: [
+            "## Add CI smoke validation",
+            "",
+            "**Why:**",
+            "Build artifacts may silently stop generating.",
+            "",
+            "**Solution/Solutions:**",
+            "- Add CI step to assert artifact exists.",
+            "",
+            "**Benefit:**",
+            "Early failure detection in pipeline.",
+          ].join("\n"),
+          applied: false,
+        },
+      ],
+      final_veredic: "final",
+    }, null, 2));
+
+    const document = await provider.getDocument(run);
+    const suggestion = document?.review?.suggestions[0];
+    expect(suggestion?.title).toBe("Add CI smoke validation");
+    expect(suggestion?.reason).toContain("silently stop generating");
+    expect(suggestion?.solutions).toContain("assert artifact exists");
+    expect(suggestion?.benefit).toContain("Early failure detection");
+  });
+
+  test("coerces non-string summary fields into markdown text", async () => {
+    const run = createRun(join(tempDir, "acme-repo-pr22-agent-review.json"));
+    const provider = new PRAgentReviewProvider({
+      baseDir: tempDir,
+      homeDir: tempDir,
+      getWorkspacePaths: () => [],
+    });
+
+    await writeFile(run.filePath, JSON.stringify({
+      metadata: {
+        repository: "acme/repo",
+        pr_number: 22,
+      },
+      pr_description: [
+        "First change",
+        "Second change",
+      ],
+      pr_summary: [
+        "Summary line A",
+        "Summary line B",
+      ],
+      strengths: {
+        stability: "No runtime behavior changes",
+      },
+      improvements: [
+        "Add tests",
+      ],
+      suggestions: [
+        {
+          level: "Medium",
+          title: "Improve tests",
+          reason: "Coverage is missing",
+          solutions: "- Add integration test",
+          benefit: "Lower regression risk",
+          applied: false,
+        },
+      ],
+      final_veredic: [
+        "Merge after adding tests",
+      ],
+    }, null, 2));
+
+    const document = await provider.getDocument(run);
+    expect(document?.parseError).toBeNull();
+    expect(document?.review?.pr_description).toContain("- First change");
+    expect(document?.review?.pr_summary).toContain("- Summary line A");
+    expect(document?.review?.final_veredic).toContain("- Merge after adding tests");
   });
 
   test("resolves cwd from matching workspace remote", async () => {

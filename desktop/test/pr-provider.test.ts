@@ -323,6 +323,70 @@ describe("pr-provider", () => {
       provider.replyPullRequestReviewComment("acme/repo", 21, "303", "   ")
     ).rejects.toBeInstanceOf(GhCommandError);
   });
+
+  test("creates a new inline review comment", async () => {
+    let command = "";
+    const provider = new PullRequestProvider(async (args) => {
+      command = args.join(" ");
+      return okJson({ id: 111, body: "comment" });
+    });
+
+    await provider.createPullRequestReviewComment("acme/repo", 21, {
+      commitSha: "abcdef0123456789",
+      path: "src/app.ts",
+      line: 10,
+      side: "RIGHT",
+      body: "Please rename this variable",
+    });
+
+    expect(command).toBe(
+      "api repos/acme/repo/pulls/21/comments -X POST -f body=Please rename this variable -f commit_id=abcdef0123456789 -f path=src/app.ts -f side=RIGHT -F line=10"
+    );
+  });
+
+  test("validates inline review comment payload before running gh", async () => {
+    const provider = new PullRequestProvider(async () => okJson({}));
+
+    await expect(
+      provider.createPullRequestReviewComment("acme/repo", 21, {
+        commitSha: "",
+        path: "src/app.ts",
+        line: 10,
+        side: "RIGHT",
+        body: "ok",
+      })
+    ).rejects.toBeInstanceOf(GhCommandError);
+
+    await expect(
+      provider.createPullRequestReviewComment("acme/repo", 21, {
+        commitSha: "abcdef",
+        path: "",
+        line: 10,
+        side: "RIGHT",
+        body: "ok",
+      })
+    ).rejects.toBeInstanceOf(GhCommandError);
+
+    await expect(
+      provider.createPullRequestReviewComment("acme/repo", 21, {
+        commitSha: "abcdef",
+        path: "src/app.ts",
+        line: 0,
+        side: "RIGHT",
+        body: "ok",
+      })
+    ).rejects.toBeInstanceOf(GhCommandError);
+
+    await expect(
+      provider.createPullRequestReviewComment("acme/repo", 21, {
+        commitSha: "abcdef",
+        path: "src/app.ts",
+        line: 10,
+        side: "RIGHT",
+        body: "  ",
+      })
+    ).rejects.toBeInstanceOf(GhCommandError);
+  });
 });
 
 function okJson(value: unknown): RunnerResult {
