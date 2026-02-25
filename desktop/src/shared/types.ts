@@ -200,6 +200,9 @@ export type StreamToolUseResult = {
   stdout?: string;
   stderr?: string;
   interrupted?: boolean;
+  success?: boolean;
+  commandName?: string;
+  command_name?: string;
   oldTodos?: StreamTodoEntry[];
   newTodos?: StreamTodoEntry[];
   [key: string]: unknown;
@@ -558,6 +561,27 @@ export type PullRequestAgentReviewStatus =
   | "failed"
   | "stale";
 
+export type PullRequestAgentReviewLevel =
+  | "Low"
+  | "Medium"
+  | "Important"
+  | "Critical";
+
+export type PullRequestAgentReviewSuggestion = {
+  level: PullRequestAgentReviewLevel;
+  content: string;
+  applied: boolean;
+};
+
+export type PullRequestAgentReviewData = {
+  metadata: Record<string, string>;
+  pr_summary: string;
+  strengths: string;
+  improvements: string;
+  suggestions: PullRequestAgentReviewSuggestion[];
+  final_veredic: string;
+};
+
 export type PullRequestAgentReviewRun = {
   id: string;
   repo: string;
@@ -576,7 +600,10 @@ export type PullRequestAgentReviewRun = {
 
 export type PullRequestAgentReviewDocument = {
   run: PullRequestAgentReviewRun;
-  markdown: string;
+  rawJson: string;
+  review: PullRequestAgentReviewData | null;
+  renderedMarkdown: string;
+  parseError: string | null;
 };
 
 // ── RPC contract ─────────────────────────────────────────────────
@@ -778,6 +805,10 @@ export type AppRPC = {
         params: { limit?: number };
         response: PullRequestSummary[];
       };
+      getReviewRequestedPullRequests: {
+        params: { limit?: number };
+        response: PullRequestSummary[];
+      };
       getPullRequestDetail: {
         params: { repo: string; number: number };
         response: PullRequestDetail;
@@ -830,6 +861,15 @@ export type AppRPC = {
       startPullRequestAgentReview: {
         params: { repo: string; number: number; headSha: string };
         response: PullRequestAgentReviewRun;
+      };
+      applyPullRequestAgentReviewIssue: {
+        params: {
+          repo: string;
+          number: number;
+          reviewVersion: number;
+          suggestionIndex: number;
+        };
+        response: { sessionId: string };
       };
       getFileContent: {
         params: { cwd: string; path: string; maxBytes?: number };

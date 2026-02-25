@@ -84,17 +84,18 @@ const rpc = Electroview.defineRPC<any>({
       }) => {
         updateSessionUsageEstimate(sessionId, event);
         const state = appState.get();
+        const isActiveSessionEvent = sessionIdsMatch(state.activeSessionId, sessionId);
         const isResultEvent = (event as any).type === "result";
         const isStopHook = isStopHookEvent(event);
         const isDiffMutation = isDiffMutationEvent(event);
         const hasPinnedCommitDiff = activeCommitDiff
           ? activeCommitDiff.cwd === state.activeWorkspace
           : false;
-        if (state.activeSessionId === sessionId && chatView) {
+        if (isActiveSessionEvent && chatView) {
           chatView.appendStreamEvent(event);
         }
         if (
-          state.activeSessionId === sessionId
+          isActiveSessionEvent
           && state.activeWorkspace
           && state.viewMode === "workspaces"
           && !hasPinnedCommitDiff
@@ -108,7 +109,7 @@ const rpc = Electroview.defineRPC<any>({
           );
         }
         if (
-          state.activeSessionId === sessionId
+          isActiveSessionEvent
           && state.activeWorkspace
           && state.viewMode === "workspaces"
           && diffView?.isBranchPanelVisible
@@ -120,7 +121,7 @@ const rpc = Electroview.defineRPC<any>({
           );
         }
         if (
-          state.activeSessionId === sessionId
+          isActiveSessionEvent
           && state.activeWorkspace
           && state.viewMode === "workspaces"
           && (isResultEvent || isStopHook || isDiffMutation)
@@ -138,24 +139,29 @@ const rpc = Electroview.defineRPC<any>({
         tempId: string;
         realId: string;
       }) => {
+        registerSessionAlias(tempId, realId);
         remapAppSpawnedSession(tempId, realId);
         const state = appState.get();
-        const live = new Set(state.liveSessions);
+        const live = remapLiveSessionIds(state.liveSessions);
         if (live.has(tempId)) {
           live.delete(tempId);
           live.add(realId);
         }
         const updates: Partial<AppState> = { liveSessions: live };
-        if (state.activeSessionId === tempId) {
-          updates.activeSessionId = realId;
+        const activeCanonical = resolveCanonicalSessionId(state.activeSessionId);
+        if (activeCanonical !== state.activeSessionId) {
+          updates.activeSessionId = activeCanonical;
         }
         appState.update((s) => ({ ...s, ...updates }));
+        if (updates.activeSessionId) {
+          void loadSessionTranscript(updates.activeSessionId);
+        }
       },
       toolApproval: (req: ToolApprovalRequest) => {
         console.log("[webview] Tool approval request:", req.toolName, req.toolUseId, req.sessionId);
         const state = appState.get();
         // Only show approval dialog if this tool belongs to the active session
-        if (chatView && state.activeSessionId === req.sessionId) {
+        if (chatView && sessionIdsMatch(state.activeSessionId, req.sessionId)) {
           chatView.showToolApproval(req, async (allow) => {
             try {
               await (rpc as any).request.respondToolApproval({
@@ -182,7 +188,8 @@ const rpc = Electroview.defineRPC<any>({
         const hasPinnedCommitDiff = activeCommitDiff
           ? activeCommitDiff.cwd === state.activeWorkspace
           : false;
-        const live = new Set(state.liveSessions);
+        clearSessionAliasesFor(sessionId);
+        const live = remapLiveSessionIds(state.liveSessions);
         live.delete(sessionId);
         appState.update((s) => ({ ...s, liveSessions: live }));
         // Refresh diff when a session ends (changes may have been made)
@@ -254,6 +261,7 @@ type AppState = {
   connectorsLoading: boolean;
   connectorAuthSession: ConnectorAuthSession | null;
   assignedPullRequests: PullRequestSummary[];
+  reviewRequestedPullRequests: PullRequestSummary[];
   openedPullRequests: PullRequestSummary[];
   pullRequestsLoading: boolean;
   pullRequestsError: string | null;
@@ -313,6 +321,7 @@ const appState = new Store<AppState>({
   connectorsLoading: false,
   connectorAuthSession: null,
   assignedPullRequests: [],
+  reviewRequestedPullRequests: [],
   openedPullRequests: [],
   pullRequestsLoading: false,
   pullRequestsError: null,
@@ -369,6 +378,7 @@ const slashCommandCache = new Map<string, {
 }>();
 const sessionUsageEstimates = new Map<string, SessionUsageEstimate>();
 const appSpawnedSessions = new Map<string, AppSpawnedSessionMeta>();
+const sessionIdAliases = new Map<string, string>();
 const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
 let prevBranchWorkspace: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
@@ -383,6 +393,7 @@ let cachedPullRequestDiff: {
 } | null = null;
 let prevViewMode: AppState["viewMode"] | null = null;
 let prevChatPanelFixed: boolean | null = null;
+let transcriptLoadSeq = 0;
 
 function init(): void {
   const panelsContainer = qs("#panels")!;
@@ -499,12 +510,13 @@ function init(): void {
   // Workspaces sidebar
   sidebar = new Sidebar(workspacesSidebarHost, {
     onSelectSession: (sessionId, workspacePath) => {
+      const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
       appState.update((s) => ({
         ...s,
-        activeSessionId: sessionId,
+        activeSessionId: canonicalSessionId,
         activeWorkspace: workspacePath,
       }));
-      loadSessionTranscript(sessionId);
+      loadSessionTranscript(canonicalSessionId);
       loadDiff(workspacePath);
       ensureBranchHistory(workspacePath);
     },
@@ -523,13 +535,15 @@ function init(): void {
     onRemoveWorkspace: (path) => removeWorkspace(path),
     onDeleteSession: async (sessionId, workspacePath) => {
       const state = appState.get();
-      const isLiveSession = state.liveSessions.has(sessionId);
+      const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
+      const isLiveSession = state.liveSessions.has(sessionId)
+        || state.liveSessions.has(canonicalSessionId);
       const transcriptPath = (state.historySessions[workspacePath] ?? [])
-        .find((h) => h.sessionId === sessionId)?.transcriptPath;
+        .find((h) => h.sessionId === sessionId || h.sessionId === canonicalSessionId)?.transcriptPath;
 
       if (isLiveSession) {
         try {
-          await (rpc as any).request.killSession({ sessionId });
+          await (rpc as any).request.killSession({ sessionId: canonicalSessionId });
         } catch (err) {
           console.error("Failed to kill session:", err);
         }
@@ -537,7 +551,7 @@ function init(): void {
 
       try {
         await (rpc as any).request.deleteSession({
-          sessionId,
+          sessionId: canonicalSessionId,
           cwd: workspacePath,
           transcriptPath,
         });
@@ -546,14 +560,18 @@ function init(): void {
       }
 
       appState.update((s) => {
-        const live = new Set(s.liveSessions);
+        const live = remapLiveSessionIds(s.liveSessions);
         live.delete(sessionId);
+        live.delete(canonicalSessionId);
 
         const names = { ...s.customSessionNames };
         delete names[sessionId];
+        delete names[canonicalSessionId];
 
         const wsHistory = s.historySessions[workspacePath] ?? [];
-        const nextHistory = wsHistory.filter((h) => h.sessionId !== sessionId);
+        const nextHistory = wsHistory.filter((h) =>
+          h.sessionId !== sessionId && h.sessionId !== canonicalSessionId
+        );
 
         return {
           ...s,
@@ -563,7 +581,9 @@ function init(): void {
             [workspacePath]: nextHistory,
           },
           customSessionNames: names,
-          activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId,
+          activeSessionId: sessionIdsMatch(s.activeSessionId, canonicalSessionId)
+            ? null
+            : s.activeSessionId,
         };
       });
 
@@ -667,10 +687,11 @@ function init(): void {
   chatView = new ChatView(chatPanel, {
     onStopSession: async () => {
       const state = appState.get();
-      if (!state.activeSessionId) return;
+      const activeSessionId = resolveCanonicalSessionId(state.activeSessionId);
+      if (!activeSessionId) return;
       try {
         await (rpc as any).request.killSession({
-          sessionId: state.activeSessionId,
+          sessionId: activeSessionId,
         });
       } catch (err) {
         console.error("Failed to kill session:", err);
@@ -685,12 +706,15 @@ function init(): void {
       }
 
       try {
-        const isLive = state.activeSessionId && state.liveSessions.has(state.activeSessionId);
+        const canonicalActiveSessionId = resolveCanonicalSessionId(state.activeSessionId);
+        const isLive = Boolean(
+          canonicalActiveSessionId && state.liveSessions.has(canonicalActiveSessionId)
+        );
 
-        if (state.activeSessionId && isLive) {
+        if (canonicalActiveSessionId && isLive) {
           // Send follow-up to a running session
           await (rpc as any).request.sendFollowUp({
-            sessionId: state.activeSessionId,
+            sessionId: canonicalActiveSessionId,
             text: prompt,
             fullAccess,
             selectedFiles,
@@ -701,22 +725,23 @@ function init(): void {
             prompt,
             cwd,
             fullAccess,
-            sessionId: state.activeSessionId ?? undefined, // resume if set
+            sessionId: canonicalActiveSessionId ?? undefined, // resume if set
             selectedFiles,
           });
+          const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
           registerAppSpawnedSession(
-            sessionId,
+            canonicalSessionId,
             cwd,
             resolvePromptTitle(null, prompt)
           );
           appState.update((s) => {
-            const live = new Set(s.liveSessions);
-            live.add(sessionId);
+            const live = remapLiveSessionIds(s.liveSessions);
+            live.add(canonicalSessionId);
             const expanded = new Set(s.expandedWorkspaces);
             expanded.add(cwd);
             return {
               ...s,
-              activeSessionId: sessionId,
+              activeSessionId: canonicalSessionId,
               activeWorkspace: cwd,
               liveSessions: live,
               expandedWorkspaces: expanded,
@@ -750,7 +775,14 @@ function init(): void {
       return searchSlashCommands(cwd, query, 30);
     },
   });
-  pluginsPreview = new PluginsPreview(chatPanel);
+  pluginsPreview = new PluginsPreview(chatPanel, {
+    onSelect: (selection) => {
+      appState.update((s) => ({
+        ...s,
+        pluginSelection: selection,
+      }));
+    },
+  });
   tasksView = new TasksView(chatPanel, {
     onUpdateTask: async (taskId, patch) => {
       await (rpc as any).request.updateTask({ taskId, patch });
@@ -786,6 +818,7 @@ function init(): void {
       if (!sessionId) {
         throw new Error("No session found for this task");
       }
+      const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
 
       const expanded = new Set(appState.get().expandedWorkspaces);
       expanded.add(detail.workspacePath);
@@ -793,11 +826,11 @@ function init(): void {
         ...s,
         viewMode: "workspaces",
         activeWorkspace: detail.workspacePath,
-        activeSessionId: sessionId,
+        activeSessionId: canonicalSessionId,
         expandedWorkspaces: expanded,
       }));
 
-      await loadSessionTranscript(sessionId);
+      await loadSessionTranscript(canonicalSessionId);
       void loadSessionHistory(detail.workspacePath);
       await loadDiff(detail.workspacePath);
       ensureBranchHistory(detail.workspacePath);
@@ -850,8 +883,9 @@ function init(): void {
       }
 
       appState.update((s) => {
-        const live = new Set(s.liveSessions);
-        live.add(result.sessionId!);
+        const canonicalSessionId = resolveCanonicalSessionId(result.sessionId!) ?? result.sessionId!;
+        const live = remapLiveSessionIds(s.liveSessions);
+        live.add(canonicalSessionId);
         const expanded = new Set(s.expandedWorkspaces);
         if (workspacePath) {
           expanded.add(workspacePath);
@@ -860,13 +894,14 @@ function init(): void {
           ...s,
           viewMode: "workspaces",
           activeWorkspace: workspacePath ?? s.activeWorkspace,
-          activeSessionId: result.sessionId,
+          activeSessionId: canonicalSessionId,
           liveSessions: live,
           expandedWorkspaces: expanded,
         };
       });
 
-      await loadSessionTranscript(result.sessionId);
+      const canonicalSessionId = resolveCanonicalSessionId(result.sessionId) ?? result.sessionId;
+      await loadSessionTranscript(canonicalSessionId);
       if (workspacePath) {
         void loadWorkspaceTasks(workspacePath, true);
         void loadSessionHistory(workspacePath);
@@ -901,6 +936,15 @@ function init(): void {
     },
     onSelectAgentReviewVersion: (version) => {
       void selectPullRequestAgentReviewVersion(version);
+    },
+    onApplyAgentReviewIssue: async ({
+      reviewVersion,
+      suggestionIndex,
+    }) => {
+      await applyPullRequestAgentReviewIssue({
+        reviewVersion,
+        suggestionIndex,
+      });
     },
   });
   connectorsView = new ConnectorsView(chatPanel, {
@@ -1107,7 +1151,7 @@ function init(): void {
 
     const wsData = buildWorkspaceData(state);
     sidebar.render(wsData);
-    sidebar.setActiveSession(state.activeSessionId);
+    sidebar.setActiveSession(resolveCanonicalSessionId(state.activeSessionId));
 
     const pluginsSelection = resolvePluginSelection(
       state.plugins,
@@ -1285,23 +1329,36 @@ function init(): void {
 // ── Actions ──────────────────────────────────────────────────────
 
 async function loadSessionTranscript(sessionId: string): Promise<void> {
+  const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
+  const loadSeq = ++transcriptLoadSeq;
   try {
+    const activeSessionId = resolveCanonicalSessionId(appState.get().activeSessionId);
+    if (!sessionIdsMatch(activeSessionId, canonicalSessionId)) {
+      return;
+    }
+
     // Check if this is a historical session with a known transcript path
     const state = appState.get();
     let transcriptPath: string | undefined;
     for (const sessions of Object.values(state.historySessions)) {
-      const found = sessions.find((s) => s.sessionId === sessionId);
+      const found = sessions.find((s) => sessionIdsMatch(s.sessionId, canonicalSessionId));
       if (found) {
         transcriptPath = found.transcriptPath;
         break;
       }
     }
     const messages: TranscriptMessage[] = await (rpc as any).request.getTranscript({
-      sessionId,
+      sessionId: canonicalSessionId,
       transcriptPath,
     });
+    if (loadSeq !== transcriptLoadSeq) return;
+    const latestActiveSessionId = resolveCanonicalSessionId(appState.get().activeSessionId);
+    if (!sessionIdsMatch(latestActiveSessionId, canonicalSessionId)) return;
     chatView.renderTranscript(messages);
   } catch (err) {
+    if (loadSeq !== transcriptLoadSeq) return;
+    const latestActiveSessionId = resolveCanonicalSessionId(appState.get().activeSessionId);
+    if (!sessionIdsMatch(latestActiveSessionId, canonicalSessionId)) return;
     console.error("Failed to load transcript:", err);
     chatView.clear();
   }
@@ -1505,9 +1562,10 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
   try {
     const state = appState.get();
     const selectedScope = scope ?? state.diffScope;
+    const activeSessionId = resolveCanonicalSessionId(state.activeSessionId);
     const sessionId = selectedScope === "last_turn"
       && state.activeWorkspace === cwd
-      ? (state.activeSessionId ?? undefined)
+      ? (activeSessionId ?? undefined)
       : undefined;
     filesPanel.setScope(selectedScope);
     const files: DiffFile[] = await (rpc as any).request.getDiff({
@@ -1935,8 +1993,11 @@ async function loadPullRequests(force = false): Promise<void> {
   }));
 
   try {
-    const [assignedPullRequests, openedPullRequests] = await Promise.all([
+    const [assignedPullRequests, reviewRequestedPullRequests, openedPullRequests] = await Promise.all([
       (rpc as any).request.getAssignedPullRequests({
+        limit: 120,
+      }) as Promise<PullRequestSummary[]>,
+      (rpc as any).request.getReviewRequestedPullRequests({
         limit: 120,
       }) as Promise<PullRequestSummary[]>,
       (rpc as any).request.getOpenedPullRequests({
@@ -1944,7 +2005,11 @@ async function loadPullRequests(force = false): Promise<void> {
       }) as Promise<PullRequestSummary[]>,
     ]);
 
-    const allPullRequests = mergePullRequestLists(assignedPullRequests, openedPullRequests);
+    const allPullRequests = mergePullRequestLists(
+      assignedPullRequests,
+      reviewRequestedPullRequests,
+      openedPullRequests
+    );
 
     const currentSelection = appState.get().selectedPullRequest;
     const selectedExists = currentSelection
@@ -1960,6 +2025,7 @@ async function loadPullRequests(force = false): Promise<void> {
       return {
         ...s,
         assignedPullRequests,
+        reviewRequestedPullRequests,
         openedPullRequests,
         pullRequestsLoading: false,
         pullRequestsError: null,
@@ -2295,6 +2361,28 @@ async function startPullRequestAgentReview(): Promise<void> {
       ...s,
       pullRequestAgentReviewStarting: false,
     }));
+  }
+}
+
+async function applyPullRequestAgentReviewIssue(params: {
+  reviewVersion: number;
+  suggestionIndex: number;
+}): Promise<void> {
+  const state = appState.get();
+  const selection = state.selectedPullRequest;
+  if (!selection) {
+    throw new Error("No pull request selected");
+  }
+
+  try {
+    await (rpc as any).request.applyPullRequestAgentReviewIssue({
+      repo: selection.repo,
+      number: selection.number,
+      reviewVersion: Math.max(1, Math.trunc(params.reviewVersion)),
+      suggestionIndex: Math.max(0, Math.trunc(params.suggestionIndex)),
+    });
+  } catch (error) {
+    throw new Error(formatPullRequestError(error));
   }
 }
 
@@ -2808,6 +2896,12 @@ function buildPullRequestSidebarSections(state: AppState): PullRequestSidebarSec
       emptyLabel: "No assigned PRs",
     },
     {
+      id: "review_requested",
+      label: "Review requested",
+      groups: buildPullRequestRepoGroups(state.reviewRequestedPullRequests),
+      emptyLabel: "No review requests",
+    },
+    {
       id: "opened_by_me",
       label: "Opened by me",
       groups: buildPullRequestRepoGroups(state.openedPullRequests),
@@ -2932,6 +3026,7 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
   const liveSessions = state.snapshot
     ? buildSessionList(state.snapshot)
     : [];
+  const normalizedLiveSessionIds = remapLiveSessionIds(state.liveSessions);
 
   return state.workspaces.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
@@ -2951,7 +3046,7 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
       wsPath,
       liveIds,
       historyIds,
-      state.liveSessions
+      normalizedLiveSessionIds
     );
 
     // Apply custom names to all sessions
@@ -3017,12 +3112,23 @@ function buildAppSpawnedSessionList(
   stateLiveIds: Set<string>
 ): SessionInfo[] {
   const result: SessionInfo[] = [];
+  const seen = new Set<string>();
   for (const [sessionId, meta] of appSpawnedSessions) {
+    const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
     if (meta.cwd !== workspacePath) continue;
-    if (!stateLiveIds.has(sessionId)) continue;
-    if (liveIds.has(sessionId) || historyIds.has(sessionId)) continue;
+    if (!stateLiveIds.has(sessionId) && !stateLiveIds.has(canonicalSessionId)) continue;
+    if (
+      liveIds.has(sessionId)
+      || liveIds.has(canonicalSessionId)
+      || historyIds.has(sessionId)
+      || historyIds.has(canonicalSessionId)
+      || seen.has(canonicalSessionId)
+    ) {
+      continue;
+    }
+    seen.add(canonicalSessionId);
     result.push({
-      sessionId,
+      sessionId: canonicalSessionId,
       topic: meta.topic,
       prompt: null,
       cwd: meta.cwd,
@@ -3044,7 +3150,8 @@ function registerAppSpawnedSession(
   cwd: string,
   topic: string | null
 ): void {
-  const normalizedId = String(sessionId ?? "").trim();
+  const normalizedId = resolveCanonicalSessionId(sessionId)
+    ?? String(sessionId ?? "").trim();
   const normalizedCwd = String(cwd ?? "").trim();
   if (!normalizedId || !normalizedCwd) return;
 
@@ -3070,7 +3177,13 @@ function remapAppSpawnedSession(tempId: string, realId: string): void {
 }
 
 function removeAppSpawnedSession(sessionId: string): void {
-  appSpawnedSessions.delete(sessionId);
+  const normalized = String(sessionId ?? "").trim();
+  if (!normalized) return;
+  const canonical = resolveCanonicalSessionId(normalized);
+  appSpawnedSessions.delete(normalized);
+  if (canonical && canonical !== normalized) {
+    appSpawnedSessions.delete(canonical);
+  }
 }
 
 function buildSessionList(snapshot: Snapshot): SessionInfo[] {
@@ -3112,7 +3225,7 @@ function buildSessionList(snapshot: Snapshot): SessionInfo[] {
 }
 
 function resolveActiveSessionTitle(state: AppState): string {
-  const activeSessionId = state.activeSessionId;
+  const activeSessionId = resolveCanonicalSessionId(state.activeSessionId);
   if (!activeSessionId) return "New session";
 
   const custom = state.customSessionNames[activeSessionId]?.trim();
@@ -3177,6 +3290,66 @@ function normalizeCommandName(value: string): string | null {
   return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
+function registerSessionAlias(tempId: string, realId: string): void {
+  const temp = String(tempId ?? "").trim();
+  const real = String(realId ?? "").trim();
+  if (!temp || !real || temp === real) return;
+
+  const canonicalReal = resolveCanonicalSessionId(real) ?? real;
+  sessionIdAliases.set(temp, canonicalReal);
+
+  for (const [key, value] of sessionIdAliases) {
+    if (value === temp) {
+      sessionIdAliases.set(key, canonicalReal);
+    }
+  }
+}
+
+function resolveCanonicalSessionId(sessionId: string | null | undefined): string | null {
+  const normalized = String(sessionId ?? "").trim();
+  if (!normalized) return null;
+
+  let current = normalized;
+  const seen = new Set<string>();
+  while (!seen.has(current)) {
+    seen.add(current);
+    const next = sessionIdAliases.get(current);
+    if (!next || next === current) break;
+    current = next;
+  }
+
+  return current;
+}
+
+function sessionIdsMatch(
+  left: string | null | undefined,
+  right: string | null | undefined
+): boolean {
+  const leftCanonical = resolveCanonicalSessionId(left);
+  const rightCanonical = resolveCanonicalSessionId(right);
+  return Boolean(leftCanonical && rightCanonical && leftCanonical === rightCanonical);
+}
+
+function remapLiveSessionIds(liveIds: Set<string>): Set<string> {
+  const remapped = new Set<string>();
+  for (const sessionId of liveIds) {
+    const canonical = resolveCanonicalSessionId(sessionId) ?? sessionId;
+    remapped.add(canonical);
+  }
+  return remapped;
+}
+
+function clearSessionAliasesFor(sessionId: string): void {
+  const normalized = String(sessionId ?? "").trim();
+  if (!normalized) return;
+  const canonical = resolveCanonicalSessionId(normalized) ?? normalized;
+  for (const [key, value] of sessionIdAliases) {
+    if (key === normalized || key === canonical || value === normalized || value === canonical) {
+      sessionIdAliases.delete(key);
+    }
+  }
+}
+
 function collapseWhitespace(value: string): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -3189,7 +3362,7 @@ function resolveActiveContextUsage(
   activity: Activity | null;
   promptTokens: number | null;
 } | null {
-  const activeSessionId = state.activeSessionId;
+  const activeSessionId = resolveCanonicalSessionId(state.activeSessionId);
   if (!activeSessionId || !state.snapshot) return null;
 
   const live = buildSessionList(state.snapshot).find((s) => s.sessionId === activeSessionId);

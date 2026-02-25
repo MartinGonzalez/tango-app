@@ -3,6 +3,7 @@ import { renderMarkdown } from "./chat-view.ts";
 import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type { FileListView } from "./files-panel.ts";
 import type {
+  PullRequestAgentReviewLevel,
   PullRequestAgentReviewDocument,
   PullRequestAgentReviewRun,
   PullRequestConversationItem,
@@ -17,6 +18,10 @@ export type PRViewCallbacks = {
   onFilesViewModeChange?: (mode: FileListView) => void;
   onStartAgentReview?: () => void;
   onSelectAgentReviewVersion?: (version: number) => void;
+  onApplyAgentReviewIssue?: (params: {
+    reviewVersion: number;
+    suggestionIndex: number;
+  }) => Promise<void> | void;
 };
 
 type PRFileRow = PullRequestDetail["files"][number];
@@ -49,6 +54,8 @@ export class PRView {
   #selectedAgentReviewVersion: number | null = null;
   #selectedAgentReviewDocument: PullRequestAgentReviewDocument | null = null;
   #agentReviewStarting = false;
+  #applyingReviewIssues = new Set<string>();
+  #applyReviewIssueErrors = new Map<string, string>();
 
   constructor(container: HTMLElement, callbacks: PRViewCallbacks) {
     this.#callbacks = callbacks;
@@ -333,22 +340,159 @@ export class PRView {
       ]));
     }
 
-    const markdown = this.#selectedAgentReviewDocument?.markdown ?? "";
-    const markdownContent = markdown.trim();
-    const content = this.#agentReviewsLoading && !markdownContent
+    const selectedDocument = this.#selectedAgentReviewDocument;
+    const review = selectedDocument?.review ?? null;
+    const renderedMarkdown = selectedDocument?.renderedMarkdown ?? "";
+    const parseError = selectedDocument?.parseError ?? null;
+    const reviewVersion = selectedVersion ?? 1;
+    const suggestions = review?.suggestions ?? [];
+
+    const validActionKeys = new Set(suggestions.map((_item, index) => `${reviewVersion}:${index}`));
+    for (const key of this.#applyingReviewIssues) {
+      if (!validActionKeys.has(key)) {
+        this.#applyingReviewIssues.delete(key);
+      }
+    }
+    for (const key of this.#applyReviewIssueErrors.keys()) {
+      if (!validActionKeys.has(key)) {
+        this.#applyReviewIssueErrors.delete(key);
+      }
+    }
+
+    const structuredPanel = review
+      ? this.#renderStructuredAgentReview(reviewVersion, review, suggestions)
+      : null;
+
+    const content = this.#agentReviewsLoading && !selectedDocument
       ? h("div", { class: "pr-view-section-empty" }, ["Loading review..."])
       : this.#agentReviewsError
         ? h("div", { class: "pr-view-section-empty pr-view-error" }, [this.#agentReviewsError])
-        : markdownContent
+        : structuredPanel
+          ? structuredPanel
+          : renderedMarkdown.trim()
           ? h("div", {
               class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
-              innerHTML: renderMarkdown(markdown),
+              innerHTML: renderMarkdown(renderedMarkdown),
             })
           : h("div", { class: "pr-view-section-empty" }, ["Review file not found"]);
 
     return h("section", { class: "pr-view-section pr-agent-reviews-panel" }, [
       list,
+      parseError
+        ? h("div", { class: "pr-view-warning" }, [`Invalid review JSON: ${parseError}`])
+        : null as any,
       content,
+    ].filter(Boolean));
+  }
+
+  #renderStructuredAgentReview(
+    reviewVersion: number,
+    review: NonNullable<PullRequestAgentReviewDocument["review"]>,
+    suggestions: NonNullable<PullRequestAgentReviewDocument["review"]>["suggestions"]
+  ): HTMLElement {
+    const metadataRows = Object.entries(review.metadata ?? {}).map(([key, value]) =>
+      h("div", { class: "pr-agent-review-meta-row" }, [
+        h("span", { class: "pr-agent-review-meta-key" }, [key.replace(/_/g, " ")]),
+        h("span", { class: "pr-agent-review-meta-value", title: value }, [value]),
+      ])
+    );
+
+    const suggestionsPanel = h("div", { class: "pr-agent-review-suggestions" }, suggestions.map((item, index) => {
+      const itemKey = `${reviewVersion}:${index}`;
+      const isApplying = this.#applyingReviewIssues.has(itemKey);
+      const isApplied = item.applied;
+      const errorMessage = this.#applyReviewIssueErrors.get(itemKey) ?? null;
+
+      const actionButton = h("button", {
+        class: `pr-agent-review-action-btn pr-agent-review-action-btn-inline${isApplied ? " is-applied" : ""}`,
+        type: "button",
+        disabled: isApplying || isApplied,
+        onclick: async () => {
+          if (isApplying || isApplied) return;
+          this.#applyingReviewIssues.add(itemKey);
+          this.#applyReviewIssueErrors.delete(itemKey);
+          this.#renderContent();
+          try {
+            await this.#callbacks.onApplyAgentReviewIssue?.({
+              reviewVersion,
+              suggestionIndex: index,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.#applyReviewIssueErrors.set(
+              itemKey,
+              message.trim() || "Failed to apply suggestion"
+            );
+          } finally {
+            this.#applyingReviewIssues.delete(itemKey);
+            this.#renderContent();
+          }
+        },
+      }, [
+        isApplying
+          ? "Applying..."
+          : isApplied
+            ? "Applied"
+            : "Apply",
+      ]);
+
+      return h("section", { class: "pr-agent-review-suggestion" }, [
+        h("div", { class: "pr-agent-review-suggestion-head" }, [
+          h("h3", { class: "pr-agent-review-suggestion-title" }, [`Suggestion ${index + 1}`]),
+          h("span", { class: `pr-agent-review-level-badge is-${normalizeReviewLevelClass(item.level)}` }, [item.level]),
+        ]),
+        actionButton,
+        h("div", {
+          class: "pr-agent-review-suggestion-body plugins-preview-markdown chat-bubble assistant",
+          innerHTML: renderMarkdown(item.content || "_No details_"),
+        }),
+        errorMessage
+          ? h("div", { class: "pr-agent-review-action-error" }, [errorMessage])
+          : null as any,
+      ].filter(Boolean));
+    }));
+
+    return h("div", { class: "pr-agent-review-structured" }, [
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["Metadata"]),
+        metadataRows.length > 0
+          ? h("div", { class: "pr-agent-review-metadata-list" }, metadataRows)
+          : h("div", { class: "pr-view-section-empty" }, ["No metadata"]),
+      ]),
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["PR Summary"]),
+        h("div", {
+          class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
+          innerHTML: renderMarkdown(review.pr_summary || "_No summary_"),
+        }),
+      ]),
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["Strengths"]),
+        h("div", {
+          class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
+          innerHTML: renderMarkdown(review.strengths || "_No strengths_"),
+        }),
+      ]),
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["Improvements"]),
+        h("div", {
+          class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
+          innerHTML: renderMarkdown(review.improvements || "_No improvements_"),
+        }),
+      ]),
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["Suggestions"]),
+        suggestions.length > 0
+          ? suggestionsPanel
+          : h("div", { class: "pr-view-section-empty" }, ["No suggestions"]),
+      ]),
+      h("section", { class: "pr-agent-review-block" }, [
+        h("h3", { class: "pr-view-section-title" }, ["Final Veredic"]),
+        h("div", {
+          class: "pr-agent-reviews-markdown plugins-preview-markdown chat-bubble assistant",
+          innerHTML: renderMarkdown(review.final_veredic || "_No final veredic_"),
+        }),
+      ]),
     ]);
   }
 
@@ -802,6 +946,13 @@ function formatAgentReviewStatus(status: PullRequestAgentReviewRun["status"]): s
   if (status === "completed") return "Completed";
   if (status === "stale") return "Stale";
   return "Failed";
+}
+
+function normalizeReviewLevelClass(level: PullRequestAgentReviewLevel): string {
+  if (level === "Critical") return "critical";
+  if (level === "Important") return "important";
+  if (level === "Medium") return "medium";
+  return "low";
 }
 
 function formatDateTime(value: string): string {

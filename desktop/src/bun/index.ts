@@ -43,6 +43,7 @@ import {
 import {
   getAssignedPullRequests,
   getOpenedPullRequests,
+  getReviewRequestedPullRequests,
   getPullRequestDetail,
   getPullRequestDiff,
   replyPullRequestReviewComment,
@@ -51,7 +52,7 @@ import { TaskRepository } from "./task-repository.ts";
 import { PRReviewStore } from "./pr-review-store.ts";
 import { PRAgentReviewStore } from "./pr-agent-review-store.ts";
 import { PRAgentReviewProvider } from "./pr-agent-review-provider.ts";
-import { AGENT_REVIEW_PLACEHOLDER_MARKER } from "./pr-agent-review-files.ts";
+import { isAgentReviewPlaceholderPayload } from "./pr-agent-review-files.ts";
 import { ConnectorsRepository } from "./connectors-repository.ts";
 import {
   encodeClaudeProjectPath,
@@ -100,6 +101,13 @@ const prAgentRunsBySession = new Map<string, {
   runId: string;
   repo: string;
   number: number;
+}>();
+const prAgentApplyRunsBySession = new Map<string, {
+  runId: string;
+  repo: string;
+  number: number;
+  reviewVersion: number;
+  suggestionIndex: number;
 }>();
 const hiddenTaskSessionIds = new Set<string>(taskRepository.listHiddenSessionIds());
 const HIDDEN_TASK_PROMPT_PREFIXES = [
@@ -228,6 +236,11 @@ sessions.onIdResolved((tempId, realId) => {
       console.warn("Failed to bind agent review session id:", err);
     });
   }
+  const prAgentApplyRun = prAgentApplyRunsBySession.get(tempId);
+  if (prAgentApplyRun) {
+    prAgentApplyRunsBySession.delete(tempId);
+    prAgentApplyRunsBySession.set(realId, prAgentApplyRun);
+  }
   // Notify webview to update its activeSessionId.
   // RPC messages are ordered — this always arrives before events with realId.
   mainRPC?.send.sessionIdResolved({ tempId, realId });
@@ -244,6 +257,12 @@ sessions.onEnd((sessionId, exitCode) => {
   if (prAgentRun) {
     clearAgentRunSessionBindings(prAgentRun.runId);
     void finalizeAgentReviewRunFromExit(prAgentRun, exitCode);
+    return;
+  }
+  const prAgentApplyRun = prAgentApplyRunsBySession.get(sessionId);
+  if (prAgentApplyRun) {
+    prAgentApplyRunsBySession.delete(sessionId);
+    void finalizeAgentReviewApplyFromExit(prAgentApplyRun, exitCode);
     return;
   }
   const taskRun = taskRunsBySession.get(sessionId);
@@ -268,6 +287,12 @@ sessions.onError((sessionId, error) => {
   const prAgentRun = prAgentRunsBySession.get(sessionId);
   if (prAgentRun) {
     void failAgentReviewRun(prAgentRun, error, "failed");
+    return;
+  }
+  const prAgentApplyRun = prAgentApplyRunsBySession.get(sessionId);
+  if (prAgentApplyRun) {
+    prAgentApplyRunsBySession.delete(sessionId);
+    console.warn("Agent review apply session failed:", error);
     return;
   }
   const taskRun = taskRunsBySession.get(sessionId);
@@ -794,6 +819,10 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getOpenedPullRequests(limit);
       },
 
+      getReviewRequestedPullRequests: async ({ limit }: { limit?: number }) => {
+        return getReviewRequestedPullRequests(limit);
+      },
+
       getPullRequestDetail: async ({
         repo,
         number,
@@ -977,6 +1006,78 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         }
       },
 
+      applyPullRequestAgentReviewIssue: async ({
+        repo,
+        number,
+        reviewVersion,
+        suggestionIndex,
+      }: {
+        repo: string;
+        number: number;
+        reviewVersion: number;
+        suggestionIndex: number;
+      }) => {
+        const normalizedRepo = String(repo ?? "").trim();
+        const normalizedNumber = Math.max(1, Math.trunc(number));
+        const normalizedReviewVersion = Math.max(1, Math.trunc(reviewVersion));
+        const normalizedSuggestionIndex = Math.trunc(suggestionIndex);
+
+        if (!normalizedRepo || !Number.isFinite(normalizedNumber)) {
+          throw new Error("Invalid pull request selection");
+        }
+        if (!Number.isFinite(normalizedSuggestionIndex) || normalizedSuggestionIndex < 0) {
+          throw new Error("Invalid suggestion index");
+        }
+
+        const run = await prAgentReviewStore.getRunByVersion(
+          normalizedRepo,
+          normalizedNumber,
+          normalizedReviewVersion
+        );
+        if (!run) {
+          throw new Error("Agent review version not found");
+        }
+
+        const document = await prAgentReviewProvider.getDocument(run);
+        if (!document || !document.review) {
+          throw new Error(document?.parseError || "Agent review JSON is invalid");
+        }
+
+        const suggestion = document.review.suggestions[normalizedSuggestionIndex] ?? null;
+        if (!suggestion) {
+          throw new Error("Suggestion not found");
+        }
+        if (suggestion.applied) {
+          throw new Error("Suggestion is already applied");
+        }
+
+        const prompt = buildPullRequestAgentApplyPrompt({
+          repo: normalizedRepo,
+          number: normalizedNumber,
+          headSha: run.headSha,
+          reviewVersion: normalizedReviewVersion,
+          suggestionIndex: normalizedSuggestionIndex,
+          suggestionLevel: suggestion.level,
+          suggestionContent: suggestion.content,
+        });
+
+        const sessionId = await sessions.spawn(
+          prompt,
+          homedir(),
+          true
+        );
+
+        prAgentApplyRunsBySession.set(sessionId, {
+          runId: run.id,
+          repo: normalizedRepo,
+          number: normalizedNumber,
+          reviewVersion: normalizedReviewVersion,
+          suggestionIndex: normalizedSuggestionIndex,
+        });
+
+        return { sessionId };
+      },
+
       addWorkspace: async ({ path }) => {
         await workspaces.add(path);
         invalidateWorkspaceFilesCache(path);
@@ -1076,6 +1177,20 @@ async function handleSessionEvent(sessionId: string, event: any): Promise<void> 
       return;
     }
     // Agent review sessions are background-only and should not stream to chat.
+    return;
+  }
+
+  const prAgentApplyRun = prAgentApplyRunsBySession.get(sessionId);
+  if (prAgentApplyRun) {
+    const consumed = await finalizeAgentReviewApplyFromEvent(
+      sessionId,
+      prAgentApplyRun,
+      event
+    );
+    if (consumed) {
+      return;
+    }
+    // Agent review apply sessions are background-only and should not stream to chat.
     return;
   }
 
@@ -1222,6 +1337,57 @@ function clearAgentRunSessionBindings(runId: string): void {
   }
 }
 
+function buildPullRequestAgentApplyPrompt(params: {
+  repo: string;
+  number: number;
+  headSha: string;
+  reviewVersion: number;
+  suggestionIndex: number;
+  suggestionLevel: string;
+  suggestionContent: string;
+}): string {
+  const repo = String(params.repo ?? "").trim();
+  const number = Math.max(1, Math.trunc(params.number));
+  const headSha = String(params.headSha ?? "").trim();
+  const reviewVersion = Math.max(1, Math.trunc(params.reviewVersion));
+  const suggestionIndex = Math.max(0, Math.trunc(params.suggestionIndex));
+  const suggestionLevel = String(params.suggestionLevel ?? "").trim() || "Unknown";
+  const suggestionContent = String(params.suggestionContent ?? "").trim();
+  const safeIssueSummary = collapseWhitespace(
+    suggestionContent.split(/\r?\n/, 1)[0] || `suggestion ${suggestionIndex + 1}`
+  ).slice(0, 120);
+
+  return [
+    "Apply one actionable item from an Agent Review to a pull request branch.",
+    "Use a temporary clone only. Do not modify any existing local workspace clone.",
+    "",
+    `Repository: ${repo}`,
+    `PR: #${number}`,
+    `Head SHA: ${headSha || "(unknown)"}`,
+    `Agent Review Version: v${reviewVersion}`,
+    `Suggestion Index: ${suggestionIndex}`,
+    `Suggestion Level: ${suggestionLevel}`,
+    "",
+    "Suggestion Content (markdown):",
+    suggestionContent || "(no details provided)",
+    "",
+    "Requirements:",
+    "1. Create a temporary directory with `mktemp -d` and ensure cleanup at the end.",
+    `2. Clone the repo in that temp directory (for example with \`gh repo clone ${repo}\`).`,
+    `3. Checkout the PR branch (prefer \`gh pr checkout ${number} -R ${repo}\`, fallback to git fetch/checkout).`,
+    "4. Implement only this issue fix; keep scope tight.",
+    "5. Run targeted validation (tests/lint/build) relevant to the change when possible.",
+    `6. Commit with message: \`fix(pr #${number}): apply agent review v${reviewVersion} - ${safeIssueSummary}\``,
+    "7. Push the commit to the PR branch.",
+    "8. Remove the temporary clone directory before exiting.",
+    "9. Return a short summary with changed files, commit hash, and push status.",
+  ].join("\n");
+}
+
+function collapseWhitespace(value: string): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
 async function finalizeAgentReviewRunFromEvent(
   sessionId: string,
   runRef: {
@@ -1241,6 +1407,7 @@ async function finalizeAgentReviewRunFromEvent(
 
   const run = await prAgentReviewStore.getRunById(runRef.runId);
   if (!run) {
+    clearAgentRunSessionBindings(runRef.runId);
     sessions.kill(sessionId);
     return true;
   }
@@ -1248,10 +1415,21 @@ async function finalizeAgentReviewRunFromEvent(
   try {
     if (isSuccess) {
       const resultText = String(ev.result ?? "").trim();
-      await prAgentReviewProvider.ensureCompletedDocument(run, resultText);
-      const completedRun = await prAgentReviewStore.markCompleted(run.id);
-      if (completedRun) {
-        notifyPullRequestAgentReviewChanged(completedRun);
+      try {
+        await prAgentReviewProvider.ensureCompletedDocument(run, resultText);
+        const completedRun = await prAgentReviewStore.markCompleted(run.id);
+        if (completedRun) {
+          notifyPullRequestAgentReviewChanged(completedRun);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await prAgentReviewProvider.writeFailedDocument(run, message).catch((err) => {
+          console.warn("Failed to write failed agent review document:", err);
+        });
+        const failedRun = await prAgentReviewStore.markFailed(run.id, message, "failed");
+        if (failedRun) {
+          notifyPullRequestAgentReviewChanged(failedRun);
+        }
       }
     } else {
       const message = String(
@@ -1270,6 +1448,7 @@ async function finalizeAgentReviewRunFromEvent(
   } catch (err) {
     console.warn("Failed to finalize agent review from result event:", err);
   } finally {
+    clearAgentRunSessionBindings(run.id);
     sessions.kill(sessionId);
   }
 
@@ -1288,7 +1467,7 @@ async function finalizeAgentReviewRunFromExit(
   if (!run || run.status !== "running") return;
 
   const document = await prAgentReviewProvider.getDocument(run);
-  const hasPlaceholder = document?.markdown.includes(AGENT_REVIEW_PLACEHOLDER_MARKER) ?? true;
+  const hasPlaceholder = isDocumentPlaceholder(document?.rawJson ?? null);
 
   if (!hasPlaceholder) {
     const completedRun = await prAgentReviewStore.markCompleted(run.id);
@@ -1343,6 +1522,75 @@ async function failAgentReviewRun(
   for (const [sessionId, activeRun] of prAgentRunsBySession) {
     if (activeRun.runId !== run.id) continue;
     sessions.kill(sessionId);
+  }
+}
+
+async function finalizeAgentReviewApplyFromEvent(
+  sessionId: string,
+  runRef: {
+    runId: string;
+    repo: string;
+    number: number;
+    reviewVersion: number;
+    suggestionIndex: number;
+  },
+  event: unknown
+): Promise<boolean> {
+  if (!event || typeof event !== "object") return false;
+  const ev = event as Record<string, any>;
+  if (ev.type !== "result") return false;
+
+  const isSuccess = ev.subtype === "success" && !Boolean(ev.is_error);
+  const isFailure = ev.subtype === "error" || (ev.subtype === "success" && Boolean(ev.is_error));
+  if (!isSuccess && !isFailure) return false;
+
+  prAgentApplyRunsBySession.delete(sessionId);
+
+  if (isSuccess) {
+    try {
+      const run = await prAgentReviewStore.getRunById(runRef.runId);
+      if (run) {
+        await prAgentReviewProvider.markSuggestionApplied(
+          run,
+          runRef.suggestionIndex,
+          true
+        );
+        notifyPullRequestAgentReviewChanged(run);
+      }
+    } catch (error) {
+      console.warn("Failed to mark agent review suggestion as applied:", error);
+    }
+  }
+
+  sessions.kill(sessionId);
+  return true;
+}
+
+async function finalizeAgentReviewApplyFromExit(
+  runRef: {
+    runId: string;
+    repo: string;
+    number: number;
+    reviewVersion: number;
+    suggestionIndex: number;
+  },
+  exitCode: number
+): Promise<void> {
+  if (exitCode !== 0) {
+    console.warn(
+      `Agent review apply session exited with code ${exitCode} ` +
+      `(run=${runRef.runId}, suggestion=${runRef.suggestionIndex})`
+    );
+  }
+}
+
+function isDocumentPlaceholder(rawJson: string | null): boolean {
+  if (!rawJson) return true;
+  try {
+    const parsed = JSON.parse(rawJson);
+    return isAgentReviewPlaceholderPayload(parsed);
+  } catch {
+    return true;
   }
 }
 

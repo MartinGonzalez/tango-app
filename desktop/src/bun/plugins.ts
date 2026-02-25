@@ -36,48 +36,59 @@ type FrontmatterResult = {
 };
 
 const DEFAULT_PLUGINS_DIR = join(homedir(), ".claude", "plugins");
+const DEFAULT_USER_CONFIG_DIR = join(homedir(), ".claude");
 const CACHE_TTL_MS = 15_000;
+const USER_PLUGIN_ID = "user@local";
 
 let cachedPlugins: InstalledPlugin[] | null = null;
 let cacheLoadedAt = 0;
 
 export async function getInstalledPlugins(
-  pluginsDir: string = DEFAULT_PLUGINS_DIR
+  pluginsDir: string = DEFAULT_PLUGINS_DIR,
+  opts?: {
+    userConfigDir?: string | null;
+  }
 ): Promise<InstalledPlugin[]> {
+  const userConfigDir = resolveUserConfigDir(pluginsDir, opts?.userConfigDir);
   const now = Date.now();
-  if (pluginsDir === DEFAULT_PLUGINS_DIR && cachedPlugins && now - cacheLoadedAt < CACHE_TTL_MS) {
+  const shouldUseDefaultCache = pluginsDir === DEFAULT_PLUGINS_DIR
+    && userConfigDir === DEFAULT_USER_CONFIG_DIR;
+  if (shouldUseDefaultCache && cachedPlugins && now - cacheLoadedAt < CACHE_TTL_MS) {
     return cachedPlugins;
   }
 
   const manifestPath = join(pluginsDir, "installed_plugins.json");
   const manifest = await readJsonSafe<InstalledPluginsManifest>(manifestPath);
-  if (!manifest?.plugins) {
-    if (pluginsDir === DEFAULT_PLUGINS_DIR) {
-      cachedPlugins = [];
-      cacheLoadedAt = now;
-    }
-    return [];
-  }
-
   const disabled = await loadDisabledPlugins(pluginsDir);
   const out: InstalledPlugin[] = [];
 
-  for (const [pluginId, installs] of Object.entries(manifest.plugins)) {
-    const install = selectInstall(installs);
-    if (!install?.installPath) continue;
+  if (manifest?.plugins) {
+    for (const [pluginId, installs] of Object.entries(manifest.plugins)) {
+      const install = selectInstall(installs);
+      if (!install?.installPath) continue;
 
-    const plugin = await buildInstalledPlugin(pluginId, install, disabled);
-    if (plugin) out.push(plugin);
+      const plugin = await buildInstalledPlugin(pluginId, install, disabled);
+      if (plugin) out.push(plugin);
+    }
+  }
+
+  if (userConfigDir) {
+    const userPlugin = await buildUserPlugin(userConfigDir);
+    if (userPlugin) {
+      out.push(userPlugin);
+    }
   }
 
   out.sort((a, b) => {
+    if (a.id === USER_PLUGIN_ID && b.id !== USER_PLUGIN_ID) return -1;
+    if (b.id === USER_PLUGIN_ID && a.id !== USER_PLUGIN_ID) return 1;
     if (a.status !== b.status) {
       return a.status === "enabled" ? -1 : 1;
     }
     return a.displayName.localeCompare(b.displayName);
   });
 
-  if (pluginsDir === DEFAULT_PLUGINS_DIR) {
+  if (shouldUseDefaultCache) {
     cachedPlugins = out;
     cacheLoadedAt = now;
   }
@@ -88,6 +99,18 @@ export async function getInstalledPlugins(
 export function invalidateInstalledPluginsCache(): void {
   cachedPlugins = null;
   cacheLoadedAt = 0;
+}
+
+function resolveUserConfigDir(
+  pluginsDir: string,
+  userConfigDir: string | null | undefined
+): string | null {
+  if (typeof userConfigDir === "string") {
+    const normalized = userConfigDir.trim();
+    return normalized || null;
+  }
+  if (userConfigDir === null) return null;
+  return pluginsDir === DEFAULT_PLUGINS_DIR ? DEFAULT_USER_CONFIG_DIR : null;
 }
 
 async function buildInstalledPlugin(
@@ -142,6 +165,58 @@ async function buildInstalledPlugin(
   };
 }
 
+async function buildUserPlugin(userConfigDir: string): Promise<InstalledPlugin | null> {
+  const commands = withRelativePrefix(
+    await scanMarkdownItems(
+      join(userConfigDir, "commands"),
+      "command",
+      (relativePath) => {
+        const withoutExt = stripMdExt(relativePath);
+        return `/${withoutExt}`;
+      }
+    ),
+    "commands"
+  );
+
+  const agents = withRelativePrefix(
+    await scanMarkdownItems(
+      join(userConfigDir, "agents"),
+      "agent",
+      (relativePath, frontmatter) => {
+        const frontmatterName = frontmatter.attributes.name?.trim();
+        if (frontmatterName) return frontmatterName;
+        return stripMdExt(relativePath).split("/").at(-1) ?? stripMdExt(relativePath);
+      }
+    ),
+    "agents"
+  );
+
+  const skills = withRelativePrefix(
+    await scanSkillItems(join(userConfigDir, "skills")),
+    "skills"
+  );
+
+  const latestUpdated = findLatestUpdatedAt([...commands, ...agents, ...skills]);
+
+  return {
+    id: USER_PLUGIN_ID,
+    pluginName: "user",
+    displayName: "User",
+    marketplace: "local",
+    sourceLabel: "User",
+    version: null,
+    description: "User-level commands, agents, and skills",
+    authorName: "User",
+    installPath: userConfigDir,
+    installedAt: null,
+    lastUpdated: latestUpdated,
+    status: "enabled",
+    commands,
+    agents,
+    skills,
+  };
+}
+
 function parsePluginId(pluginId: string): { pluginName: string; marketplace: string } {
   const trimmed = pluginId.trim();
   const idx = trimmed.lastIndexOf("@");
@@ -155,6 +230,23 @@ function parsePluginId(pluginId: string): { pluginName: string; marketplace: str
     pluginName: trimmed.slice(0, idx),
     marketplace: trimmed.slice(idx + 1) || "unknown",
   };
+}
+
+function withRelativePrefix(items: PluginItem[], prefix: string): PluginItem[] {
+  return items.map((item) => ({
+    ...item,
+    relativePath: `${prefix}/${item.relativePath}`,
+  }));
+}
+
+function findLatestUpdatedAt(items: PluginItem[]): string | null {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const item of items) {
+    const ts = parseTimestamp(item.updatedAt ?? "");
+    if (ts > latest) latest = ts;
+  }
+  if (!Number.isFinite(latest)) return null;
+  return new Date(latest).toISOString();
 }
 
 function selectInstall(installs: PluginInstallRecord[] | undefined): PluginInstallRecord | null {

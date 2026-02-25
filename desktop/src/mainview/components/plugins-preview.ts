@@ -6,12 +6,19 @@ import { renderMarkdown } from "./chat-view.ts";
 export class PluginsPreview {
   #el: HTMLElement;
   #bodyEl: HTMLElement;
+  #onSelect: ((selection: PluginSidebarSelection) => void) | null;
   #plugins: InstalledPlugin[] = [];
   #selection: PluginSidebarSelection | null = null;
   #loading = false;
   #contentView: "preview" | "raw" = "preview";
 
-  constructor(container: HTMLElement) {
+  constructor(
+    container: HTMLElement,
+    opts?: {
+      onSelect?: (selection: PluginSidebarSelection) => void;
+    }
+  ) {
+    this.#onSelect = opts?.onSelect ?? null;
     this.#bodyEl = h("div", { class: "plugins-preview-body" });
 
     this.#el = h("section", { class: "plugins-preview", hidden: true }, [
@@ -106,9 +113,9 @@ export class PluginsPreview {
           h("span", { class: "plugins-preview-tag" }, [`Skills ${totalSkills}`]),
         ]),
         h("div", { class: "plugins-preview-group" }, [
-          sectionList("Commands", plugin.commands),
-          sectionList("Agents", plugin.agents),
-          sectionList("Skills", plugin.skills),
+          this.#sectionList(plugin, "command", "Commands", plugin.commands),
+          this.#sectionList(plugin, "agent", "Agents", plugin.agents),
+          this.#sectionList(plugin, "skill", "Skills", plugin.skills),
         ]),
       ])
     );
@@ -214,6 +221,48 @@ export class PluginsPreview {
   get element(): HTMLElement {
     return this.#el;
   }
+
+  #sectionList(
+    plugin: InstalledPlugin,
+    kind: "command" | "agent" | "skill",
+    title: string,
+    items: PluginItem[]
+  ): HTMLElement {
+    const list = h("div", { class: "plugins-preview-section" }, [
+      h("h3", { class: "plugins-preview-section-title" }, [title]),
+    ]);
+
+    if (items.length === 0) {
+      list.appendChild(h("div", { class: "plugins-preview-section-empty" }, ["None"]));
+      return list;
+    }
+
+    const first = items.slice(0, 8);
+    for (const item of first) {
+      list.appendChild(h("button", {
+        class: "plugins-preview-section-row plugins-preview-section-link",
+        type: "button",
+        title: item.name,
+        onclick: () => {
+          this.#onSelect?.({
+            kind,
+            pluginId: plugin.id,
+            itemId: item.id,
+          });
+        },
+      }, [item.name]));
+    }
+
+    if (items.length > first.length) {
+      list.appendChild(
+        h("div", { class: "plugins-preview-section-more" }, [
+          `+${items.length - first.length} more`,
+        ])
+      );
+    }
+
+    return list;
+  }
 }
 
 function resolveActivePlugin(
@@ -253,32 +302,6 @@ function metaCell(label: string, value: string): HTMLElement {
     h("span", { class: "plugins-preview-meta-label" }, [label]),
     h("span", { class: "plugins-preview-meta-value", title: value }, [value]),
   ]);
-}
-
-function sectionList(title: string, items: PluginItem[]): HTMLElement {
-  const list = h("div", { class: "plugins-preview-section" }, [
-    h("h3", { class: "plugins-preview-section-title" }, [title]),
-  ]);
-
-  if (items.length === 0) {
-    list.appendChild(h("div", { class: "plugins-preview-section-empty" }, ["None"]));
-    return list;
-  }
-
-  const first = items.slice(0, 8);
-  for (const item of first) {
-    list.appendChild(h("div", { class: "plugins-preview-section-row", title: item.name }, [item.name]));
-  }
-
-  if (items.length > first.length) {
-    list.appendChild(
-      h("div", { class: "plugins-preview-section-more" }, [
-        `+${items.length - first.length} more`,
-      ])
-    );
-  }
-
-  return list;
 }
 
 function formatDate(value: string | null): string | null {

@@ -6,11 +6,14 @@ import { getInstalledPlugins } from "../src/bun/plugins.ts";
 
 let tempRoot: string;
 let pluginsDir: string;
+let userConfigDir: string;
 
 beforeEach(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "plugins-test-"));
   pluginsDir = join(tempRoot, "plugins");
+  userConfigDir = join(tempRoot, ".claude");
   await mkdir(pluginsDir, { recursive: true });
+  await mkdir(userConfigDir, { recursive: true });
 });
 
 afterEach(async () => {
@@ -177,5 +180,37 @@ describe("installed plugins reader", () => {
     expect(plugins).toHaveLength(1);
     expect(plugins[0].version).toBe("1.0.1");
     expect(plugins[0].commands.map((item) => item.name)).toEqual(["/new"]);
+  });
+
+  test("adds a User entry with user-level commands, agents, and skills", async () => {
+    await mkdir(join(userConfigDir, "commands"), { recursive: true });
+    await mkdir(join(userConfigDir, "agents"), { recursive: true });
+    await mkdir(join(userConfigDir, "skills", "review-helper"), { recursive: true });
+
+    await writeFile(
+      join(userConfigDir, "commands", "ship.md"),
+      `---\ndescription: "Ship build"\n---\n\nCommand body`
+    );
+    await writeFile(
+      join(userConfigDir, "agents", "commit-helper.md"),
+      `---\nname: commit-helper\ndescription: Agent description\n---\n\nAgent body`
+    );
+    await writeFile(
+      join(userConfigDir, "skills", "review-helper", "SKILL.md"),
+      `---\ndescription: Skill description\n---\n\n# Skill`
+    );
+
+    const plugins = await getInstalledPlugins(pluginsDir, { userConfigDir });
+    const userPlugin = plugins.find((plugin) => plugin.id === "user@local");
+
+    expect(userPlugin).toBeTruthy();
+    expect(userPlugin?.displayName).toBe("User");
+    expect(userPlugin?.sourceLabel).toBe("User");
+    expect(userPlugin?.commands.map((item) => item.name)).toEqual(["/ship"]);
+    expect(userPlugin?.agents.map((item) => item.name)).toEqual(["commit-helper"]);
+    expect(userPlugin?.skills.map((item) => item.name)).toEqual(["review-helper"]);
+    expect(userPlugin?.commands[0]?.relativePath).toBe("commands/ship.md");
+    expect(userPlugin?.agents[0]?.relativePath).toBe("agents/commit-helper.md");
+    expect(userPlugin?.skills[0]?.relativePath).toBe("skills/review-helper/SKILL.md");
   });
 });

@@ -68,6 +68,31 @@ describe("pr-provider", () => {
     expect(pullRequests[0].repo).toBe("acme/repo");
   });
 
+  test("loads pull requests where review was requested from me", async () => {
+    const provider = new PullRequestProvider(async (args) => {
+      const cmd = args.join(" ");
+      if (cmd.startsWith("search prs --review-requested @me")) {
+        return okJson([
+          {
+            number: 34,
+            title: "Review me",
+            repository: { nameWithOwner: "acme/repo" },
+            author: { login: "alice", is_bot: false },
+            isDraft: false,
+            updatedAt: "2026-02-24T12:00:00Z",
+            url: "https://github.com/acme/repo/pull/34",
+          },
+        ]);
+      }
+      return fail("unexpected");
+    });
+
+    const pullRequests = await provider.getReviewRequestedPullRequests(15);
+    expect(pullRequests).toHaveLength(1);
+    expect(pullRequests[0].number).toBe(34);
+    expect(pullRequests[0].repo).toBe("acme/repo");
+  });
+
   test("loads pull request detail with conversation timeline", async () => {
     const provider = new PullRequestProvider(async (args) => {
       const cmd = args.join(" ");

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type {
@@ -7,9 +7,10 @@ import type {
 } from "../shared/types.ts";
 import {
   AGENT_REVIEW_BASE_DIR,
-  AGENT_REVIEW_PLACEHOLDER_MARKER,
   buildAgentReviewFileName,
   buildAgentReviewFilePath,
+  isAgentReviewPlaceholderPayload,
+  isLegacyAgentReviewFileName,
   parseAgentReviewVersionFromFileName,
 } from "./pr-agent-review-files.ts";
 
@@ -42,7 +43,11 @@ export class PRAgentReviewStore {
     } catch {
       this.#entries = {};
     }
+    const cleanedLegacy = await this.#cleanupLegacyArtifacts();
     this.#loaded = true;
+    if (cleanedLegacy) {
+      await this.#save();
+    }
   }
 
   async listRuns(repo: string, number: number): Promise<PullRequestAgentReviewRun[]> {
@@ -190,8 +195,8 @@ export class PRAgentReviewStore {
       for (const run of runs) {
         if (run.status !== "running") continue;
 
-        const markdown = await readFileOrNull(run.filePath);
-        const hasPlaceholder = markdown?.includes(AGENT_REVIEW_PLACEHOLDER_MARKER) ?? true;
+        const rawDocument = await readFileOrNull(run.filePath);
+        const hasPlaceholder = isPlaceholderDocument(rawDocument);
         const now = new Date().toISOString();
 
         if (!hasPlaceholder) {
@@ -255,13 +260,13 @@ export class PRAgentReviewStore {
       if (existingVersions.has(version)) continue;
 
       const filePath = join(this.#baseDir, fileName);
-      const [fileStats, markdown] = await Promise.all([
+      const [fileStats, rawDocument] = await Promise.all([
         stat(filePath).catch(() => null),
         readFileOrNull(filePath),
       ]);
 
       const timestamp = fileStats?.mtime?.toISOString() ?? new Date().toISOString();
-      const hasPlaceholder = markdown?.includes(AGENT_REVIEW_PLACEHOLDER_MARKER) ?? false;
+      const hasPlaceholder = isPlaceholderDocument(rawDocument);
 
       runs.push({
         id: crypto.randomUUID(),
@@ -320,6 +325,40 @@ export class PRAgentReviewStore {
     await mkdir(this.#baseDir, { recursive: true });
     await writeFile(this.#filePath, JSON.stringify(this.#entries, null, 2));
   }
+
+  async #cleanupLegacyArtifacts(): Promise<boolean> {
+    let dirty = false;
+
+    const nextEntries: StoredAgentReviewMap = {};
+    for (const [key, runs] of Object.entries(this.#entries)) {
+      const filteredRuns = runs.filter((run) => {
+        const fileName = String(run.fileName ?? "").trim().toLowerCase();
+        const filePath = String(run.filePath ?? "").trim().toLowerCase();
+        const isLegacy = fileName.endsWith(".md") || filePath.endsWith(".md");
+        if (isLegacy) {
+          dirty = true;
+        }
+        return !isLegacy;
+      });
+
+      if (filteredRuns.length > 0) {
+        nextEntries[key] = filteredRuns;
+      } else if (runs.length > 0) {
+        dirty = true;
+      }
+    }
+    this.#entries = nextEntries;
+
+    const files = await readdir(this.#baseDir).catch(() => [] as string[]);
+    for (const fileName of files) {
+      if (!isLegacyAgentReviewFileName(fileName)) continue;
+      const filePath = join(this.#baseDir, fileName);
+      await unlink(filePath).catch(() => {});
+      dirty = true;
+    }
+
+    return dirty;
+  }
 }
 
 function makeKey(repo: string, number: number): string {
@@ -331,6 +370,16 @@ async function readFileOrNull(filePath: string): Promise<string | null> {
     return await readFile(filePath, "utf8");
   } catch {
     return null;
+  }
+}
+
+function isPlaceholderDocument(rawDocument: string | null): boolean {
+  if (!rawDocument) return true;
+  try {
+    const parsed = JSON.parse(rawDocument);
+    return isAgentReviewPlaceholderPayload(parsed);
+  } catch {
+    return true;
   }
 }
 

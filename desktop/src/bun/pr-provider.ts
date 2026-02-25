@@ -66,8 +66,16 @@ export class PullRequestProvider {
     });
   }
 
+  async getReviewRequestedPullRequests(limit = 60): Promise<PullRequestSummary[]> {
+    return this.#searchPullRequests({
+      filterFlag: "--review-requested",
+      filterValue: "@me",
+      limit,
+    });
+  }
+
   async #searchPullRequests(params: {
-    filterFlag: "--assignee" | "--author";
+    filterFlag: "--assignee" | "--author" | "--review-requested";
     filterValue: string;
     limit: number;
   }): Promise<PullRequestSummary[]> {
@@ -288,6 +296,12 @@ export async function getAssignedPullRequests(limit?: number): Promise<PullReque
 
 export async function getOpenedPullRequests(limit?: number): Promise<PullRequestSummary[]> {
   return pullRequestProvider.getOpenedPullRequests(limit);
+}
+
+export async function getReviewRequestedPullRequests(
+  limit?: number
+): Promise<PullRequestSummary[]> {
+  return pullRequestProvider.getReviewRequestedPullRequests(limit);
 }
 
 export async function getPullRequestDetail(

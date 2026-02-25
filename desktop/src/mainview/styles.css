@@ -2528,6 +2528,29 @@ button {
   margin-bottom: 4px;
 }
 
+.plugins-preview-section-link {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  padding: 2px 6px;
+  margin-left: -6px;
+  margin-right: -6px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.plugins-preview-section-link:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.plugins-preview-section-link:focus-visible {
+  outline: 1px solid var(--blue);
+  outline-offset: 1px;
+}
+
 .plugins-preview-section-empty,
 .plugins-preview-section-more {
   font-size: 12px;
@@ -3373,7 +3396,8 @@ button {
   cursor: default;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .tool-header {
@@ -3405,13 +3429,13 @@ button {
 }
 
 .tool-details[open] > summary.tool-header {
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .tool-input {
   padding: 10px 10px 8px;
   margin: 0;
-  background: var(--bg-active);
+  background: transparent;
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   font-size: 12px;
   color: var(--text-secondary);
@@ -3422,7 +3446,8 @@ button {
   cursor: default;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .tool-result-header {
@@ -3433,7 +3458,7 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   user-select: text;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .tool-result-details > summary.tool-result-header {
@@ -3555,6 +3580,115 @@ button {
 }
 
 .todo-write-empty {
+  color: var(--text-tertiary);
+}
+
+.chat-tool-event.skill-event .tool-details {
+  border-color: rgba(154, 95, 69, 0.45);
+}
+
+.chat-tool-event.skill-event .tool-header {
+  color: #d5b1a4;
+}
+
+.task-skill-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(154, 95, 69, 0.45);
+  border-left: 3px solid #9A5F45;
+  border-radius: 8px;
+  background: rgba(20, 20, 19, 0.75);
+}
+
+.task-skill-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-skill-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 95, 69, 0.55);
+  background: rgba(154, 95, 69, 0.16);
+  color: #f0d1c5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.task-skill-type {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #f3ded4;
+}
+
+.task-skill-source {
+  margin-left: auto;
+  color: #be9f94;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.task-skill-description {
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.task-skill-context-label {
+  color: #be9f94;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.task-skill-prompt {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(154, 95, 69, 0.28);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.task-skill-status {
+  margin-left: auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.task-skill-status.ok {
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #73e6a0;
+}
+
+.task-skill-status.fail {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f48b8b;
+}
+
+.task-skill-result-meta {
+  margin: 0;
+  padding-left: 18px;
   color: var(--text-tertiary);
 }
 
@@ -4698,6 +4832,174 @@ button {
   gap: 8px;
 }
 
+.pr-agent-review-suggestions {
+  display: grid;
+  gap: 10px;
+}
+
+.pr-agent-review-structured {
+  display: grid;
+  gap: 12px;
+}
+
+.pr-agent-review-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(20, 20, 19, 0.35);
+}
+
+.pr-agent-review-metadata-list {
+  display: grid;
+  gap: 6px;
+}
+
+.pr-agent-review-meta-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.pr-agent-review-meta-key {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pr-agent-review-meta-value {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-agent-review-suggestion {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+  background: rgba(20, 20, 19, 0.35);
+}
+
+.pr-agent-review-suggestion-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 84px;
+}
+
+.pr-agent-review-suggestion-title {
+  margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-review-level-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.pr-agent-review-level-badge.is-critical {
+  color: #fecaca;
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(127, 29, 29, 0.26);
+}
+
+.pr-agent-review-level-badge.is-important {
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(120, 53, 15, 0.24);
+}
+
+.pr-agent-review-level-badge.is-medium {
+  color: #bfdbfe;
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(30, 64, 175, 0.2);
+}
+
+.pr-agent-review-level-badge.is-low {
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(22, 101, 52, 0.22);
+}
+
+.pr-agent-review-suggestion-body {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-review-suggestion-body .code-block {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.pr-agent-review-action-error {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #fca5a5;
+}
+
+.pr-agent-review-action-btn {
+  flex-shrink: 0;
+  align-self: flex-start;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 7px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.pr-agent-review-action-btn-inline {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.pr-agent-review-action-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.24);
+}
+
+.pr-agent-review-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pr-agent-review-action-btn.is-applied {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.18);
+  color: #b7f3d0;
+}
+
 .pr-agent-review-run {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -4771,9 +5073,21 @@ button {
   font-size: 15.3px;
 }
 
+.pr-agent-review-suggestion-body.plugins-preview-markdown {
+  font-size: 15.3px;
+}
+
 .pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant p,
 .pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant li,
 .pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant blockquote {
+  font-size: 15.3px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-review-suggestion-body.plugins-preview-markdown.chat-bubble.assistant p,
+.pr-agent-review-suggestion-body.plugins-preview-markdown.chat-bubble.assistant li,
+.pr-agent-review-suggestion-body.plugins-preview-markdown.chat-bubble.assistant blockquote {
   font-size: 15.3px;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -4783,7 +5097,15 @@ button {
   font-size: 1.368rem;
 }
 
+.pr-agent-review-suggestion-body.plugins-preview-markdown.chat-bubble.assistant h1 {
+  font-size: 1.368rem;
+}
+
 .pr-agent-reviews-markdown.plugins-preview-markdown.chat-bubble.assistant h2 {
+  font-size: 1.215rem;
+}
+
+.pr-agent-review-suggestion-body.plugins-preview-markdown.chat-bubble.assistant h2 {
   font-size: 1.215rem;
 }
 
@@ -4791,11 +5113,25 @@ button {
   font-size: 1.062rem;
 }
 
+.pr-agent-review-suggestion-body.plugins-preview-markdown.chat-bubble.assistant h3 {
+  font-size: 1.062rem;
+}
+
 .pr-agent-reviews-markdown.plugins-preview-markdown .code-block code {
   font-size: 11.7px;
 }
 
+.pr-agent-review-suggestion-body.plugins-preview-markdown .code-block code {
+  font-size: 11.7px;
+}
+
 .pr-agent-reviews-markdown.plugins-preview-markdown .inline-code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pr-agent-review-suggestion-body.plugins-preview-markdown .inline-code {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;

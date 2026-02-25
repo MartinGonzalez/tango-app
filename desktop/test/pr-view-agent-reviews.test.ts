@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { PRView } from "../src/mainview/components/pr-view.ts";
 import type {
+  PullRequestAgentReviewData,
   PullRequestAgentReviewDocument,
   PullRequestAgentReviewRun,
   PullRequestDetail,
@@ -30,10 +31,7 @@ describe("pr-view-agent-reviews", () => {
     view.render(detail, {
       agentReviews: [runningRun],
       selectedAgentReviewVersion: 1,
-      selectedAgentReviewDocument: {
-        run: runningRun,
-        markdown: "# Running",
-      },
+      selectedAgentReviewDocument: createDocument(runningRun),
     });
 
     const tabLabels = Array.from(container.querySelectorAll(".pr-view-activity-tab"))
@@ -45,7 +43,7 @@ describe("pr-view-agent-reviews", () => {
     expect(button?.disabled).toBe(true);
   });
 
-  test("selects agent review version and renders markdown", () => {
+  test("selects agent review version and renders structured content", () => {
     if (typeof document === "undefined") {
       expect(true).toBe(true);
       return;
@@ -64,10 +62,9 @@ describe("pr-view-agent-reviews", () => {
 
     const run1 = createRun({ version: 1, status: "completed" });
     const run2 = createRun({ version: 2, status: "completed" });
-    const documentV2: PullRequestAgentReviewDocument = {
-      run: run2,
-      markdown: "# Agent Review v2\n\nLooks good.",
-    };
+    const documentV2: PullRequestAgentReviewDocument = createDocument(run2, {
+      pr_summary: "Agent Review v2 summary",
+    });
 
     view.render(createDetail(), {
       agentReviews: [run1, run2],
@@ -80,8 +77,8 @@ describe("pr-view-agent-reviews", () => {
     expect(agentTab).toBeDefined();
     agentTab?.click();
 
-    const markdown = container.querySelector(".pr-agent-reviews-markdown") as HTMLElement | null;
-    expect(markdown?.textContent || "").toContain("Agent Review v2");
+    expect(container.textContent || "").toContain("PR Summary");
+    expect(container.textContent || "").toContain("Agent Review v2 summary");
 
     const run1Button = Array.from(container.querySelectorAll(".pr-agent-review-run"))
       .find((node) => (node.textContent || "").includes("v1")) as HTMLButtonElement | undefined;
@@ -89,6 +86,58 @@ describe("pr-view-agent-reviews", () => {
     run1Button?.click();
 
     expect(selectedVersions).toEqual([1]);
+  });
+
+  test("renders apply button per suggestion and invokes callback with suggestionIndex", async () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const container = document.createElement("div");
+    const applied: number[] = [];
+    const view = new PRView(container, {
+      onSelectCommit: () => {},
+      onOpenPullRequest: () => {},
+      onSelectFile: () => {},
+      onApplyAgentReviewIssue: async ({ suggestionIndex }) => {
+        applied.push(suggestionIndex);
+      },
+    });
+
+    const run = createRun({ version: 1, status: "completed" });
+    view.render(createDetail(), {
+      agentReviews: [run],
+      selectedAgentReviewVersion: 1,
+      selectedAgentReviewDocument: createDocument(run, {
+        suggestions: [
+          {
+            level: "Important",
+            content: "Suggestion A",
+            applied: false,
+          },
+          {
+            level: "Low",
+            content: "Suggestion B",
+            applied: true,
+          },
+        ],
+      }),
+    });
+
+    const agentTab = Array.from(container.querySelectorAll(".pr-view-activity-tab"))
+      .find((node) => (node.textContent || "").includes("Agent reviews")) as HTMLButtonElement | undefined;
+    agentTab?.click();
+
+    const actionButtons = container.querySelectorAll(".pr-agent-review-action-btn");
+    expect(actionButtons.length).toBe(2);
+    expect((actionButtons[0] as HTMLButtonElement).disabled).toBe(false);
+    expect((actionButtons[1] as HTMLButtonElement).disabled).toBe(true);
+    expect((actionButtons[1] as HTMLButtonElement).textContent).toContain("Applied");
+
+    (actionButtons[0] as HTMLButtonElement).click();
+    await Promise.resolve();
+    expect(applied).toEqual([0]);
   });
 });
 
@@ -129,8 +178,8 @@ function createRun(overrides: {
     repo: "acme/repo",
     number: 44,
     version: overrides.version,
-    fileName: `acme-repo-pr44-agent-review${overrides.version === 1 ? "" : `-${overrides.version}`}.md`,
-    filePath: `/tmp/acme-repo-pr44-agent-review-${overrides.version}.md`,
+    fileName: `acme-repo-pr44-agent-review${overrides.version === 1 ? "" : `-${overrides.version}`}.json`,
+    filePath: `/tmp/acme-repo-pr44-agent-review-${overrides.version}.json`,
     headSha: "head-sha",
     status: overrides.status,
     sessionId: overrides.status === "running" ? "session-1" : null,
@@ -138,5 +187,36 @@ function createRun(overrides: {
     updatedAt: "2026-02-24T10:05:00.000Z",
     completedAt: overrides.completedAt ?? "2026-02-24T10:05:00.000Z",
     error: null,
+  };
+}
+
+function createDocument(
+  run: PullRequestAgentReviewRun,
+  patch?: Partial<PullRequestAgentReviewData>
+): PullRequestAgentReviewDocument {
+  const review: PullRequestAgentReviewData = {
+    metadata: {
+      repository: "acme/repo",
+      pr_number: "44",
+    },
+    pr_summary: "Summary",
+    strengths: "Strengths",
+    improvements: "Improvements",
+    suggestions: [
+      {
+        level: "Important",
+        content: "Suggestion",
+        applied: false,
+      },
+    ],
+    final_veredic: "Final",
+    ...patch,
+  };
+  return {
+    run,
+    rawJson: JSON.stringify(review),
+    review,
+    renderedMarkdown: "# Agent Review",
+    parseError: null,
   };
 }

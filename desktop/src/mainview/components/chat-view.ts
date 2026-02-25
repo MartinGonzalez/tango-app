@@ -1045,25 +1045,27 @@ export class ChatView {
       }
 
       const summary = summarizeToolInput(block.name, block.input);
-      const details = formatToolDetails(block.name, block.input);
+      const details = resolveToolEventDetails(block.name, block.input);
+      const isSkillInvocationEvent = isSkillInvocation(block.name, block.input);
       const detailsPanel = h("details", { class: "tool-details" }, [
         h("summary", { class: "tool-header" }, [
           block.name,
           summary ? ` ${summary}` : "",
         ]),
-        details ? h("div", { class: "tool-input" }) : null,
+        details.content ? h("div", { class: "tool-input" }) : null,
       ].filter(Boolean) as HTMLElement[]) as HTMLDetailsElement;
-      detailsPanel.open = shouldExpandTool(block.name);
+      detailsPanel.open = shouldExpandTool(block.name) || isSkillInvocationEvent;
 
       const toolEvent = h("div", { class: "chat-tool-event" }, [
         detailsPanel,
       ]);
-      if (details) {
+      toolEvent.classList.toggle("skill-event", isSkillInvocationEvent);
+      if (details.content) {
         const detailsEl = qs(".tool-input", toolEvent) as HTMLElement | null;
         if (detailsEl) {
-          detailsEl.innerHTML = block.name.toLowerCase() === "todowrite"
-            ? details
-            : renderToolContent(details);
+          detailsEl.innerHTML = details.raw
+            ? details.content
+            : renderToolContent(details.content);
         }
       }
       this.#messagesEl.appendChild(toolEvent);
@@ -1152,7 +1154,13 @@ export class ChatView {
     const normalizedToolName = String(toolName ?? "").trim();
     const isTodoWriteResult = normalizedToolName.toLowerCase() === "todowrite"
       || hasTodoWritePayload(streamToolResult, toolInput);
-    const baseTitle = normalizedToolName || (isTodoWriteResult ? "TodoWrite" : "Tool");
+    const isSkillResult = isSkillInvocationResult(
+      normalizedToolName,
+      toolInput,
+      streamToolResult
+    );
+    const baseTitle = normalizedToolName
+      || (isTodoWriteResult ? "TodoWrite" : isSkillResult ? "Skill" : "Tool");
     const title = `${baseTitle} ${isError ? "error" : "result"}`;
 
     const card = h("div", {
@@ -1167,12 +1175,19 @@ export class ChatView {
     const details = qs(".tool-result-details", card) as HTMLDetailsElement | null;
     const outputEl = qs(".tool-result-output", card) as HTMLElement | null;
     if (details) {
-      details.open = isError || isTodoWriteResult;
+      details.open = isError || isTodoWriteResult || isSkillResult;
     }
 
     if (outputEl) {
       if (isTodoWriteResult) {
         outputEl.innerHTML = formatTodoWriteResult(output, streamToolResult, toolInput);
+      } else if (isSkillResult) {
+        outputEl.innerHTML = formatSkillInvocationResult(
+          normalizedToolName,
+          output,
+          streamToolResult,
+          toolInput
+        );
       } else {
         outputEl.innerHTML = renderToolContent(output);
       }
@@ -1187,25 +1202,27 @@ export class ChatView {
     const isUser = msg.role === "user";
     if (msg.toolName && !isUser) {
       const summary = summarizeToolInput(msg.toolName, msg.toolInput);
-      const details = formatToolDetails(msg.toolName, msg.toolInput ?? {});
+      const details = resolveToolEventDetails(msg.toolName, msg.toolInput ?? {});
+      const isSkillInvocationEvent = isSkillInvocation(msg.toolName, msg.toolInput);
       const detailsPanel = h("details", { class: "tool-details" }, [
         h("summary", { class: "tool-header" }, [
           msg.toolName,
           summary ? ` ${summary}` : "",
         ]),
-        details ? h("div", { class: "tool-input" }) : null,
+        details.content ? h("div", { class: "tool-input" }) : null,
       ].filter(Boolean) as HTMLElement[]) as HTMLDetailsElement;
-      detailsPanel.open = shouldExpandTool(msg.toolName);
+      detailsPanel.open = shouldExpandTool(msg.toolName) || isSkillInvocationEvent;
 
       const toolEvent = h("div", { class: "chat-tool-event" }, [
         detailsPanel,
       ]);
-      if (details) {
+      toolEvent.classList.toggle("skill-event", isSkillInvocationEvent);
+      if (details.content) {
         const detailsEl = qs(".tool-input", toolEvent) as HTMLElement | null;
         if (detailsEl) {
-          detailsEl.innerHTML = msg.toolName.toLowerCase() === "todowrite"
-            ? details
-            : renderToolContent(details);
+          detailsEl.innerHTML = details.raw
+            ? details.content
+            : renderToolContent(details.content);
         }
       }
       this.#messagesEl.appendChild(toolEvent);
@@ -1462,6 +1479,7 @@ function toolIcon(toolName: string): string {
     Glob: "\u2315",
     Grep: "\u2315",
     Task: "\u2B9E",
+    Skill: "\u2726",
     WebFetch: "\u2197",
   };
   return icons[toolName] ?? "\u2022";
@@ -1615,6 +1633,69 @@ function uniqueFiles(files: string[]): string[] {
   return out;
 }
 
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  return null;
+}
+
+function taskSkillTypeFromInput(input?: Record<string, unknown>): string | null {
+  if (!input) return null;
+  return readNonEmptyString(input.subagent_type ?? input.subagentType);
+}
+
+function skillNameFromInput(
+  toolName: string,
+  input?: Record<string, unknown>
+): string | null {
+  if (!input) return null;
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized === "task") {
+    return taskSkillTypeFromInput(input);
+  }
+  if (normalized === "skill") {
+    return readNonEmptyString(input.skill ?? input.commandName ?? input.command_name);
+  }
+  return null;
+}
+
+function isSkillInvocation(
+  toolName: string,
+  input?: Record<string, unknown>
+): boolean {
+  return skillNameFromInput(toolName, input) !== null;
+}
+
+function skillInvocationSource(toolName: string): string {
+  const normalized = toolName.trim().toLowerCase();
+  if (normalized === "skill") return "Skill tool";
+  if (normalized === "task") return "Task subagent";
+  return "Skill";
+}
+
+function skillCommandNameFromResult(
+  streamToolResult: StreamToolUseResult | null
+): string | null {
+  return readNonEmptyString(
+    streamToolResult?.commandName ?? streamToolResult?.command_name
+  );
+}
+
+function isSkillInvocationResult(
+  toolName: string,
+  toolInput?: Record<string, unknown>,
+  streamToolResult: StreamToolUseResult | null = null
+): boolean {
+  if (isSkillInvocation(toolName, toolInput)) return true;
+  if (skillCommandNameFromResult(streamToolResult)) return true;
+  return false;
+}
+
 function summarizeToolInput(
   toolName: string,
   input?: Record<string, unknown>
@@ -1633,8 +1714,27 @@ function summarizeToolInput(
       return String(input.pattern ?? "");
     case "WebFetch":
       return String(input.url ?? "");
-    case "Task":
+    case "Task": {
+      const skillName = skillNameFromInput(toolName, input);
+      if (skillName) {
+        const description = readNonEmptyString(input.description);
+        const skillSummary = `skill ${skillName}`;
+        return description
+          ? `${skillSummary} · ${description.slice(0, 40)}`
+          : skillSummary;
+      }
       return String(input.description ?? input.prompt ?? "").slice(0, 60);
+    }
+    case "Skill": {
+      const skillName = skillNameFromInput(toolName, input);
+      if (!skillName) {
+        return String(input.args ?? input.prompt ?? "").slice(0, 60);
+      }
+      const args = readNonEmptyString(input.args ?? input.prompt);
+      return args
+        ? `skill ${skillName} · ${args.slice(0, 36)}`
+        : `skill ${skillName}`;
+    }
     case "TodoWrite": {
       const todos = extractTodoEntries(input.todos);
       if (todos.length === 0) return "";
@@ -1815,6 +1915,101 @@ function formatTodoWriteInput(input: Record<string, unknown>): string | null {
   return `<div class="todo-write-view">${formatTodoSection("Input", formatTodoList(todos))}</div>`;
 }
 
+function formatTodoWriteInputText(input: Record<string, unknown>): string | null {
+  const todos = extractTodoEntries(input.todos);
+  if (todos.length === 0) return null;
+
+  const lines = todos.map((todo) => {
+    const completed = normalizeTodoStatus(todo.status) === "completed";
+    return `[${completed ? "x" : " "}] ${todo.content} (${formatTodoStatus(todo.status)})`;
+  });
+  return lines.join("\n");
+}
+
+function formatSkillInvocationInput(
+  toolName: string,
+  input: Record<string, unknown>
+): string | null {
+  const skillName = skillNameFromInput(toolName, input);
+  if (!skillName) return null;
+
+  const description = readNonEmptyString(input.description);
+  const contextLabel = toolName.trim().toLowerCase() === "skill" ? "Args" : "Prompt";
+  const contextRaw = readNonEmptyString(input.args ?? input.prompt);
+  const context = contextRaw && contextRaw.length > 1800
+    ? `${contextRaw.slice(0, 1800)}...`
+    : contextRaw;
+
+  const top = `<div class="task-skill-top">`
+    + `<span class="task-skill-badge">Skill</span>`
+    + `<code class="task-skill-type">${escapeHtml(skillName)}</code>`
+    + `<span class="task-skill-source">${escapeHtml(skillInvocationSource(toolName))}</span>`
+    + `</div>`;
+  const desc = description
+    ? `<div class="task-skill-description">${escapeHtml(description)}</div>`
+    : "";
+  const contextHtml = context
+    ? `<div class="task-skill-context-label">${escapeHtml(contextLabel)}</div>`
+      + `<pre class="task-skill-prompt">${escapeHtml(context)}</pre>`
+    : "";
+
+  return `<div class="task-skill-card">${top}${desc}${contextHtml}</div>`;
+}
+
+function formatSkillInvocationResult(
+  toolName: string,
+  output: string,
+  streamToolResult: StreamToolUseResult | null,
+  toolInput?: Record<string, unknown>
+): string {
+  const fromInput = skillNameFromInput(toolName, toolInput);
+  const fromResult = skillCommandNameFromResult(streamToolResult);
+  const skillName = fromInput ?? fromResult ?? "unknown";
+  const success = readBoolean(streamToolResult?.success);
+  const message = readNonEmptyString(output);
+  const successChip = success === null
+    ? ""
+    : `<span class="task-skill-status${success ? " ok" : " fail"}">`
+      + `${success ? "success" : "failed"}`
+      + `</span>`;
+
+  const top = `<div class="task-skill-top">`
+    + `<span class="task-skill-badge">Skill</span>`
+    + `<code class="task-skill-type">${escapeHtml(skillName)}</code>`
+    + `${successChip}`
+    + `</div>`;
+  const messageHtml = message
+    ? `<div class="task-skill-description">${escapeHtml(message).replace(/\n/g, "<br>")}</div>`
+    : "";
+  const resultRows: string[] = [];
+  if (fromResult && fromResult !== fromInput) {
+    resultRows.push(`<li><strong>Command:</strong> ${escapeHtml(fromResult)}</li>`);
+  }
+  if (success !== null) {
+    resultRows.push(`<li><strong>Success:</strong> ${success ? "true" : "false"}</li>`);
+  }
+  const resultMeta = resultRows.length > 0
+    ? `<ul class="task-skill-result-meta">${resultRows.join("")}</ul>`
+    : "";
+
+  return `<div class="task-skill-card">${top}${messageHtml}${resultMeta}</div>`;
+}
+
+function resolveToolEventDetails(
+  toolName: string,
+  input: Record<string, unknown>
+): { content: string | null; raw: boolean } {
+  if (toolName.toLowerCase() === "todowrite") {
+    return { content: formatTodoWriteInput(input), raw: true };
+  }
+
+  if (isSkillInvocation(toolName, input)) {
+    return { content: formatSkillInvocationInput(toolName, input), raw: true };
+  }
+
+  return { content: formatToolDetails(toolName, input), raw: false };
+}
+
 function formatToolDetails(
   toolName: string,
   input: Record<string, unknown>
@@ -1841,8 +2036,28 @@ function formatToolDetails(
     }
     case "Read":
       return String(input.file_path ?? "");
+    case "Task": {
+      const skillName = skillNameFromInput(toolName, input);
+      if (!skillName) return null;
+      const description = readNonEmptyString(input.description);
+      const prompt = readNonEmptyString(input.prompt);
+      return [
+        `Skill: ${skillName}`,
+        description ? `Description: ${description}` : null,
+        prompt ? `Prompt:\n${prompt}` : null,
+      ].filter(Boolean).join("\n\n");
+    }
+    case "Skill": {
+      const skillName = skillNameFromInput(toolName, input);
+      if (!skillName) return null;
+      const args = readNonEmptyString(input.args ?? input.prompt);
+      return [
+        `Skill: ${skillName}`,
+        args ? `Args:\n${args}` : null,
+      ].filter(Boolean).join("\n\n");
+    }
     case "TodoWrite":
-      return formatTodoWriteInput(input);
+      return formatTodoWriteInputText(input);
     default:
       return null;
   }
