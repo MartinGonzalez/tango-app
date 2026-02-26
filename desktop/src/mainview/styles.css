@@ -300,15 +300,20 @@ button {
 /* ── Workspace folder ────────────────────────────────────────── */
 
 .ws-folder {
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--bg-card);
+  background: transparent;
   margin-bottom: 6px;
   overflow: visible;
-  transition: border-color 100ms ease;
+  transition: border-color 100ms ease, background 100ms ease;
 }
 
-.ws-folder:hover {
+.ws-folder.expanded {
+  border-color: var(--border);
+  background: var(--bg-card);
+}
+
+.ws-folder.expanded:hover {
   border-color: var(--border-heavy);
 }
 
@@ -1173,15 +1178,20 @@ button {
 }
 
 .plugin-group {
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--bg-card);
+  background: transparent;
   margin-bottom: 6px;
   overflow: visible;
-  transition: border-color 100ms ease;
+  transition: border-color 100ms ease, background 100ms ease;
 }
 
-.plugin-group:hover {
+.plugin-group.expanded {
+  border-color: var(--border);
+  background: var(--bg-card);
+}
+
+.plugin-group.expanded:hover {
   border-color: var(--border-heavy);
 }
 
@@ -1394,15 +1404,20 @@ button {
 }
 
 .task-group {
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--bg-card);
+  background: transparent;
   margin-bottom: 6px;
   overflow: visible;
-  transition: border-color 100ms ease;
+  transition: border-color 100ms ease, background 100ms ease;
 }
 
-.task-group:hover {
+.task-group.expanded {
+  border-color: var(--border);
+  background: var(--bg-card);
+}
+
+.task-group.expanded:hover {
   border-color: var(--border-heavy);
 }
 
@@ -1686,15 +1701,20 @@ button {
 }
 
 .pr-group {
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--bg-card);
+  background: transparent;
   margin-bottom: 6px;
   overflow: visible;
-  transition: border-color 100ms ease;
+  transition: border-color 100ms ease, background 100ms ease;
 }
 
-.pr-group:hover {
+.pr-group.expanded {
+  border-color: var(--border);
+  background: var(--bg-card);
+}
+
+.pr-group.expanded:hover {
   border-color: var(--border-heavy);
 }
 

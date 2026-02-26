@@ -138,7 +138,7 @@ export class PRsSidebar {
       (pr) => this.#selection?.repo === pr.repo && this.#selection?.number === pr.number
     );
 
-    const wrapper = h("div", { class: `pr-group${groupHasSelection ? " active" : ""}` }, [
+    const wrapper = h("div", { class: `pr-group${!isCollapsed ? " expanded" : ""}${groupHasSelection ? " active" : ""}` }, [
       h("div", {
         class: `pr-group-header${isCollapsed ? " is-collapsed" : ""}`,
         role: "button",
