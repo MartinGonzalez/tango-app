@@ -2737,26 +2737,26 @@ button {
   margin-top: 14px;
   max-width: 100% !important;
   width: 100%;
-  color: #f1ede3;
-  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  font-size: 17px;
-  line-height: 1.72;
-  letter-spacing: 0.002em;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  letter-spacing: normal;
 }
 
 .plugins-preview-markdown.chat-bubble,
 .plugins-preview-markdown.chat-bubble.assistant {
-  font-size: 17px;
+  font-size: 15px;
   width: 100%;
   max-width: none;
   align-self: stretch;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant p {
-  margin: 0 0 14px;
-  color: #f3eee3;
-  font-size: 17px;
-  line-height: 1.72;
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant h1,
@@ -2765,46 +2765,45 @@ button {
 .plugins-preview-markdown.chat-bubble.assistant h4,
 .plugins-preview-markdown.chat-bubble.assistant h5,
 .plugins-preview-markdown.chat-bubble.assistant h6 {
-  margin: 18px 0 10px;
-  color: #ffffff;
-  font-family: var(--font-sans);
-  font-weight: 740;
+  margin: 14px 0 6px;
+  color: var(--text);
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant h1 {
-  font-size: 1.52rem;
+  font-size: 20px;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant h2 {
-  font-size: 1.35rem;
+  font-size: 18px;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant h3 {
-  font-size: 1.18rem;
+  font-size: 16px;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant ul,
 .plugins-preview-markdown.chat-bubble.assistant ol {
-  margin: 0 0 14px 26px;
+  margin: 0 0 10px 20px;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant li {
-  margin: 6px 0;
-  font-size: 17px;
+  margin: 4px 0;
+  font-size: 15px;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant blockquote {
-  margin: 12px 0;
-  padding: 4px 0 4px 14px;
-  border-left: 3px solid rgba(130, 179, 255, 0.55);
-  color: #d8d7d0;
-  font-size: 17px;
+  margin: 10px 0;
+  padding: 4px 0 4px 12px;
+  border-left: 3px solid var(--border-heavy);
+  color: var(--text-secondary);
+  font-size: 15px;
 }
 
 .plugins-preview-markdown.chat-bubble.assistant a {
-  color: #9ac6ff;
-  text-decoration-color: rgba(154, 198, 255, 0.55);
+  color: var(--blue);
+  text-decoration-color: rgba(59, 130, 246, 0.4);
 }
 
 .plugins-preview-markdown .inline-code,

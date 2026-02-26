@@ -20,7 +20,7 @@ export class TasksSidebar {
   #groups: TaskWorkspaceGroup[] = [];
   #selectedTaskId: string | null = null;
   #loading = false;
-  #collapsedWorkspacePaths = new Set<string>();
+  #expandedWorkspacePaths = new Set<string>();
 
   constructor(container: HTMLElement, callbacks: TasksSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -78,17 +78,16 @@ export class TasksSidebar {
   }
 
   #renderGroup(group: TaskWorkspaceGroup): HTMLElement {
-    const isCollapsed = this.#collapsedWorkspacePaths.has(group.workspacePath);
+    const groupHasSelection = group.tasks.some((t) => t.id === this.#selectedTaskId);
+    const isCollapsed = !groupHasSelection && !this.#expandedWorkspacePaths.has(group.workspacePath);
     const toggleCollapsed = () => {
-      if (this.#collapsedWorkspacePaths.has(group.workspacePath)) {
-        this.#collapsedWorkspacePaths.delete(group.workspacePath);
+      if (this.#expandedWorkspacePaths.has(group.workspacePath)) {
+        this.#expandedWorkspacePaths.delete(group.workspacePath);
       } else {
-        this.#collapsedWorkspacePaths.add(group.workspacePath);
+        this.#expandedWorkspacePaths.add(group.workspacePath);
       }
       this.#renderContent();
     };
-
-    const groupHasSelection = group.tasks.some((t) => t.id === this.#selectedTaskId);
 
     const wrapper = h("div", { class: `task-group${groupHasSelection ? " active" : ""}` }, [
       h("div", {
