@@ -1,9 +1,14 @@
 import { clearChildren, h } from "../lib/dom.ts";
 import type { TaskCardSummary } from "../../shared/types.ts";
 
+function materialIcon(name: string): HTMLElement {
+  return h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, [name]);
+}
+
 export type TaskWorkspaceGroup = {
   workspacePath: string;
   workspaceName: string;
+  branch: string | null;
   tasks: TaskCardSummary[];
 };
 
@@ -101,15 +106,23 @@ export class TasksSidebar {
           toggleCollapsed();
         },
       }, [
-        h("span", { class: "task-group-title", title: group.workspacePath }, [group.workspaceName]),
-        h("button", {
+        h("div", { class: "task-group-meta" }, [
+          h("span", { class: "task-group-title", title: group.workspacePath }, [group.workspaceName]),
+          group.branch
+            ? h("span", { class: "task-group-branch" }, [
+                h("span", { class: "task-group-branch-icon" }, [materialIcon("fork_left")]),
+                h("span", { class: "task-group-branch-text" }, [group.branch]),
+              ])
+            : null,
+        ].filter(Boolean) as HTMLElement[]),
+        ...(!isCollapsed ? [h("button", {
           class: "task-group-new-btn",
           title: "New task",
           onclick: (event: Event) => {
             event.stopPropagation();
             this.#callbacks.onCreateTask(group.workspacePath);
           },
-        }, ["+"]),
+        }, ["+"])] : []),
       ]),
     ]);
 

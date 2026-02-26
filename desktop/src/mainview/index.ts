@@ -2882,6 +2882,9 @@ function buildTaskWorkspaceGroups(state: AppState): TaskWorkspaceGroup[] {
   return state.workspaces.map((workspacePath) => ({
     workspacePath,
     workspaceName: workspacePath.split("/").pop() ?? workspacePath,
+    branch: resolveWorkspaceBranchName(
+      state.branchHistory[workspacePath] ?? EMPTY_BRANCH_COMMITS
+    ),
     tasks: state.tasksByWorkspace[workspacePath] ?? [],
   }));
 }

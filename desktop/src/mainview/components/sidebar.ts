@@ -153,12 +153,12 @@ export class Sidebar {
           this.#callbacks.onRemoveWorkspace(ws.path);
         },
         title: "Remove workspace",
-      }, [materialIcon("close")]),
+      }, [materialIcon("delete")]),
     ]);
 
     const headerRow = h("div", { class: "ws-folder-row" }, [
       folderHeader,
-      actions,
+      ...(ws.expanded ? [actions] : []),
     ]);
 
     const folder = h("div", {
