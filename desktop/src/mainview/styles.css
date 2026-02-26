@@ -1185,6 +1185,14 @@ button {
   border-color: var(--border-heavy);
 }
 
+.plugin-group.active {
+  border-color: var(--primary);
+}
+
+.plugin-group.active .plugin-row {
+  background: rgba(217, 119, 87, 0.06);
+}
+
 .plugin-row {
   width: 100%;
   display: flex;
@@ -1396,6 +1404,14 @@ button {
 
 .task-group:hover {
   border-color: var(--border-heavy);
+}
+
+.task-group.active {
+  border-color: var(--primary);
+}
+
+.task-group.active .task-group-header {
+  background: rgba(217, 119, 87, 0.06);
 }
 
 .task-group-header {
@@ -1680,6 +1696,14 @@ button {
 
 .pr-group:hover {
   border-color: var(--border-heavy);
+}
+
+.pr-group.active {
+  border-color: var(--primary);
+}
+
+.pr-group.active .pr-group-header {
+  background: rgba(217, 119, 87, 0.06);
 }
 
 .pr-group-header {

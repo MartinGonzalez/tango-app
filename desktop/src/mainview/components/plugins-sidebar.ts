@@ -23,6 +23,7 @@ export class PluginsSidebar {
   #callbacks: PluginsSidebarCallbacks;
   #plugins: InstalledPlugin[] = [];
   #selection: PluginSidebarSelection | null = null;
+  #expandedPlugins = new Set<string>();
   #loading = false;
 
   constructor(container: HTMLElement, callbacks: PluginsSidebarCallbacks) {
@@ -55,6 +56,9 @@ export class PluginsSidebar {
 
   setSelection(selection: PluginSidebarSelection | null): void {
     this.#selection = selection;
+    if (selection && selection.kind !== "plugin") {
+      this.#expandedPlugins.add(selection.pluginId);
+    }
     this.#renderContent();
   }
 
@@ -81,16 +85,22 @@ export class PluginsSidebar {
   }
 
   #renderPlugin(plugin: InstalledPlugin): HTMLElement {
-    const selectedPluginId = this.#selection?.pluginId;
-    const isExpanded = selectedPluginId === plugin.id;
-    const isPluginSelected = this.#selection?.kind === "plugin"
-      && selectedPluginId === plugin.id;
+    const isExpanded = this.#expandedPlugins.has(plugin.id);
+    const toggleExpanded = () => {
+      if (this.#expandedPlugins.has(plugin.id)) {
+        this.#expandedPlugins.delete(plugin.id);
+      } else {
+        this.#expandedPlugins.add(plugin.id);
+      }
+      this.#renderContent();
+    };
 
     const pluginRow = h(
       "button",
       {
-        class: `plugin-row${isPluginSelected ? " active" : ""}`,
+        class: "plugin-row",
         onclick: () => {
+          toggleExpanded();
           this.#callbacks.onSelect({
             kind: "plugin",
             pluginId: plugin.id,
@@ -105,7 +115,9 @@ export class PluginsSidebar {
       ]
     );
 
-    const group = h("div", { class: `plugin-group${isExpanded ? " expanded" : ""}` }, [pluginRow]);
+    const groupHasSelection = this.#selection?.pluginId === plugin.id;
+
+    const group = h("div", { class: `plugin-group${isExpanded ? " expanded" : ""}${groupHasSelection ? " active" : ""}` }, [pluginRow]);
 
     if (!isExpanded) {
       return group;

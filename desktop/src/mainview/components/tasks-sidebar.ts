@@ -88,7 +88,9 @@ export class TasksSidebar {
       this.#renderContent();
     };
 
-    const wrapper = h("div", { class: "task-group" }, [
+    const groupHasSelection = group.tasks.some((t) => t.id === this.#selectedTaskId);
+
+    const wrapper = h("div", { class: `task-group${groupHasSelection ? " active" : ""}` }, [
       h("div", {
         class: `task-group-header${isCollapsed ? " is-collapsed" : ""}`,
         role: "button",
