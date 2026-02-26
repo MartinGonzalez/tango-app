@@ -317,10 +317,6 @@ button {
   border-color: var(--border-heavy);
 }
 
-.ws-folder.active {
-  border-color: var(--primary);
-}
-
 .ws-folder-row {
   display: flex;
   align-items: center;
@@ -1195,10 +1191,6 @@ button {
   border-color: var(--border-heavy);
 }
 
-.plugin-group.active {
-  border-color: var(--primary);
-}
-
 .plugin-group.active .plugin-row {
   background: rgba(217, 119, 87, 0.06);
 }
@@ -1419,10 +1411,6 @@ button {
 
 .task-group.expanded:hover {
   border-color: var(--border-heavy);
-}
-
-.task-group.active {
-  border-color: var(--primary);
 }
 
 .task-group.active .task-group-header {
@@ -1716,10 +1704,6 @@ button {
 
 .pr-group.expanded:hover {
   border-color: var(--border-heavy);
-}
-
-.pr-group.active {
-  border-color: var(--primary);
 }
 
 .pr-group.active .pr-group-header {
