@@ -131,6 +131,13 @@ export type DiffLine = {
 
 export type DiffScope = "last_turn" | "all";
 
+export type VcsKind = "git" | "svn" | "none";
+
+export type VcsInfo = {
+  kind: VcsKind;
+  branch: string | null;
+};
+
 export type WorkspaceFileContent = {
   content: string;
   truncated: boolean;
@@ -678,6 +685,10 @@ export type AppRPC = {
       getBranchHistory: {
         params: { cwd: string; limit?: number };
         response: BranchCommit[];
+      };
+      getVcsInfo: {
+        params: { cwd: string };
+        response: VcsInfo;
       };
       getCommitContext: {
         params: { cwd: string };

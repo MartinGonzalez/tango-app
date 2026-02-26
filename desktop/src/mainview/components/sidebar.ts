@@ -1,5 +1,5 @@
 import { h, clearChildren } from "../lib/dom.ts";
-import { menuDotsIcon, workspaceBranchIcon } from "../lib/icons.ts";
+import { menuDotsIcon, vcsBranchLabel } from "../lib/icons.ts";
 import type { SessionInfo } from "../../shared/types.ts";
 
 const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
@@ -126,10 +126,7 @@ export class Sidebar {
       [
         h("div", { class: "ws-folder-meta" }, [
           h("span", { class: "ws-folder-name" }, [ws.name]),
-          h("span", { class: "ws-folder-branch" }, [
-            workspaceBranchIcon(),
-            h("span", { class: "ws-folder-branch-text" }, [ws.branch ?? "No branch"]),
-          ]),
+          vcsBranchLabel(ws.branch ?? "No branch"),
         ]),
         ...(activeBadge ? [activeBadge] : []),
       ]

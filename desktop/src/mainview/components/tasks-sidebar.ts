@@ -1,4 +1,5 @@
 import { clearChildren, h } from "../lib/dom.ts";
+import { vcsBranchLabel } from "../lib/icons.ts";
 import type { TaskCardSummary } from "../../shared/types.ts";
 
 function materialIcon(name: string): HTMLElement {
@@ -26,6 +27,7 @@ export class TasksSidebar {
   #selectedTaskId: string | null = null;
   #loading = false;
   #expandedWorkspacePaths = new Set<string>();
+  #collapsedWorkspacePaths = new Set<string>();
 
   constructor(container: HTMLElement, callbacks: TasksSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -84,12 +86,16 @@ export class TasksSidebar {
 
   #renderGroup(group: TaskWorkspaceGroup): HTMLElement {
     const groupHasSelection = group.tasks.some((t) => t.id === this.#selectedTaskId);
-    const isCollapsed = !groupHasSelection && !this.#expandedWorkspacePaths.has(group.workspacePath);
+    const isExpanded = this.#expandedWorkspacePaths.has(group.workspacePath)
+      || (groupHasSelection && !this.#collapsedWorkspacePaths.has(group.workspacePath));
+    const isCollapsed = !isExpanded;
     const toggleCollapsed = () => {
-      if (this.#expandedWorkspacePaths.has(group.workspacePath)) {
+      if (isExpanded) {
         this.#expandedWorkspacePaths.delete(group.workspacePath);
+        this.#collapsedWorkspacePaths.add(group.workspacePath);
       } else {
         this.#expandedWorkspacePaths.add(group.workspacePath);
+        this.#collapsedWorkspacePaths.delete(group.workspacePath);
       }
       this.#renderContent();
     };
@@ -108,12 +114,7 @@ export class TasksSidebar {
       }, [
         h("div", { class: "task-group-meta" }, [
           h("span", { class: "task-group-title", title: group.workspacePath }, [group.workspaceName]),
-          group.branch
-            ? h("span", { class: "task-group-branch" }, [
-                h("span", { class: "task-group-branch-icon" }, [materialIcon("fork_left")]),
-                h("span", { class: "task-group-branch-text" }, [group.branch]),
-              ])
-            : null,
+          group.branch ? vcsBranchLabel(group.branch) : null,
         ].filter(Boolean) as HTMLElement[]),
         ...(!isCollapsed ? [h("button", {
           class: "task-group-new-btn",

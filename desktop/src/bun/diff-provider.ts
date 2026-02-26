@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
+import { getVcsStrategy } from "./vcs/vcs-provider.ts";
 
 // ── Snapshot store ──────────────────────────────────────────────
 // Per-workspace snapshots used for:
@@ -201,9 +202,9 @@ export async function getDiff(
     return state.lastTurnDiffBySession.get(selectedSessionId) ?? [];
   }
 
-  const gitContext = await getGitWorkspaceContext(cwd);
-  if (gitContext) {
-    return getGitDiff(cwd, gitContext);
+  const strategy = await getVcsStrategy(cwd);
+  if (strategy.kind !== "none") {
+    return strategy.getWorkingTreeDiff(cwd);
   }
 
   await ensureDiffBaseline(cwd);
@@ -413,7 +414,7 @@ function getPersistedLastTurnDiffPath(cwd: string): string {
 
 // ── Git-based diff ──────────────────────────────────────────────
 
-async function getGitDiff(
+export async function getGitDiff(
   cwd: string,
   gitContext?: GitWorkspaceContext
 ): Promise<DiffFile[]> {

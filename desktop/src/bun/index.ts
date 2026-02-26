@@ -17,6 +17,7 @@ import {
   clearLastTurnDiffForWorkspace,
 } from "./diff-provider.ts";
 import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
+import { getVcsStrategy, getVcsInfo, invalidateVcsCache } from "./vcs/vcs-provider.ts";
 import {
   generateCommitMessage,
   getCommitContext,
@@ -491,7 +492,8 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         cwd: string;
         commitHash: string;
       }) => {
-        return getCommitDiff(cwd, commitHash);
+        const strategy = await getVcsStrategy(cwd);
+        return strategy.getCommitDiff(cwd, commitHash);
       },
 
       getBranchHistory: async ({
@@ -501,7 +503,12 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         cwd: string;
         limit?: number;
       }) => {
-        return getBranchHistory(cwd, limit);
+        const strategy = await getVcsStrategy(cwd);
+        return strategy.getBranchHistory(cwd, limit);
+      },
+
+      getVcsInfo: async ({ cwd }: { cwd: string }) => {
+        return getVcsInfo(cwd);
       },
 
       getCommitContext: async ({ cwd }: { cwd: string }) => {
@@ -1120,6 +1127,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         await clearLastTurnDiffForWorkspace(path).catch((err) => {
           console.warn("Failed to clear workspace diff state:", err);
         });
+        invalidateVcsCache(path);
         invalidateWorkspaceFilesCache(path);
         invalidateSlashCommandsCache(path);
         invalidateInstalledPluginsCache();

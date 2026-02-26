@@ -63,6 +63,7 @@ import type {
   PullRequestReviewState,
   PullRequestSummary,
   WorkspaceConnector,
+  VcsInfo,
 } from "../shared/types.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
@@ -245,6 +246,7 @@ type AppState = {
   activeSessionId: string | null;
   diffScope: DiffScope;
   branchHistory: Record<string, BranchCommit[]>; // workspace path → commit history
+  vcsInfoByWorkspace: Record<string, VcsInfo>; // workspace path → VCS kind + branch
   loadedBranchHistory: Set<string>; // workspace paths that have fetched branch history
   commitContextByWorkspace: Record<string, CommitContext>; // workspace path → commit context
   historySessions: Record<string, HistorySession[]>; // workspace path → history
@@ -305,6 +307,7 @@ const appState = new Store<AppState>({
   activeSessionId: null,
   diffScope: "last_turn",
   branchHistory: {},
+  vcsInfoByWorkspace: {},
   loadedBranchHistory: new Set(),
   commitContextByWorkspace: {},
   historySessions: {},
@@ -1387,10 +1390,10 @@ async function loadBranchHistory(cwd: string, force = false): Promise<void> {
   if (!force && alreadyLoaded) return;
 
   try {
-    const commits: BranchCommit[] = await (rpc as any).request.getBranchHistory({
-      cwd,
-      limit: 120,
-    });
+    const [commits, vcsInfo]: [BranchCommit[], VcsInfo] = await Promise.all([
+      (rpc as any).request.getBranchHistory({ cwd, limit: 120 }),
+      (rpc as any).request.getVcsInfo({ cwd }),
+    ]);
     appState.update((s) => {
       const loaded = new Set(s.loadedBranchHistory);
       loaded.add(cwd);
@@ -1399,6 +1402,10 @@ async function loadBranchHistory(cwd: string, force = false): Promise<void> {
         branchHistory: {
           ...s.branchHistory,
           [cwd]: commits,
+        },
+        vcsInfoByWorkspace: {
+          ...s.vcsInfoByWorkspace,
+          [cwd]: vcsInfo,
         },
         loadedBranchHistory: loaded,
       };
@@ -2651,10 +2658,12 @@ async function removeWorkspace(path: string): Promise<void> {
       expanded.delete(path);
       loadedBranchHistory.delete(path);
       const branchHistory = { ...s.branchHistory };
+      const vcsInfoByWorkspace = { ...s.vcsInfoByWorkspace };
       const commitContextByWorkspace = { ...s.commitContextByWorkspace };
       const tasksByWorkspace = { ...s.tasksByWorkspace };
       const connectorsByWorkspace = { ...s.connectorsByWorkspace };
       delete branchHistory[path];
+      delete vcsInfoByWorkspace[path];
       delete commitContextByWorkspace[path];
       delete tasksByWorkspace[path];
       delete connectorsByWorkspace[path];
@@ -2665,6 +2674,7 @@ async function removeWorkspace(path: string): Promise<void> {
         workspaces,
         expandedWorkspaces: expanded,
         branchHistory,
+        vcsInfoByWorkspace,
         commitContextByWorkspace,
         tasksByWorkspace,
         connectorsByWorkspace,
@@ -2879,14 +2889,17 @@ function resolvePluginSelection(
 }
 
 function buildTaskWorkspaceGroups(state: AppState): TaskWorkspaceGroup[] {
-  return state.workspaces.map((workspacePath) => ({
-    workspacePath,
-    workspaceName: workspacePath.split("/").pop() ?? workspacePath,
-    branch: resolveWorkspaceBranchName(
-      state.branchHistory[workspacePath] ?? EMPTY_BRANCH_COMMITS
-    ),
-    tasks: state.tasksByWorkspace[workspacePath] ?? [],
-  }));
+  return state.workspaces.map((workspacePath) => {
+    const vcsInfo = state.vcsInfoByWorkspace[workspacePath];
+    const branch = vcsInfo?.branch
+      ?? resolveWorkspaceBranchName(state.branchHistory[workspacePath] ?? EMPTY_BRANCH_COMMITS);
+    return {
+      workspacePath,
+      workspaceName: workspacePath.split("/").pop() ?? workspacePath,
+      branch,
+      tasks: state.tasksByWorkspace[workspacePath] ?? [],
+    };
+  });
 }
 
 function findTaskSummaryById(
@@ -3071,9 +3084,9 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
 
   return state.workspaces.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
-    const branch = resolveWorkspaceBranchName(
-      state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS
-    );
+    const vcsInfo = state.vcsInfoByWorkspace[wsPath];
+    const branch = vcsInfo?.branch
+      ?? resolveWorkspaceBranchName(state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS);
     // Live sessions for this workspace
     const wsLive = liveSessions.filter((s) => s.cwd === wsPath);
     const liveIds = new Set(wsLive.map((s) => s.sessionId));

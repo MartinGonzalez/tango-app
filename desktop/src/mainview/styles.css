@@ -297,6 +297,46 @@ button {
   color: var(--text);
 }
 
+/* ── VCS Branch (shared component) ───────────────────────────── */
+
+.vcs-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+}
+
+.vcs-branch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.vcs-branch-icon .material-symbols-outlined {
+  font-size: 14px;
+  width: 14px;
+  overflow: hidden;
+}
+
+.vcs-branch-icon svg {
+  width: 11px;
+  height: 11px;
+  display: block;
+}
+
+.vcs-branch-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Workspace folder ────────────────────────────────────────── */
 
 .ws-folder {
@@ -374,41 +414,7 @@ button {
   white-space: nowrap;
 }
 
-.ws-folder-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.2;
-}
 
-.ws-branch-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.ws-branch-icon .material-symbols-outlined {
-  font-size: 14px;
-}
-
-.ws-branch-icon svg {
-  width: 11px;
-  height: 11px;
-  display: block;
-}
-
-.ws-folder-branch-text {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .ws-count {
   font-size: 10px;
@@ -1461,35 +1467,6 @@ button {
   white-space: nowrap;
 }
 
-.task-group-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  line-height: 1.2;
-}
-
-.task-group-branch-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.task-group-branch-icon .material-symbols-outlined {
-  font-size: 14px;
-}
-
-.task-group-branch-text {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .task-group-new-btn {
   width: 22px;

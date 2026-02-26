@@ -208,3 +208,62 @@ All secondary sidebars (PRs, Tasks, Plugins, Connectors) share this header:
 - Separated from content by `1px solid var(--border)`
 
 The primary sidebar (Workspaces) has a simpler header with a `10px` uppercase section title.
+
+---
+
+## VCS Branch Label (shared component)
+
+Reusable inline component for displaying a VCS branch name with icon. Used in Workspaces sidebar group headers, Tasks sidebar group headers, and anywhere a branch name is shown.
+
+### Structure
+
+```
+span.vcs-branch
+  span.vcs-branch-icon
+    span.material-symbols-outlined  "fork_left"
+  span.vcs-branch-text              "main"
+```
+
+### JS Helper
+
+```ts
+import { vcsBranchLabel } from "../lib/icons.ts";
+
+// Returns the full .vcs-branch element
+vcsBranchLabel("main");
+vcsBranchLabel(branch ?? "No branch");
+```
+
+### CSS
+
+```css
+.vcs-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.2;
+}
+
+.vcs-branch-icon .material-symbols-outlined {
+  font-size: 14px;
+  width: 14px;         /* clips Material Symbols glyph padding */
+  overflow: hidden;
+}
+
+.vcs-branch-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+```
+
+### Notes
+
+- `gap: 0` + `width: 14px; overflow: hidden` on the icon eliminates the built-in glyph padding from Material Symbols, keeping icon and text flush.
+- Supports Git, SVN, and any future VCS — the label is VCS-agnostic.
+- The `workspaceBranchIcon()` function (in `icons.ts`) can still be used standalone with a custom class for non-label contexts (e.g. diff-view toolbar button).
