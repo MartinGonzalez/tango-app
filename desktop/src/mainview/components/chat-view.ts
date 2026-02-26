@@ -1,5 +1,5 @@
 import { h, qs, clearChildren } from "../lib/dom.ts";
-import { menuDotsIcon } from "../lib/icons.ts";
+// Icons now use Material Symbols directly in HTML
 import type {
   TranscriptMessage,
   ClaudeStreamEvent,
@@ -170,7 +170,9 @@ export class ChatView {
         event.stopPropagation();
         this.#setHeaderMenuOpen(!this.#isMenuOpen(this.#headerMenuEl));
       },
-    }, [menuDotsIcon()]) as HTMLButtonElement;
+    }, [
+      h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, ["more_vert"]),
+    ]) as HTMLButtonElement;
 
     this.#headerMenuEl = h("div", { class: "chat-header-menu" }, [
       this.#headerMenuBtnEl,
@@ -248,7 +250,7 @@ export class ChatView {
         "aria-label": "Send",
         onclick: () => this.#send(),
       },
-      ["\u2191"]
+      [h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, ["arrow_upward"])]
     );
 
     this.#stopBtn = h(

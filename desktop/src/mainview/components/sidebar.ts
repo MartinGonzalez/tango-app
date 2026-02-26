@@ -9,8 +9,12 @@ const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
   idle: { char: "\u25CB", cls: "dot-idle" },
   finished: { char: "\u25CB", cls: "dot-finished" },
 };
-const WORKSPACES_TITLE_ICON_SVG =
-  '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.75 5.25C1.75 4.2835 2.5335 3.5 3.5 3.5H6.10225C6.49963 3.5 6.88442 3.64019 7.18875 3.89592L8.06125 4.62908C8.36558 4.88481 8.75037 5.025 9.14775 5.025H12.5C13.4665 5.025 14.25 5.8085 14.25 6.775V11.5C14.25 12.4665 13.4665 13.25 12.5 13.25H3.5C2.5335 13.25 1.75 12.4665 1.75 11.5V5.25Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>';
+function materialIcon(name: string): HTMLElement {
+  return h("span", {
+    class: "material-symbols-outlined",
+    "aria-hidden": "true",
+  }, [name]);
+}
 
 export type WorkspaceData = {
   path: string;
@@ -45,18 +49,13 @@ export class Sidebar {
 
     const header = h("div", { class: "ws-header" }, [
       h("span", { class: "ws-header-title" }, [
-        h("span", {
-          class: "ws-header-title-icon",
-          "aria-hidden": "true",
-          innerHTML: WORKSPACES_TITLE_ICON_SVG,
-        }),
         h("span", { class: "ws-header-title-text" }, ["Workspaces"]),
       ]),
       h("button", {
         class: "ws-add-btn",
         onclick: () => callbacks.onAddWorkspace(),
         title: "Add workspace",
-      }, ["+"]),
+      }, [materialIcon("add")]),
     ]);
 
     this.#listEl = h("div", { class: "ws-list" });
@@ -144,7 +143,7 @@ export class Sidebar {
           this.#callbacks.onNewSession(ws.path);
         },
         title: "New session",
-      }, ["+"]),
+      }, [materialIcon("add")]),
       h("button", {
         class: "ws-action-btn ws-action-remove",
         onclick: async (e: Event) => {
@@ -154,7 +153,7 @@ export class Sidebar {
           this.#callbacks.onRemoveWorkspace(ws.path);
         },
         title: "Remove workspace",
-      }, ["\u00D7"]),
+      }, [materialIcon("close")]),
     ]);
 
     const headerRow = h("div", { class: "ws-folder-row" }, [
