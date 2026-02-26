@@ -33,6 +33,7 @@ export class PRsSidebar {
   #loading = false;
   #error: string | null = null;
   #expandedRepos = new Set<string>();
+  #collapsedRepos = new Set<string>();
 
   constructor(container: HTMLElement, callbacks: PRsSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -127,12 +128,16 @@ export class PRsSidebar {
     const groupHasSelection = group.prs.some(
       (pr) => this.#selection?.repo === pr.repo && this.#selection?.number === pr.number
     );
-    const isCollapsed = !groupHasSelection && !this.#expandedRepos.has(expandedKey);
+    const userExpanded = this.#expandedRepos.has(expandedKey);
+    const userCollapsed = this.#collapsedRepos.has(expandedKey);
+    const isCollapsed = userCollapsed || (!groupHasSelection && !userExpanded);
     const toggleCollapsed = () => {
-      if (this.#expandedRepos.has(expandedKey)) {
-        this.#expandedRepos.delete(expandedKey);
-      } else {
+      if (isCollapsed) {
         this.#expandedRepos.add(expandedKey);
+        this.#collapsedRepos.delete(expandedKey);
+      } else {
+        this.#expandedRepos.delete(expandedKey);
+        this.#collapsedRepos.add(expandedKey);
       }
       this.#renderContent();
     };
