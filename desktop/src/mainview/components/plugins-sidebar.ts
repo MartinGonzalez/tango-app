@@ -105,7 +105,7 @@ export class PluginsSidebar {
       ]
     );
 
-    const group = h("div", { class: "plugin-group" }, [pluginRow]);
+    const group = h("div", { class: `plugin-group${isExpanded ? " expanded" : ""}` }, [pluginRow]);
 
     if (!isExpanded) {
       return group;

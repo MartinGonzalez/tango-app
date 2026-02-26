@@ -813,11 +813,11 @@ button {
 /* ── Workspace sessions ──────────────────────────────────────── */
 
 .ws-sessions {
-  padding: 6px;
+  padding: 6px 0;
 }
 
 .ws-no-sessions {
-  padding: 6px;
+  padding: 8px 12px;
   font-size: 11px;
   color: var(--text-tertiary);
 }
@@ -826,10 +826,7 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  margin-bottom: 4px;
+  padding: 6px 12px;
   cursor: pointer;
   transition: all 100ms ease;
   position: relative;
@@ -839,9 +836,31 @@ button {
   background: var(--bg-hover);
 }
 
+.ws-session-item:active {
+  background: var(--bg-active);
+}
+
 .ws-session-item.active {
-  background: var(--bg-secondary);
-  border-color: #2d2c28;
+  background: rgba(217, 119, 87, 0.10);
+}
+
+.ws-session-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.ws-session-item.active:hover {
+  background: rgba(217, 119, 87, 0.14);
+}
+
+.ws-sessions .ws-session-item:last-child {
+  border-radius: 0 0 7px 7px;
 }
 
 .ws-session-dot {
@@ -907,7 +926,8 @@ button {
   opacity: 0.65;
 }
 
-.ws-session-item.historical:hover {
+.ws-session-item.historical:hover,
+.ws-session-item.historical.active {
   opacity: 1;
 }
 
@@ -1153,7 +1173,16 @@ button {
 }
 
 .plugin-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
   margin-bottom: 6px;
+  overflow: visible;
+  transition: border-color 100ms ease;
+}
+
+.plugin-group:hover {
+  border-color: var(--border-heavy);
 }
 
 .plugin-row {
@@ -1162,23 +1191,48 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 6px 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
   color: var(--text-secondary);
   background: transparent;
   text-align: left;
+  cursor: pointer;
   transition: all 100ms ease;
+  position: relative;
+}
+
+.plugin-group:not(.expanded) .plugin-row {
+  border-bottom: 0;
+  border-radius: 8px;
 }
 
 .plugin-row:hover {
   background: var(--bg-hover);
 }
 
+.plugin-row:active {
+  background: var(--bg-active);
+}
+
 .plugin-row.active {
-  background: var(--bg-secondary);
-  border-color: #2d2c28;
+  background: rgba(217, 119, 87, 0.10);
   color: var(--text);
+}
+
+.plugin-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.plugin-row.active:hover {
+  background: rgba(217, 119, 87, 0.14);
 }
 
 .plugin-row-name {
@@ -1204,14 +1258,11 @@ button {
 }
 
 .plugin-items {
-  margin-top: 4px;
-  margin-left: 8px;
-  border-left: 1px solid var(--border);
-  padding-left: 8px;
+  padding: 6px 0;
 }
 
 .plugin-items-empty {
-  padding: 6px 0;
+  padding: 8px 12px;
   font-size: 11px;
   color: var(--text-tertiary);
 }
@@ -1225,7 +1276,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 3px 4px;
+  padding: 3px 12px;
 }
 
 .plugin-item-group-label {
@@ -1242,23 +1293,40 @@ button {
 
 .plugin-item-row {
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 5px 8px;
+  padding: 5px 12px;
   text-align: left;
   color: var(--text-secondary);
   background: transparent;
   transition: all 100ms ease;
+  position: relative;
 }
 
 .plugin-item-row:hover {
   background: var(--bg-hover);
 }
 
+.plugin-item-row:active {
+  background: var(--bg-active);
+}
+
 .plugin-item-row.active {
   color: var(--text);
-  border-color: #2d2c28;
-  background: var(--bg-secondary);
+  background: rgba(217, 119, 87, 0.10);
+}
+
+.plugin-item-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.plugin-item-row.active:hover {
+  background: rgba(217, 119, 87, 0.14);
 }
 
 /* ── Tasks Sidebar ─────────────────────────────────────────── */
@@ -1320,9 +1388,14 @@ button {
 .task-group {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-secondary);
-  margin-bottom: 8px;
-  overflow: hidden;
+  background: var(--bg-card);
+  margin-bottom: 6px;
+  overflow: visible;
+  transition: border-color 100ms ease;
+}
+
+.task-group:hover {
+  border-color: var(--border-heavy);
 }
 
 .task-group-header {
@@ -1332,6 +1405,7 @@ button {
   gap: 10px;
   border-bottom: 1px solid var(--border);
   padding: 8px 10px;
+  border-radius: 8px 8px 0 0;
   cursor: pointer;
   user-select: none;
 }
@@ -1341,12 +1415,14 @@ button {
 }
 
 .task-group-header:focus-visible {
-  outline: 1px solid var(--blue);
-  outline-offset: -1px;
+  outline: 1px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .task-group-header.is-collapsed {
   border-bottom: 0;
+  border-radius: 8px;
 }
 
 .task-group-title {
@@ -1374,35 +1450,55 @@ button {
 }
 
 .task-group-list {
-  padding: 6px;
+  padding: 6px 0;
 }
 
 .task-group-empty {
   font-size: 11px;
   color: var(--text-tertiary);
-  padding: 6px;
+  padding: 8px 12px;
 }
 
 .task-row {
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  padding: 6px 8px;
+  padding: 6px 12px;
   text-align: left;
   transition: all 100ms ease;
-  margin-bottom: 4px;
+  position: relative;
 }
 
 .task-row:hover {
   background: var(--bg-hover);
 }
 
+.task-row:active {
+  background: var(--bg-active);
+}
+
 .task-row.active {
-  background: var(--bg-secondary);
-  border-color: #2d2c28;
+  background: rgba(217, 119, 87, 0.10);
   color: var(--text);
+}
+
+.task-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.task-row.active:hover {
+  background: rgba(217, 119, 87, 0.14);
+}
+
+.task-group-list .task-row:last-child {
+  border-radius: 0 0 7px 7px;
 }
 
 .task-row-title {
@@ -1576,9 +1672,14 @@ button {
 .pr-group {
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--bg-secondary);
-  margin-bottom: 8px;
-  overflow: hidden;
+  background: var(--bg-card);
+  margin-bottom: 6px;
+  overflow: visible;
+  transition: border-color 100ms ease;
+}
+
+.pr-group:hover {
+  border-color: var(--border-heavy);
 }
 
 .pr-group-header {
@@ -1588,6 +1689,7 @@ button {
   gap: 8px;
   border-bottom: 1px solid var(--border);
   padding: 8px 10px;
+  border-radius: 8px 8px 0 0;
   cursor: pointer;
   user-select: none;
 }
@@ -1597,12 +1699,14 @@ button {
 }
 
 .pr-group-header:focus-visible {
-  outline: 1px solid var(--blue);
-  outline-offset: -1px;
+  outline: 1px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .pr-group-header.is-collapsed {
   border-bottom: 0;
+  border-radius: 8px;
 }
 
 .pr-group-title {
@@ -1620,35 +1724,55 @@ button {
 }
 
 .pr-group-list {
-  padding: 6px;
+  padding: 6px 0;
 }
 
 .pr-group-empty {
   font-size: 11px;
   color: var(--text-tertiary);
-  padding: 6px;
+  padding: 8px 12px;
 }
 
 .pr-row {
   width: 100%;
-  border: 1px solid transparent;
-  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  padding: 6px 8px;
+  padding: 6px 12px;
   text-align: left;
   transition: all 100ms ease;
-  margin-bottom: 4px;
+  position: relative;
 }
 
 .pr-row:hover {
   background: var(--bg-hover);
 }
 
+.pr-row:active {
+  background: var(--bg-active);
+}
+
 .pr-row.active {
-  background: var(--bg-secondary);
-  border-color: #2d2c28;
+  background: rgba(217, 119, 87, 0.10);
   color: var(--text);
+}
+
+.pr-row.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.pr-row.active:hover {
+  background: rgba(217, 119, 87, 0.14);
+}
+
+.pr-group-list .pr-row:last-child {
+  border-radius: 0 0 7px 7px;
 }
 
 .pr-row-title {
