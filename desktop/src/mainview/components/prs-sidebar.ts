@@ -32,7 +32,7 @@ export class PRsSidebar {
   #selection: PRsSidebarSelection = null;
   #loading = false;
   #error: string | null = null;
-  #collapsedRepos = new Set<string>();
+  #expandedRepos = new Set<string>();
 
   constructor(container: HTMLElement, callbacks: PRsSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -123,20 +123,19 @@ export class PRsSidebar {
   }
 
   #renderGroup(sectionId: string, group: PullRequestRepoGroup): HTMLElement {
-    const collapsedKey = `${sectionId}:${group.repo}`;
-    const isCollapsed = this.#collapsedRepos.has(collapsedKey);
-    const toggleCollapsed = () => {
-      if (this.#collapsedRepos.has(collapsedKey)) {
-        this.#collapsedRepos.delete(collapsedKey);
-      } else {
-        this.#collapsedRepos.add(collapsedKey);
-      }
-      this.#renderContent();
-    };
-
+    const expandedKey = `${sectionId}:${group.repo}`;
     const groupHasSelection = group.prs.some(
       (pr) => this.#selection?.repo === pr.repo && this.#selection?.number === pr.number
     );
+    const isCollapsed = !groupHasSelection && !this.#expandedRepos.has(expandedKey);
+    const toggleCollapsed = () => {
+      if (this.#expandedRepos.has(expandedKey)) {
+        this.#expandedRepos.delete(expandedKey);
+      } else {
+        this.#expandedRepos.add(expandedKey);
+      }
+      this.#renderContent();
+    };
 
     const wrapper = h("div", { class: `pr-group${!isCollapsed ? " expanded" : ""}${groupHasSelection ? " active" : ""}` }, [
       h("div", {
