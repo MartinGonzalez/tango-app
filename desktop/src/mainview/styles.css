@@ -297,6 +297,22 @@ button {
   color: var(--text);
 }
 
+/* ── Collapsible (shared component) ──────────────────────────── */
+
+.collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms ease-out;
+}
+
+.collapsible.is-collapsed {
+  grid-template-rows: 0fr;
+}
+
+.collapsible-inner {
+  overflow: hidden;
+}
+
 /* ── VCS Branch (shared component) ───────────────────────────── */
 
 .vcs-branch {

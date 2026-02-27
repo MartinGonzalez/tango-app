@@ -34,6 +34,7 @@ export class PRsSidebar {
   #error: string | null = null;
   #expandedRepos = new Set<string>();
   #collapsedRepos = new Set<string>();
+  #animatingKey: string | null = null;
 
   constructor(container: HTMLElement, callbacks: PRsSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -104,6 +105,7 @@ export class PRsSidebar {
     for (const section of this.#sections) {
       this.#listEl.appendChild(this.#renderSection(section));
     }
+    this.#animatingKey = null;
   }
 
   #renderSection(section: PullRequestSidebarSection): HTMLElement {
@@ -139,6 +141,7 @@ export class PRsSidebar {
         this.#expandedRepos.delete(expandedKey);
         this.#collapsedRepos.add(expandedKey);
       }
+      this.#animatingKey = expandedKey;
       this.#renderContent();
     };
 
@@ -159,7 +162,7 @@ export class PRsSidebar {
       ]),
     ]);
 
-    const list = h("div", { class: "pr-group-list", hidden: isCollapsed });
+    const list = h("div", { class: "pr-group-list" });
 
     if (group.prs.length === 0) {
       list.appendChild(h("div", { class: "pr-group-empty" }, ["No PRs"]));
@@ -169,7 +172,17 @@ export class PRsSidebar {
       }
     }
 
-    wrapper.appendChild(list);
+    const animate = expandedKey === this.#animatingKey;
+    const initialCollapsed = animate ? !isCollapsed : isCollapsed;
+    const collapsible = h("div", { class: `collapsible${initialCollapsed ? " is-collapsed" : ""}` }, [
+      h("div", { class: "collapsible-inner" }, [list]),
+    ]);
+    if (animate) {
+      requestAnimationFrame(() => {
+        collapsible.classList.toggle("is-collapsed", isCollapsed);
+      });
+    }
+    wrapper.appendChild(collapsible);
     return wrapper;
   }
 

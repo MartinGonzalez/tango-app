@@ -43,6 +43,7 @@ export class Sidebar {
   #openMenuSessionId: string | null = null;
   #renamingSessionId: string | null = null;
   #removeWorkspaceConfirmOpen = false;
+  #animatingPath: string | null = null;
 
   constructor(container: HTMLElement, callbacks: SidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -100,6 +101,7 @@ export class Sidebar {
     for (const ws of workspaces) {
       this.#listEl.appendChild(this.#renderWorkspace(ws));
     }
+    this.#animatingPath = null;
   }
 
   #renderWorkspace(ws: WorkspaceData): HTMLElement {
@@ -116,10 +118,14 @@ export class Sidebar {
         class: "ws-folder-header",
         role: "button",
         tabindex: "0",
-        onclick: () => this.#callbacks.onToggleWorkspace(ws.path),
+        onclick: () => {
+          this.#animatingPath = ws.path;
+          this.#callbacks.onToggleWorkspace(ws.path);
+        },
         onkeydown: (event: KeyboardEvent) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
+          this.#animatingPath = ws.path;
           this.#callbacks.onToggleWorkspace(ws.path);
         },
       },
@@ -163,21 +169,30 @@ export class Sidebar {
       dataset: { wsPath: ws.path },
     }, [headerRow]);
 
-    if (ws.expanded) {
-      const sessionsList = h("div", { class: "ws-sessions" });
+    const sessionsList = h("div", { class: "ws-sessions" });
 
-      if (ws.sessions.length === 0) {
-        sessionsList.appendChild(
-          h("div", { class: "ws-no-sessions" }, ["No sessions"])
-        );
-      } else {
-        for (const session of ws.sessions) {
-          sessionsList.appendChild(this.#renderSession(session, ws.path));
-        }
+    if (ws.sessions.length === 0) {
+      sessionsList.appendChild(
+        h("div", { class: "ws-no-sessions" }, ["No sessions"])
+      );
+    } else {
+      for (const session of ws.sessions) {
+        sessionsList.appendChild(this.#renderSession(session, ws.path));
       }
-
-      folder.appendChild(sessionsList);
     }
+
+    const animate = ws.path === this.#animatingPath;
+    const isCollapsed = !ws.expanded;
+    const initialCollapsed = animate ? !isCollapsed : isCollapsed;
+    const collapsible = h("div", { class: `collapsible${initialCollapsed ? " is-collapsed" : ""}` }, [
+      h("div", { class: "collapsible-inner" }, [sessionsList]),
+    ]);
+    if (animate) {
+      requestAnimationFrame(() => {
+        collapsible.classList.toggle("is-collapsed", isCollapsed);
+      });
+    }
+    folder.appendChild(collapsible);
 
     return folder;
   }

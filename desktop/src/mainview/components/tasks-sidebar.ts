@@ -28,6 +28,7 @@ export class TasksSidebar {
   #loading = false;
   #expandedWorkspacePaths = new Set<string>();
   #collapsedWorkspacePaths = new Set<string>();
+  #animatingPath: string | null = null;
 
   constructor(container: HTMLElement, callbacks: TasksSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -82,6 +83,7 @@ export class TasksSidebar {
     for (const group of this.#groups) {
       this.#listEl.appendChild(this.#renderGroup(group));
     }
+    this.#animatingPath = null;
   }
 
   #renderGroup(group: TaskWorkspaceGroup): HTMLElement {
@@ -97,6 +99,7 @@ export class TasksSidebar {
         this.#expandedWorkspacePaths.add(group.workspacePath);
         this.#collapsedWorkspacePaths.delete(group.workspacePath);
       }
+      this.#animatingPath = group.workspacePath;
       this.#renderContent();
     };
 
@@ -127,7 +130,7 @@ export class TasksSidebar {
       ]),
     ]);
 
-    const list = h("div", { class: "task-group-list", hidden: isCollapsed });
+    const list = h("div", { class: "task-group-list" });
 
     if (group.tasks.length === 0) {
       list.appendChild(h("div", { class: "task-group-empty" }, ["No tasks"]));
@@ -137,7 +140,17 @@ export class TasksSidebar {
       }
     }
 
-    wrapper.appendChild(list);
+    const animate = group.workspacePath === this.#animatingPath;
+    const initialCollapsed = animate ? !isCollapsed : isCollapsed;
+    const collapsible = h("div", { class: `collapsible${initialCollapsed ? " is-collapsed" : ""}` }, [
+      h("div", { class: "collapsible-inner" }, [list]),
+    ]);
+    if (animate) {
+      requestAnimationFrame(() => {
+        collapsible.classList.toggle("is-collapsed", isCollapsed);
+      });
+    }
+    wrapper.appendChild(collapsible);
     return wrapper;
   }
 
