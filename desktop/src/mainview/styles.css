@@ -1070,6 +1070,16 @@ button {
   display: none !important;
 }
 
+.sidebar-primary-instruments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebar-primary-instruments-list[hidden] {
+  display: none !important;
+}
+
 .sidebar-primary-btn {
   width: 100%;
   min-height: 32px;
@@ -1123,6 +1133,12 @@ button {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
+}
+
+.instrument-runtime-sidebar[hidden],
+.instrument-panel-host[hidden],
+.tasks-sidebar[hidden] {
+  display: none !important;
 }
 
 .instrument-runtime-sidebar-title {

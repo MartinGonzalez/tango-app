@@ -1288,6 +1288,18 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return instrumentRuntime.list();
       },
 
+      getInstrumentFrontendSource: async ({
+        instrumentId,
+      }: {
+        instrumentId: string;
+      }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) {
+          throw new Error("instrumentId is required");
+        }
+        return instrumentRuntime.getFrontendSource(id);
+      },
+
       installInstrumentFromPath: async ({ path }: { path: string }) => {
         const normalized = String(path ?? "").trim();
         if (!normalized) {

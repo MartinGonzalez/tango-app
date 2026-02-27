@@ -1,6 +1,6 @@
 import Electrobun, { Electroview } from "electrobun/view";
 import { Store } from "./lib/state.ts";
-import { h, qs } from "./lib/dom.ts";
+import { h, qs, clearChildren } from "./lib/dom.ts";
 import {
   connectorsToolIcon,
   pluginToolIcon,
@@ -500,6 +500,7 @@ let sidebarPrimaryTasksBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryInstrumentsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryPRsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryConnectorsBtn: HTMLButtonElement | null = null;
+let sidebarPrimaryRuntimeInstrumentsHost: HTMLElement | null = null;
 let instrumentRuntimeSidebarShell: HTMLElement | null = null;
 let instrumentRuntimeSidebarHost: HTMLElement | null = null;
 let instrumentRuntimeSidebarTitleEl: HTMLElement | null = null;
@@ -669,12 +670,18 @@ function init(): void {
     h("span", { class: "sidebar-primary-label" }, ["Connectors"]),
   ]) as HTMLButtonElement;
 
+  sidebarPrimaryRuntimeInstrumentsHost = h("div", {
+    class: "sidebar-primary-instruments-list",
+    hidden: true,
+  });
+
   const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
     sidebarPrimaryPluginsBtn,
     sidebarPrimaryTasksBtn,
     sidebarPrimaryPRsBtn,
     sidebarPrimaryConnectorsBtn,
     sidebarPrimaryInstrumentsBtn,
+    sidebarPrimaryRuntimeInstrumentsHost,
   ]);
 
   const sidebarShell = h("div", { class: "sidebar-shell" }, [
@@ -844,13 +851,13 @@ function init(): void {
     h("div", { class: "tasks-sidebar-header instrument-runtime-sidebar-header" }, [
       h("button", {
         class: "tasks-sidebar-back-btn",
-        title: "Back to Instruments",
+        title: "Back to Stages",
         onclick: () => {
           void (async () => {
             await deactivateRuntimeInstrument();
             appState.update((s) => ({
               ...s,
-              viewMode: "instruments",
+              viewMode: "stages",
               instrumentsError: null,
             }));
           })();
@@ -1403,12 +1410,13 @@ function init(): void {
     const isTasksMode = state.viewMode === "tasks";
     const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
+    const runtimeInstrumentId = state.activeInstrumentId ?? activeRuntimeInstrumentId;
     const isRuntimeInstrumentMode = isInstrumentsMode
-      && Boolean(state.activeInstrumentId)
-      && state.activeInstrumentId !== TASKS_INSTRUMENT_ID
-      && state.activeInstrumentId === activeRuntimeInstrumentId;
+      && Boolean(activeRuntimeInstrumentModule)
+      && Boolean(runtimeInstrumentId)
+      && runtimeInstrumentId !== TASKS_INSTRUMENT_ID;
     const runtimeEntry = isRuntimeInstrumentMode
-      ? (state.instrumentEntries.find((entry) => entry.id === activeRuntimeInstrumentId) ?? null)
+      ? (state.instrumentEntries.find((entry) => entry.id === runtimeInstrumentId) ?? null)
       : null;
     const runtimeShowsFirst = Boolean(runtimeEntry?.panels.first);
     const runtimeShowsSecond = Boolean(runtimeEntry?.panels.second);
@@ -1465,6 +1473,32 @@ function init(): void {
     sidebarPrimaryInstrumentsBtn?.classList.toggle("active", isInstrumentsMode);
     sidebarPrimaryPRsBtn?.classList.toggle("active", isPRMode);
     sidebarPrimaryConnectorsBtn?.classList.toggle("active", isConnectorsMode);
+    if (sidebarPrimaryRuntimeInstrumentsHost) {
+      const shortcuts = state.instrumentEntries.filter((entry) =>
+        entry.id !== TASKS_INSTRUMENT_ID
+        && entry.enabled
+        && entry.status !== "blocked"
+      );
+      sidebarPrimaryRuntimeInstrumentsHost.hidden = shortcuts.length === 0;
+      clearChildren(sidebarPrimaryRuntimeInstrumentsHost);
+      for (const entry of shortcuts) {
+        const shortcutBtn = h("button", {
+          class: "sidebar-primary-btn",
+          title: `Open ${entry.name}`,
+          onclick: () => {
+            void activateInstrument(entry.id);
+          },
+        }, [
+          pluginToolIcon("sidebar-primary-icon"),
+          h("span", { class: "sidebar-primary-label" }, [entry.name]),
+        ]) as HTMLButtonElement;
+        shortcutBtn.classList.toggle(
+          "active",
+          state.viewMode === "instruments" && state.activeInstrumentId === entry.id
+        );
+        sidebarPrimaryRuntimeInstrumentsHost.appendChild(shortcutBtn);
+      }
+    }
 
     pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
     pluginsSidebar.setSelection(pluginsSelection);
@@ -1473,11 +1507,20 @@ function init(): void {
       error: state.instrumentsError,
     });
     instrumentsSidebar.setActive(state.activeInstrumentId);
+    const runtimeUsesSidebar = Boolean(runtimeEntry?.panels.sidebar);
     if (instrumentsSidebar.element) {
-      instrumentsSidebar.element.hidden = !isInstrumentsMode || isRuntimeInstrumentMode;
+      instrumentsSidebar.element.hidden = !isInstrumentsMode
+        || (isRuntimeInstrumentMode && runtimeUsesSidebar);
     }
     if (instrumentRuntimeSidebarTitleEl) {
-      instrumentRuntimeSidebarTitleEl.textContent = runtimeEntry?.name ?? "Instrument";
+      const runtimeTitle = runtimeEntry?.name
+        ?? (
+          activeRuntimeInstrumentId
+            ? state.instrumentEntries.find((entry) => entry.id === activeRuntimeInstrumentId)?.name
+            : null
+        )
+        ?? "Instrument";
+      instrumentRuntimeSidebarTitleEl.textContent = runtimeTitle;
     }
     syncRuntimePanelVisibility(isRuntimeInstrumentMode, runtimeEntry);
     tasksSidebar.render(taskGroups, { loading: state.tasksLoading });
@@ -1535,7 +1578,6 @@ function init(): void {
     syncConnectorAuthPollTimer(state);
 
     const hideChatPanel = isTasksMode
-      || (isInstrumentsMode && !isRuntimeInstrumentMode)
       || (isRuntimeInstrumentMode && (!runtimeShowsFirst || !runtimePanelVisibility.first));
     const hideDiffPanel = isPluginsMode
       || isConnectorsMode
@@ -1734,8 +1776,7 @@ function syncRuntimePanelVisibility(
   const allowFirst = Boolean(entry?.panels.first);
   const allowSecond = Boolean(entry?.panels.second);
   if (instrumentRuntimeSidebarShell) {
-    // Keep runtime shell visible while active so the user can always navigate back.
-    instrumentRuntimeSidebarShell.hidden = !isRuntimeInstrumentMode;
+    instrumentRuntimeSidebarShell.hidden = !(isRuntimeInstrumentMode && allowSidebar);
   }
   if (instrumentRuntimeSidebarHost) {
     instrumentRuntimeSidebarHost.hidden = !(
@@ -2026,7 +2067,12 @@ async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promis
   runtimePanelVisibility.sidebar = Boolean(entry.panels.sidebar);
   runtimePanelVisibility.first = Boolean(entry.panels.first);
   runtimePanelVisibility.second = Boolean(entry.panels.second);
-  const module = await loadInstrumentFrontend(entry);
+  const module = await loadInstrumentFrontend(
+    entry,
+    async (instrumentId) => {
+      return (rpc as any).request.getInstrumentFrontendSource({ instrumentId });
+    }
+  );
   const ctx = buildInstrumentContext(entry);
   try {
     await module.activate(ctx);

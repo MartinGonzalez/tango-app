@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
@@ -179,6 +179,15 @@ export class InstrumentRuntime {
 
     const module = await this.#loadBackendModule(entry);
     return module.invoke(ctx, method, params);
+  }
+
+  async getFrontendSource(
+    instrumentId: string
+  ): Promise<{ code: string; sourcePath: string }> {
+    const entry = this.#requireUsableEntry(instrumentId);
+    const sourcePath = resolve(entry.installPath, entry.entrypoint);
+    const code = await readFile(sourcePath, "utf8");
+    return { code, sourcePath };
   }
 
   async getProperty(instrumentId: string, key: string): Promise<unknown | null> {
