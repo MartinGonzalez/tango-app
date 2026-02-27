@@ -65,8 +65,11 @@ import type {
   PullRequestSummary,
   StageConnector,
   InstrumentRegistryEntry,
+  InstrumentContext,
+  InstrumentFrontendModule,
   VcsInfo,
 } from "../shared/types.ts";
+import { loadInstrumentFrontend } from "./instruments/instrument-loader.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
 
@@ -247,6 +250,115 @@ const rpc = Electroview.defineRPC<any>({
 // @ts-ignore - electrobun is used internally by the webview runtime
 const _electrobun = new Electrobun.Electroview({ rpc });
 const TASKS_INSTRUMENT_ID = "tasks";
+type ClientLogLevel = "debug" | "info" | "warn" | "error";
+const bootTraceLines: string[] = [];
+let fatalScreenVisible = false;
+
+function stringifyForLog(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (value instanceof Error) {
+    return `${value.name}: ${value.message}\n${value.stack ?? ""}`;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function sendClientLog(level: ClientLogLevel, message: string, meta?: unknown): void {
+  const payload = {
+    ts: new Date().toISOString(),
+    level,
+    message: String(message ?? ""),
+    meta: meta ?? null,
+  };
+  void (rpc as any).request.logClient(payload).catch(() => {
+    // best-effort only
+  });
+  if (level === "error") console.error(`[mainview] ${payload.message}`, meta ?? "");
+  else if (level === "warn") console.warn(`[mainview] ${payload.message}`, meta ?? "");
+  else if (level === "info") console.info(`[mainview] ${payload.message}`, meta ?? "");
+  else console.debug(`[mainview] ${payload.message}`, meta ?? "");
+}
+
+function pushBootTrace(step: string, detail?: unknown): void {
+  const line = `${new Date().toISOString()} ${step}${detail ? ` ${stringifyForLog(detail)}` : ""}`;
+  bootTraceLines.push(line);
+  if (bootTraceLines.length > 120) {
+    bootTraceLines.shift();
+  }
+  sendClientLog("debug", `boot:${step}`, detail);
+}
+
+function renderFatalScreen(context: string, error: unknown): void {
+  if (fatalScreenVisible) return;
+  fatalScreenVisible = true;
+
+  const host = qs("#app") ?? document.body;
+  if (!host) return;
+  host.replaceChildren();
+
+  const container = h("div", {
+    style: {
+      height: "100vh",
+      overflow: "auto",
+      padding: "16px",
+      color: "#f5f5f5",
+      background: "#111315",
+      fontFamily: "\"SF Mono\", Menlo, monospace",
+      fontSize: "12px",
+      lineHeight: "1.5",
+    },
+  }, [
+    h("h2", {
+      style: { marginBottom: "12px", fontSize: "16px", color: "#ffb4a6" },
+    }, ["Tango UI crash report"]),
+    h("div", {
+      style: { marginBottom: "8px", color: "#fca5a5" },
+    }, [`Context: ${context}`]),
+    h("pre", {
+      style: {
+        whiteSpace: "pre-wrap",
+        marginBottom: "12px",
+      },
+    }, [stringifyForLog(error)]),
+    h("div", {
+      style: { marginBottom: "6px", color: "#9ca3af" },
+    }, ["Boot trace"]),
+    h("pre", {
+      style: {
+        whiteSpace: "pre-wrap",
+        color: "#d1d5db",
+      },
+    }, [bootTraceLines.join("\n")]),
+  ]);
+
+  host.appendChild(container);
+}
+
+function reportFatal(context: string, error: unknown, meta?: unknown): void {
+  sendClientLog("error", `fatal:${context}`, {
+    error: stringifyForLog(error),
+    meta: meta ?? null,
+    bootTrace: bootTraceLines,
+  });
+  renderFatalScreen(context, error);
+}
+
+window.addEventListener("error", (event) => {
+  reportFatal("window.error", event.error ?? event.message, {
+    message: event.message,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  reportFatal("window.unhandledrejection", event.reason);
+});
 
 // ── State ────────────────────────────────────────────────────────
 
@@ -388,6 +500,19 @@ let sidebarPrimaryTasksBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryInstrumentsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryPRsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryConnectorsBtn: HTMLButtonElement | null = null;
+let instrumentRuntimeSidebarShell: HTMLElement | null = null;
+let instrumentRuntimeSidebarHost: HTMLElement | null = null;
+let instrumentRuntimeSidebarTitleEl: HTMLElement | null = null;
+let instrumentFirstPanelHost: HTMLElement | null = null;
+let instrumentSecondPanelHost: HTMLElement | null = null;
+let activeRuntimeInstrumentId: string | null = null;
+let activeRuntimeInstrumentModule: InstrumentFrontendModule | null = null;
+let runtimeInstrumentDeactivating = false;
+const runtimePanelVisibility = {
+  sidebar: false,
+  first: false,
+  second: false,
+};
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let commitContextRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -423,25 +548,33 @@ let prevChatPanelFixed: boolean | null = null;
 let transcriptLoadSeq = 0;
 
 function init(): void {
-  const panelsContainer = qs("#panels")!;
+  pushBootTrace("init:start");
+  try {
+    const panelsContainer = qs("#panels");
+    if (!panelsContainer) {
+      throw new Error("Missing #panels root");
+    }
 
-  // Create 3-column panel layout
-  panelLayout = new PanelLayout(panelsContainer, [
-    {
-      id: "stages",
-      minWidth: 0,
-      defaultWidth: 15,
-      fixedPercent: 15,
-      resizable: false,
-      hidden: true,
-    },
-    { id: "chat", minWidth: 280, defaultWidth: 35 },
-    { id: "diff", minWidth: 320, defaultWidth: 65 },
-  ]);
+    // Create 3-column panel layout
+    panelLayout = new PanelLayout(panelsContainer, [
+      {
+        id: "stages",
+        minWidth: 0,
+        defaultWidth: 15,
+        fixedPercent: 15,
+        resizable: false,
+        hidden: false,
+      },
+      { id: "chat", minWidth: 280, defaultWidth: 35 },
+      { id: "diff", minWidth: 320, defaultWidth: 65 },
+    ]);
 
-  const wsPanel = panelLayout.getPanel("stages")!;
-  const chatPanel = panelLayout.getPanel("chat")!;
-  const diffPanel = panelLayout.getPanel("diff")!;
+    const wsPanel = panelLayout.getPanel("stages");
+    const chatPanel = panelLayout.getPanel("chat");
+    const diffPanel = panelLayout.getPanel("diff");
+    if (!wsPanel || !chatPanel || !diffPanel) {
+      throw new Error("Failed to initialize one or more panel roots");
+    }
 
   const sidebarViews = h("div", { class: "sidebar-mode-views" });
   const stagesSidebarHost = h("div", {
@@ -698,6 +831,36 @@ function init(): void {
       void retryBlockedInstrumentMigration(instrumentId);
     },
   });
+  instrumentRuntimeSidebarTitleEl = h("span", {
+    class: "tasks-sidebar-title instrument-runtime-sidebar-title",
+  }, ["Instrument"]);
+  instrumentRuntimeSidebarHost = h("div", {
+    class: "instrument-panel-host instrument-panel-host-sidebar",
+  });
+  instrumentRuntimeSidebarShell = h("div", {
+    class: "instrument-runtime-sidebar",
+    hidden: true,
+  }, [
+    h("div", { class: "tasks-sidebar-header instrument-runtime-sidebar-header" }, [
+      h("button", {
+        class: "tasks-sidebar-back-btn",
+        title: "Back to Instruments",
+        onclick: () => {
+          void (async () => {
+            await deactivateRuntimeInstrument();
+            appState.update((s) => ({
+              ...s,
+              viewMode: "instruments",
+              instrumentsError: null,
+            }));
+          })();
+        },
+      }, ["\u2190"]),
+      instrumentRuntimeSidebarTitleEl,
+    ]),
+    instrumentRuntimeSidebarHost,
+  ]);
+  instrumentsSidebarHost.appendChild(instrumentRuntimeSidebarShell);
 
   tasksSidebar = new TasksSidebar(tasksSidebarHost, {
     onSelectTask: (taskId, stagePath) => {
@@ -847,6 +1010,11 @@ function init(): void {
       }));
     },
   });
+  instrumentFirstPanelHost = h("div", {
+    class: "instrument-panel-host instrument-panel-host-first",
+    hidden: true,
+  });
+  chatPanel.appendChild(instrumentFirstPanelHost);
   tasksView = new TasksView(diffPanel, {
     onUpdateTask: async (taskId, patch) => {
       await invokeTasksInstrument("updateTask", { taskId, patch });
@@ -1091,6 +1259,11 @@ function init(): void {
       await createPullRequestReviewComment(params);
     },
   });
+  instrumentSecondPanelHost = h("div", {
+    class: "instrument-panel-host instrument-panel-host-second",
+    hidden: true,
+  });
+  diffPanel.appendChild(instrumentSecondPanelHost);
 
   // Files panel (embedded inside diff panel)
   filesPanel = new FilesPanel(diffView.filesPanelHost, {
@@ -1202,6 +1375,7 @@ function init(): void {
 
   // State subscription — rebuild sidebar on every snapshot or stage change
   appState.subscribe((state) => {
+    try {
     const shouldFixChatPanel = state.viewMode === "stages" || state.viewMode === "prs";
     if (shouldFixChatPanel !== prevChatPanelFixed) {
       panelLayout.setPanelSizing(
@@ -1229,6 +1403,15 @@ function init(): void {
     const isTasksMode = state.viewMode === "tasks";
     const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
+    const isRuntimeInstrumentMode = isInstrumentsMode
+      && Boolean(state.activeInstrumentId)
+      && state.activeInstrumentId !== TASKS_INSTRUMENT_ID
+      && state.activeInstrumentId === activeRuntimeInstrumentId;
+    const runtimeEntry = isRuntimeInstrumentMode
+      ? (state.instrumentEntries.find((entry) => entry.id === activeRuntimeInstrumentId) ?? null)
+      : null;
+    const runtimeShowsFirst = Boolean(runtimeEntry?.panels.first);
+    const runtimeShowsSecond = Boolean(runtimeEntry?.panels.second);
     const tasksInstrumentEntry = state.instrumentEntries.find(
       (entry) => entry.id === TASKS_INSTRUMENT_ID
     ) ?? null;
@@ -1247,6 +1430,13 @@ function init(): void {
     const activeStageAuthSession = state.connectorAuthSession?.stagePath === state.activeStage
       ? state.connectorAuthSession
       : null;
+    if (
+      activeRuntimeInstrumentId
+      && !runtimeInstrumentDeactivating
+      && (!isInstrumentsMode || state.activeInstrumentId !== activeRuntimeInstrumentId)
+    ) {
+      void deactivateRuntimeInstrument();
+    }
 
     sidebarPrimaryActions.hidden = isPluginsMode
       || isInstrumentsMode
@@ -1283,6 +1473,13 @@ function init(): void {
       error: state.instrumentsError,
     });
     instrumentsSidebar.setActive(state.activeInstrumentId);
+    if (instrumentsSidebar.element) {
+      instrumentsSidebar.element.hidden = !isInstrumentsMode || isRuntimeInstrumentMode;
+    }
+    if (instrumentRuntimeSidebarTitleEl) {
+      instrumentRuntimeSidebarTitleEl.textContent = runtimeEntry?.name ?? "Instrument";
+    }
+    syncRuntimePanelVisibility(isRuntimeInstrumentMode, runtimeEntry);
     tasksSidebar.render(taskGroups, { loading: state.tasksLoading });
     tasksSidebar.setSelection(state.selectedTaskId);
     prsSidebar.render(pullRequestSections, {
@@ -1326,7 +1523,7 @@ function init(): void {
     tasksView.setVisible(isTasksMode);
     prView.setVisible(isPRMode);
     connectorsView.setVisible(isConnectorsMode);
-    diffView.element.hidden = isTasksMode;
+    diffView.element.hidden = isTasksMode || isRuntimeInstrumentMode;
 
     if (state.activeStage && state.activeStage !== prevConnectorsStage) {
       prevConnectorsStage = state.activeStage;
@@ -1337,14 +1534,34 @@ function init(): void {
 
     syncConnectorAuthPollTimer(state);
 
-    const hideChatPanel = isTasksMode;
-    const hideDiffPanel = isPluginsMode || isConnectorsMode || isInstrumentsMode;
+    const hideChatPanel = isTasksMode
+      || (isInstrumentsMode && !isRuntimeInstrumentMode)
+      || (isRuntimeInstrumentMode && (!runtimeShowsFirst || !runtimePanelVisibility.first));
+    const hideDiffPanel = isPluginsMode
+      || isConnectorsMode
+      || (isInstrumentsMode && !isRuntimeInstrumentMode)
+      || (isRuntimeInstrumentMode && (!runtimeShowsSecond || !runtimePanelVisibility.second));
+    if (hideChatPanel && hideDiffPanel) {
+      panelLayout.showPanel("stages");
+      qs("#btn-toggle-stages")?.classList.add("active");
+    }
 
     if (hideChatPanel) panelLayout.hidePanel("chat");
     else panelLayout.showPanel("chat");
 
     if (hideDiffPanel) panelLayout.hidePanel("diff");
     else panelLayout.showPanel("diff");
+
+    // Last-resort guard: avoid ending up with all panels hidden.
+    if (
+      !panelLayout.isPanelVisible("stages")
+      && !panelLayout.isPanelVisible("chat")
+      && !panelLayout.isPanelVisible("diff")
+    ) {
+      panelLayout.showPanel("stages");
+      panelLayout.showPanel("chat");
+      qs("#btn-toggle-stages")?.classList.add("active");
+    }
 
     if (hideDiffPanel) {
       if (sidebarWidthBeforeSwitch > 0) {
@@ -1358,6 +1575,14 @@ function init(): void {
     }
 
     if (isTasksMode) {
+      if (commitModal.isOpen) {
+        commitModal.close();
+      }
+      prevViewMode = state.viewMode;
+      return;
+    }
+
+    if (isRuntimeInstrumentMode) {
       if (commitModal.isOpen) {
         commitModal.close();
       }
@@ -1436,9 +1661,22 @@ function init(): void {
       prevBranchStage = activeStage;
       prevBranchCommits = branchCommits;
     }
+    } catch (err) {
+      reportFatal("state.render", err, {
+        viewMode: state.viewMode,
+        activeStage: state.activeStage,
+        activeInstrumentId: state.activeInstrumentId,
+        activeRuntimeInstrumentId,
+      });
+    }
   });
 
+  // Force first render pass even before async loaders return.
+  pushBootTrace("state:initial-render");
+  appState.update((s) => s);
+
   // Load initial data
+  pushBootTrace("load:initial-data");
   loadStages();
   loadSessionNames();
   loadPlugins();
@@ -1453,6 +1691,11 @@ function init(): void {
       void loadInstruments(true);
     }
   });
+    pushBootTrace("init:ready");
+  } catch (err) {
+    reportFatal("init", err);
+    throw err;
+  }
 }
 
 // ── Actions ──────────────────────────────────────────────────────
@@ -1481,6 +1724,324 @@ async function openTasksInstrumentFromSidebar(): Promise<void> {
     return;
   }
   await activateInstrument(TASKS_INSTRUMENT_ID);
+}
+
+function syncRuntimePanelVisibility(
+  isRuntimeInstrumentMode: boolean,
+  entry: InstrumentRegistryEntry | null
+): void {
+  const allowSidebar = Boolean(entry?.panels.sidebar);
+  const allowFirst = Boolean(entry?.panels.first);
+  const allowSecond = Boolean(entry?.panels.second);
+  if (instrumentRuntimeSidebarShell) {
+    // Keep runtime shell visible while active so the user can always navigate back.
+    instrumentRuntimeSidebarShell.hidden = !isRuntimeInstrumentMode;
+  }
+  if (instrumentRuntimeSidebarHost) {
+    instrumentRuntimeSidebarHost.hidden = !(
+      isRuntimeInstrumentMode
+      && allowSidebar
+      && runtimePanelVisibility.sidebar
+    );
+  }
+  if (instrumentFirstPanelHost) {
+    instrumentFirstPanelHost.hidden = !(
+      isRuntimeInstrumentMode
+      && allowFirst
+      && runtimePanelVisibility.first
+    );
+  }
+  if (instrumentSecondPanelHost) {
+    instrumentSecondPanelHost.hidden = !(
+      isRuntimeInstrumentMode
+      && allowSecond
+      && runtimePanelVisibility.second
+    );
+  }
+}
+
+function getInstrumentSlotHost(
+  entry: InstrumentRegistryEntry,
+  slot: "sidebar" | "first" | "second" | "right"
+): HTMLElement {
+  if (slot === "right") {
+    throw new Error("Instrument slot 'right' is not supported in this runtime slice yet");
+  }
+
+  if (slot === "sidebar") {
+    if (!entry.panels.sidebar) {
+      throw new Error(
+        `Instrument '${entry.id}' cannot mount sidebar panel (manifest panels.sidebar=false)`
+      );
+    }
+    if (!instrumentRuntimeSidebarHost) {
+      throw new Error("Runtime sidebar host is not initialized");
+    }
+    return instrumentRuntimeSidebarHost;
+  }
+
+  if (slot === "first") {
+    if (!entry.panels.first) {
+      throw new Error(
+        `Instrument '${entry.id}' cannot mount first panel (manifest panels.first=false)`
+      );
+    }
+    if (!instrumentFirstPanelHost) {
+      throw new Error("Runtime first panel host is not initialized");
+    }
+    return instrumentFirstPanelHost;
+  }
+
+  if (!entry.panels.second) {
+    throw new Error(
+      `Instrument '${entry.id}' cannot mount second panel (manifest panels.second=false)`
+    );
+  }
+  if (!instrumentSecondPanelHost) {
+    throw new Error("Runtime second panel host is not initialized");
+  }
+  return instrumentSecondPanelHost;
+}
+
+function setRuntimeSlotVisibility(
+  slot: "sidebar" | "first" | "second" | "right",
+  visible: boolean
+): void {
+  if (slot === "right") {
+    throw new Error("Instrument slot 'right' is not supported in this runtime slice yet");
+  }
+  if (slot === "sidebar") {
+    runtimePanelVisibility.sidebar = visible;
+    return;
+  }
+  if (slot === "first") {
+    runtimePanelVisibility.first = visible;
+    return;
+  }
+  runtimePanelVisibility.second = visible;
+}
+
+function clearInstrumentPanelHosts(): void {
+  runtimePanelVisibility.sidebar = false;
+  runtimePanelVisibility.first = false;
+  runtimePanelVisibility.second = false;
+  if (instrumentRuntimeSidebarHost) {
+    instrumentRuntimeSidebarHost.replaceChildren();
+    instrumentRuntimeSidebarHost.hidden = true;
+  }
+  if (instrumentRuntimeSidebarShell) {
+    instrumentRuntimeSidebarShell.hidden = true;
+  }
+  if (instrumentFirstPanelHost) {
+    instrumentFirstPanelHost.replaceChildren();
+    instrumentFirstPanelHost.hidden = true;
+  }
+  if (instrumentSecondPanelHost) {
+    instrumentSecondPanelHost.replaceChildren();
+    instrumentSecondPanelHost.hidden = true;
+  }
+}
+
+async function deactivateRuntimeInstrument(): Promise<void> {
+  if (runtimeInstrumentDeactivating) return;
+  runtimeInstrumentDeactivating = true;
+  const module = activeRuntimeInstrumentModule;
+  activeRuntimeInstrumentId = null;
+  activeRuntimeInstrumentModule = null;
+  try {
+    if (module?.deactivate) {
+      await module.deactivate();
+    }
+  } catch (err) {
+    console.error("Failed to deactivate runtime instrument:", err);
+  } finally {
+    clearInstrumentPanelHosts();
+    runtimeInstrumentDeactivating = false;
+  }
+}
+
+function buildInstrumentContext(entry: InstrumentRegistryEntry): InstrumentContext {
+  return {
+    instrumentId: entry.id,
+    permissions: entry.permissions,
+    panels: {
+      mount: (slot, node) => {
+        const host = getInstrumentSlotHost(entry, slot);
+        host.replaceChildren(node);
+      },
+      unmount: (slot) => {
+        const host = getInstrumentSlotHost(entry, slot);
+        host.replaceChildren();
+      },
+      setVisible: (slot, visible) => {
+        setRuntimeSlotVisibility(slot, visible);
+        const state = appState.get();
+        const isRuntimeInstrumentMode = state.viewMode === "instruments"
+          && state.activeInstrumentId === entry.id
+          && activeRuntimeInstrumentId === entry.id;
+        const runtimeEntry = isRuntimeInstrumentMode
+          ? (state.instrumentEntries.find((item) => item.id === entry.id) ?? entry)
+          : entry;
+        syncRuntimePanelVisibility(isRuntimeInstrumentMode, runtimeEntry);
+      },
+    },
+    storage: {
+      getProperty: async <T = unknown>(key: string): Promise<T | null> => {
+        const response: { value: unknown | null } = await (rpc as any).request.instrumentStorageGetProperty({
+          instrumentId: entry.id,
+          key,
+        });
+        return response.value as T | null;
+      },
+      setProperty: async (key, value) => {
+        await (rpc as any).request.instrumentStorageSetProperty({
+          instrumentId: entry.id,
+          key,
+          value,
+        });
+      },
+      deleteProperty: async (key) => {
+        await (rpc as any).request.instrumentStorageDeleteProperty({
+          instrumentId: entry.id,
+          key,
+        });
+      },
+      readFile: async (path, encoding = "utf8") => {
+        const response: { content: string } = await (rpc as any).request.instrumentStorageReadFile({
+          instrumentId: entry.id,
+          path,
+          encoding,
+        });
+        return response.content;
+      },
+      writeFile: async (path, content, encoding = "utf8") => {
+        await (rpc as any).request.instrumentStorageWriteFile({
+          instrumentId: entry.id,
+          path,
+          content,
+          encoding,
+        });
+      },
+      deleteFile: async (path) => {
+        await (rpc as any).request.instrumentStorageDeleteFile({
+          instrumentId: entry.id,
+          path,
+        });
+      },
+      listFiles: async (dir = "") => {
+        return (rpc as any).request.instrumentStorageListFiles({
+          instrumentId: entry.id,
+          dir,
+        });
+      },
+      sqlQuery: async <T extends Record<string, unknown> = Record<string, unknown>>(
+        sql: string,
+        params: unknown[] = [],
+        db = "main"
+      ): Promise<T[]> => {
+        const response: { rows: Record<string, unknown>[] } = await (rpc as any).request.instrumentStorageSqlQuery({
+          instrumentId: entry.id,
+          db,
+          sql,
+          params,
+        });
+        return response.rows as T[];
+      },
+      sqlExecute: async (sql, params = [], db = "main") => {
+        return (rpc as any).request.instrumentStorageSqlExecute({
+          instrumentId: entry.id,
+          db,
+          sql,
+          params,
+        });
+      },
+    },
+    sessions: {
+      spawn: async (params) => {
+        const response: { sessionId: string } = await (rpc as any).request.sendPrompt({
+          prompt: params.prompt,
+          cwd: params.cwd,
+          fullAccess: params.fullAccess ?? true,
+          sessionId: params.sessionId,
+          selectedFiles: params.selectedFiles ?? [],
+        });
+        return { sessionId: response.sessionId };
+      },
+      sendFollowUp: async (params) => {
+        await (rpc as any).request.sendFollowUp({
+          sessionId: params.sessionId,
+          text: params.text,
+          fullAccess: params.fullAccess ?? true,
+          selectedFiles: params.selectedFiles ?? [],
+        });
+      },
+      kill: async (sessionId) => {
+        await (rpc as any).request.killSession({ sessionId });
+      },
+      list: async () => {
+        return (rpc as any).request.getSessions({});
+      },
+    },
+    connectors: {
+      listStageConnectors: async (stagePath) => {
+        return (rpc as any).request.getStageConnectors({ stagePath });
+      },
+      isAuthorized: async (stagePath, provider) => {
+        const connectors: StageConnector[] = await (rpc as any).request.getStageConnectors({ stagePath });
+        return connectors.some((connector) => connector.provider === provider && connector.status === "connected");
+      },
+      connect: async (stagePath, provider) => {
+        return (rpc as any).request.startConnectorAuth({ stagePath, provider });
+      },
+      disconnect: async (stagePath, provider) => {
+        await (rpc as any).request.disconnectStageConnector({ stagePath, provider });
+      },
+    },
+    stages: {
+      list: async () => {
+        return (rpc as any).request.getStages({});
+      },
+      active: async () => {
+        return appState.get().activeStage;
+      },
+    },
+    invoke: async <T = unknown>(
+      method: string,
+      params?: Record<string, unknown>
+    ): Promise<T> => {
+      const response: { result: T } = await (rpc as any).request.instrumentInvoke({
+        instrumentId: entry.id,
+        method,
+        params,
+      });
+      return response.result;
+    },
+    registerShortcut: () => {},
+    emit: () => {},
+  };
+}
+
+async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promise<void> {
+  await deactivateRuntimeInstrument();
+  runtimePanelVisibility.sidebar = Boolean(entry.panels.sidebar);
+  runtimePanelVisibility.first = Boolean(entry.panels.first);
+  runtimePanelVisibility.second = Boolean(entry.panels.second);
+  const module = await loadInstrumentFrontend(entry);
+  const ctx = buildInstrumentContext(entry);
+  try {
+    await module.activate(ctx);
+    activeRuntimeInstrumentId = entry.id;
+    activeRuntimeInstrumentModule = module;
+    syncRuntimePanelVisibility(true, entry);
+  } catch (err) {
+    try {
+      await module.deactivate?.();
+    } catch (deactivateErr) {
+      console.error("Failed to rollback runtime instrument activation:", deactivateErr);
+    }
+    clearInstrumentPanelHosts();
+    throw err;
+  }
 }
 
 async function loadSessionTranscript(sessionId: string): Promise<void> {
@@ -2057,16 +2618,28 @@ async function activateInstrument(instrumentId: string): Promise<void> {
   qs("#btn-toggle-stages")?.classList.add("active");
 
   if (id === TASKS_INSTRUMENT_ID) {
+    await deactivateRuntimeInstrument();
     appState.update((s) => ({ ...s, viewMode: "tasks" }));
     await loadAllStageTasks();
     return;
   }
 
-  appState.update((s) => ({
-    ...s,
-    viewMode: "instruments",
-    instrumentsError: `Instrument '${entry.name}' UI is not mounted yet`,
-  }));
+  try {
+    await activateRuntimeInstrument(entry);
+    appState.update((s) => ({
+      ...s,
+      viewMode: "instruments",
+      instrumentsError: null,
+    }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await deactivateRuntimeInstrument();
+    appState.update((s) => ({
+      ...s,
+      viewMode: "instruments",
+      instrumentsError: `Failed to activate '${entry.name}': ${message}`,
+    }));
+  }
 }
 
 async function installInstrumentFromLocalPath(): Promise<void> {
@@ -2093,8 +2666,12 @@ async function setInstrumentEnabled(instrumentId: string, enabled: boolean): Pro
 
     if (!enabled) {
       const state = appState.get();
-      if (state.activeInstrumentId === instrumentId && state.viewMode === "tasks") {
-        appState.update((s) => ({ ...s, viewMode: "instruments" }));
+      if (state.activeInstrumentId === instrumentId) {
+        await deactivateRuntimeInstrument();
+        appState.update((s) => ({
+          ...s,
+          viewMode: state.viewMode === "tasks" ? "instruments" : state.viewMode,
+        }));
       }
     }
   } catch (err) {
@@ -2119,6 +2696,9 @@ async function removeLocalInstrument(instrumentId: string): Promise<void> {
   }
 
   try {
+    if (activeRuntimeInstrumentId === instrumentId) {
+      await deactivateRuntimeInstrument();
+    }
     await (rpc as any).request.removeInstrument({
       instrumentId,
       deleteData: false,

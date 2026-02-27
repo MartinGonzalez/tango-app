@@ -417,6 +417,15 @@ export type AppRPC = {
         };
         response: { result: unknown };
       };
+      logClient: {
+        params: {
+          ts?: string;
+          level: "debug" | "info" | "warn" | "error";
+          message: string;
+          meta?: unknown;
+        };
+        response: void;
+      };
     };
     messages: {};
   }>;

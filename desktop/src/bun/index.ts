@@ -1,5 +1,5 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -90,6 +90,16 @@ const TASKS_INSTRUMENT_DB_PATH = join(
   "tasks.db"
 );
 const TASKS_MIGRATION_MARKER_KEY = "migration.tasks-db.completedAt";
+const MAINVIEW_LOG_PATH = join(homedir(), ".tango", "logs", "mainview.log");
+
+function writeMainviewLogLine(line: string): void {
+  try {
+    mkdirSync(dirname(MAINVIEW_LOG_PATH), { recursive: true });
+    appendFileSync(MAINVIEW_LOG_PATH, `${line}\n`, "utf8");
+  } catch {
+    // best-effort only
+  }
+}
 
 type TasksMigrationState = {
   migrated: boolean;
@@ -244,6 +254,10 @@ function migrateLegacyTasksDbSync(): TasksMigrationState {
 // ── Auto-start watcher server if needed ──────────────────────────
 
 async function ensureServer(): Promise<void> {
+  if (process.env.TANGO_DISABLE_WATCHER_AUTOSTART === "1") {
+    console.warn("Watcher auto-start disabled (TANGO_DISABLE_WATCHER_AUTOSTART=1)");
+    return;
+  }
   const up = await watcher.isServerUp();
   if (up) {
     console.log("Watcher server already running");
@@ -1445,9 +1459,68 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         const result = await instrumentRuntime.invoke(instrumentId, method, params);
         return { result };
       },
+
+      logClient: async ({
+        ts,
+        level,
+        message,
+        meta,
+      }: {
+        ts?: string;
+        level: "debug" | "info" | "warn" | "error";
+        message: string;
+        meta?: unknown;
+      }) => {
+        const at = typeof ts === "string" ? ts : new Date().toISOString();
+        const lvl = String(level ?? "info").toLowerCase();
+        let detail = "";
+        if (meta != null) {
+          if (typeof meta === "string") {
+            detail = ` ${meta}`;
+          } else {
+            try {
+              detail = ` ${JSON.stringify(meta)}`;
+            } catch {
+              detail = ` ${String(meta)}`;
+            }
+          }
+        }
+        const line = `[${at}] [mainview:${lvl}] ${String(message ?? "")}${detail}`;
+        if (lvl === "error") console.error(line);
+        else if (lvl === "warn") console.warn(line);
+        else console.log(line);
+        writeMainviewLogLine(line);
+      },
     },
     messages: {
       "*": (messageName: string | number | symbol, payload: unknown) => {
+        if (String(messageName) === "clientLog") {
+          const event = (payload ?? {}) as {
+            ts?: unknown;
+            level?: unknown;
+            message?: unknown;
+            meta?: unknown;
+          };
+          const ts = typeof event.ts === "string" ? event.ts : new Date().toISOString();
+          const level = typeof event.level === "string" ? event.level.toLowerCase() : "info";
+          const message = typeof event.message === "string" ? event.message : String(event.message ?? "");
+          let meta = "";
+          if (event.meta != null) {
+            if (typeof event.meta === "string") {
+              meta = ` ${event.meta}`;
+            } else {
+              try {
+                meta = ` ${JSON.stringify(event.meta)}`;
+              } catch {
+                meta = ` ${String(event.meta)}`;
+              }
+            }
+          }
+          const line = `[${ts}] [mainview:${level}] ${message}${meta}`;
+          console.log(line);
+          writeMainviewLogLine(line);
+          return;
+        }
         console.log(`WebView message: ${String(messageName)}`, payload);
       },
     } as any,
@@ -2438,8 +2511,20 @@ await prAgentReviewStore.reconcileInterruptedRuns();
 await connectors.start();
 await initializeInstrumentRuntime();
 await ensureServer();
-approvals.start(4243);
-watcher.start();
+try {
+  approvals.start(4243);
+} catch (err) {
+  console.warn("Approval server failed to start; continuing without tool approvals:", err);
+}
+if (process.env.TANGO_DISABLE_WATCHER_AUTOSTART === "1") {
+  console.warn("Watcher polling disabled (TANGO_DISABLE_WATCHER_AUTOSTART=1)");
+} else {
+  try {
+    watcher.start();
+  } catch (err) {
+    console.warn("Watcher failed to start; running without live snapshots:", err);
+  }
+}
 
 // Install the PreToolUse hook for tool approval
 installApprovalHook().catch((err) => {

@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tango Developers</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#overview">
+        <span class="brand-mark">T</span>
+        <span class="brand-copy">
+          <strong>Tango</strong>
+          <small>Developers</small>
+        </span>
+      </a>
+      <label class="search">
+        <span>Search</span>
+        <input id="doc-search" type="search" placeholder="manifest, storage, panels..." />
+      </label>
+      <a class="github-link" href="#quickstart">
+        Start Building
+      </a>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" aria-label="Documentation Navigation">
+        <p class="sidebar-title">Getting Started</p>
+        <nav id="sidebar-nav">
+          <a href="#overview">Overview</a>
+          <a href="#mental-model">Mental Model</a>
+          <a href="#quickstart">Quickstart</a>
+          <a href="#minimal-example">Minimal Example</a>
+          <a href="#scaffold">Create Project</a>
+          <a href="#manifest">Manifest</a>
+          <a href="#frontend-lifecycle">Frontend Lifecycle</a>
+          <a href="#backend-lifecycle">Backend Lifecycle</a>
+          <a href="#sdk">SDK Surface</a>
+          <a href="#permissions">Permissions</a>
+          <a href="#install-local">Install Local Instrument</a>
+          <a href="#tasks-pilot">Tasks Pilot Notes</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+      </aside>
+
+      <main class="content" id="content">
+        <section id="overview" data-title="Overview">
+          <p class="eyebrow">Tango Instruments</p>
+          <h1>Build Instruments for Tango</h1>
+          <p>
+            Tango is evolving into a developer hub where core app features and optional capabilities are
+            delivered as <strong>Instruments</strong>. This documentation explains the foundation implemented in
+            the current branch and how to create a new instrument project outside this repository.
+          </p>
+          <div class="callout">
+            <strong>Current status (v1):</strong>
+            <p>
+              Runtime, manifest, permissions, registry and storage are active. Tasks is the first migrated pilot
+              instrument. Publishing/marketplace is intentionally out of scope for now.
+            </p>
+          </div>
+        </section>
+
+        <section id="mental-model" data-title="Mental Model">
+          <h2>Mental Model</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Concept</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Tango</code></td>
+                <td>Core host app and runtime for instruments.</td>
+              </tr>
+              <tr>
+                <td><code>Stage</code></td>
+                <td>Workspace/project folder where Claude sessions run.</td>
+              </tr>
+              <tr>
+                <td><code>Instrument</code></td>
+                <td>Installable capability with manifest, UI entrypoint and optional backend handler.</td>
+              </tr>
+              <tr>
+                <td><code>Host</code></td>
+                <td>Panel layout + RPC + permissioned APIs exposed by Tango.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="quickstart" data-title="Quickstart">
+          <h2>Quickstart</h2>
+          <ol>
+            <li>Create a standalone JS project (outside this repo is fine).</li>
+            <li>Add <code>package.json</code> with <code>tango.instrument</code>.</li>
+            <li>Create JS entrypoints (<code>dist/index.js</code> and optional <code>dist/backend.js</code>).</li>
+            <li>Install from Tango UI via local path.</li>
+            <li>Enable instrument and activate it from the Instruments launcher (hot-mount, no restart).</li>
+          </ol>
+        </section>
+
+        <section id="minimal-example" data-title="Minimal Example">
+          <h2>Minimal Example (Hello Instrument)</h2>
+          <p>
+            There is a real, tiny instrument in this repo at
+            <code>developers/examples/hello-instrument</code>.
+          </p>
+          <p>Use it as a base to start fast.</p>
+          <h3>package.json</h3>
+          <pre><code>{
+  "name": "@example/tango-instrument-hello",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "tango": {
+    "instrument": {
+      "id": "hello",
+      "name": "Hello",
+      "group": "Examples",
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",
+      "hostApiVersion": "1.0.0",
+      "panels": { "sidebar": true, "first": false, "second": true, "right": false },
+      "permissions": []
+    }
+  }
+}</code></pre>
+          <h3>dist/index.js (frontend)</h3>
+          <pre><code>let outputEl = null;
+
+export function activate(ctx) {
+  const sidebar = document.createElement("div");
+  sidebar.textContent = "Hello Instrument Sidebar";
+
+  const panel = document.createElement("div");
+  const pingBtn = document.createElement("button");
+  pingBtn.textContent = "Ping backend";
+  outputEl = document.createElement("pre");
+  outputEl.textContent = "No backend call yet.";
+
+  pingBtn.addEventListener("click", async () => {
+    const result = await ctx.invoke("ping", { source: "hello-ui" });
+    outputEl.textContent = JSON.stringify(result, null, 2);
+  });
+
+  panel.append("Hello from Tango Instrument");
+  panel.append(pingBtn);
+  panel.append(outputEl);
+
+  ctx.panels.mount("sidebar", sidebar);
+  ctx.panels.mount("second", panel);
+  ctx.panels.setVisible("sidebar", true);
+  ctx.panels.setVisible("second", true);
+}
+
+export function deactivate() {
+  outputEl = null;
+}</code></pre>
+          <h3>dist/backend.js (backend)</h3>
+          <pre><code>export async function invoke(ctx, method, params) {
+  if (method === "ping") {
+    return {
+      ok: true,
+      instrumentId: ctx.instrumentId,
+      timestamp: new Date().toISOString(),
+      params: params ?? null,
+    };
+  }
+  throw new Error(`Unknown method: ${method}`);
+}</code></pre>
+        </section>
+
+        <section id="scaffold" data-title="Create Project">
+          <h2>Create Project</h2>
+          <p>Minimal structure used by the Hello example:</p>
+          <pre><code>/my-instrument
+  package.json
+  dist/
+    index.js
+    backend.js</code></pre>
+          <p class="muted">
+            Runtime v1 loads JavaScript directly from the install path.
+          </p>
+        </section>
+
+        <section id="manifest" data-title="Manifest">
+          <h2>Manifest (<code>package.json</code>)</h2>
+          <pre><code>{
+  "name": "@acme/tango-instrument-example",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "tango": {
+    "instrument": {
+      "id": "example",
+      "name": "Example",
+      "group": "Community",
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",
+      "hostApiVersion": "1.0.0",
+      "panels": {
+        "sidebar": true,
+        "first": false,
+        "second": true,
+        "right": false
+      },
+      "permissions": [
+        "storage.files",
+        "storage.db",
+        "storage.properties",
+        "sessions",
+        "connectors.read",
+        "connectors.connect",
+        "stages.read",
+        "stages.observe"
+      ]
+    }
+  }
+}</code></pre>
+          <ul>
+            <li><code>id</code> must be unique in the registry.</li>
+            <li><code>panels</code> defines intended host surface visibility.</li>
+            <li><code>permissions</code> are enforced by runtime APIs.</li>
+          </ul>
+        </section>
+
+        <section id="frontend-lifecycle" data-title="Frontend Lifecycle">
+          <h2>Frontend Lifecycle</h2>
+          <p>Instrument frontend module contract:</p>
+          <pre><code>export async function activate(ctx) {
+  const root = document.createElement("div");
+  root.textContent = "Hello from instrument";
+  ctx.panels.mount("second", root);
+  ctx.panels.setVisible("sidebar", true);
+  ctx.panels.setVisible("second", true);
+}
+
+export async function deactivate() {
+  // Optional cleanup
+}</code></pre>
+          <p>
+            Use <code>ctx.panels</code> to mount/unmount in <code>sidebar</code>, <code>first</code>,
+            <code>second</code>, or <code>right</code>.
+          </p>
+          <p class="muted">
+            Current runtime slice for docs/demo supports <code>sidebar</code> and <code>second</code>.
+          </p>
+        </section>
+
+        <section id="backend-lifecycle" data-title="Backend Lifecycle">
+          <h2>Backend Lifecycle</h2>
+          <p>Backend module contract:</p>
+          <pre><code>export async function invoke(ctx, method, params) {
+  switch (method) {
+    case "health":
+      return { ok: true, instrumentId: ctx.instrumentId };
+    case "echo":
+      return { params };
+    default:
+      throw new Error(`Unknown method: ${method}`);
+  }
+}</code></pre>
+          <p>
+            The host calls this through <code>instrumentInvoke</code>. Keep methods explicit and versioned.
+          </p>
+        </section>
+
+        <section id="sdk" data-title="SDK Surface">
+          <h2>SDK Surface (v1)</h2>
+          <ul>
+            <li><code>panels</code>: mount/unmount and visibility per panel slot.</li>
+            <li><code>storage</code>: properties, files, and SQL scoped under <code>~/.tango/instruments/&lt;id&gt;/</code>.</li>
+            <li><code>sessions</code>: spawn/send/kill/list Claude sessions.</li>
+            <li><code>connectors</code>: list/connect/disconnect provider auth by stage.</li>
+            <li><code>stages</code>: list stages and get active stage.</li>
+            <li><code>invoke</code>: call backend handlers through <code>instrumentInvoke</code>.</li>
+            <li><code>emit</code>: publish <code>instrumentEvent</code> to frontend host.</li>
+          </ul>
+        </section>
+
+        <section id="permissions" data-title="Permissions">
+          <h2>Permissions</h2>
+          <p>Permission checks are performed before each sensitive API call.</p>
+          <pre><code>storage.files
+storage.db
+storage.properties
+sessions
+connectors.read
+connectors.connect
+stages.read
+stages.observe</code></pre>
+          <div class="callout">
+            <strong>Trusted runtime note:</strong>
+            <p>
+              Instruments are currently trusted modules in v1, but permission enforcement is already active to keep
+              the contract stable for future sandboxing.
+            </p>
+          </div>
+        </section>
+
+        <section id="install-local" data-title="Install Local Instrument">
+          <h2>Install Local Instrument</h2>
+          <ol>
+            <li>Open Tango and go to <strong>Instruments</strong>.</li>
+            <li>Click <strong>+</strong> and choose the instrument project root directory.</li>
+            <li>Enable/disable or uninstall from the instrument row.</li>
+            <li>Activate the instrument from the launcher (mount happens immediately).</li>
+          </ol>
+          <h3>Hot-mount validation checklist</h3>
+          <ol>
+            <li>Install <code>developers/examples/hello-instrument</code>.</li>
+            <li>Select <strong>Hello</strong> in the instrument list.</li>
+            <li>Confirm sidebar switches to instrument sidebar and second panel renders content.</li>
+            <li>Click <strong>Ping backend</strong> and verify JSON response.</li>
+          </ol>
+          <p>
+            Registry is stored in <code>~/.tango/instruments/registry.json</code>.
+          </p>
+        </section>
+
+        <section id="tasks-pilot" data-title="Tasks Pilot Notes">
+          <h2>Tasks Pilot Notes</h2>
+          <ul>
+            <li>Tasks is migrated as a first instrument with parity goals.</li>
+            <li>Data migration moves <code>~/.tango/tasks.db</code> to instrument namespace.</li>
+            <li>If migration fails, only Tasks is blocked; Tango core continues running.</li>
+            <li>Retry is available through instrument actions.</li>
+          </ul>
+        </section>
+
+        <section id="faq" data-title="FAQ">
+          <h2>FAQ</h2>
+          <h3>Can I build an instrument outside this repo?</h3>
+          <p>Yes. Build JS entrypoints and install from local path.</p>
+
+          <h3>Do I need to publish to a registry now?</h3>
+          <p>No. Publishing/marketplace is intentionally out of scope in this phase.</p>
+
+          <h3>Can I access all four panels?</h3>
+          <p>
+            Manifest supports four slots. This runtime slice/demo enables sidebar + second panel for the Hello sample.
+          </p>
+        </section>
+      </main>
+
+      <aside class="toc" aria-label="On This Page">
+        <p class="sidebar-title">On This Page</p>
+        <nav id="toc-nav"></nav>
+      </aside>
+    </div>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

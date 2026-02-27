@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "electrobun build",
-    "dev": "electrobun dev",
+    "dev": "electrobun build && electrobun dev",
+    "dev:raw": "electrobun dev",
+    "dev:app": "TANGO_DISABLE_WATCHER_AUTOSTART=1 electrobun build && TANGO_DISABLE_WATCHER_AUTOSTART=1 electrobun dev",
     "start": "bun run clean && bun run build && bun run dev",
     "clean": "bun run kill-app; bun run kill-server; true",
     "kill-app": "pkill -f 'Tango' 2>/dev/null; pkill -f 'electrobun dev' 2>/dev/null; true",

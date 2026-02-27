@@ -78,6 +78,10 @@ export type InstrumentContext = {
   sessions: SessionsAPI;
   connectors: ConnectorsAPI;
   stages: StageAPI;
+  invoke: <T = unknown>(
+    method: string,
+    params?: Record<string, unknown>
+  ) => Promise<T>;
   registerShortcut: (shortcut: ShortcutRegistration) => void;
   emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
 };
