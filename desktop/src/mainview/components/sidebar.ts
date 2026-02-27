@@ -189,7 +189,10 @@ export class Sidebar {
     ]);
     if (animate) {
       requestAnimationFrame(() => {
-        collapsible.classList.toggle("is-collapsed", isCollapsed);
+        collapsible.offsetHeight;
+        requestAnimationFrame(() => {
+          collapsible.classList.toggle("is-collapsed", isCollapsed);
+        });
       });
     }
     folder.appendChild(collapsible);

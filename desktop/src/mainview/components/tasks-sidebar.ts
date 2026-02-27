@@ -147,7 +147,10 @@ export class TasksSidebar {
     ]);
     if (animate) {
       requestAnimationFrame(() => {
-        collapsible.classList.toggle("is-collapsed", isCollapsed);
+        collapsible.offsetHeight;
+        requestAnimationFrame(() => {
+          collapsible.classList.toggle("is-collapsed", isCollapsed);
+        });
       });
     }
     wrapper.appendChild(collapsible);

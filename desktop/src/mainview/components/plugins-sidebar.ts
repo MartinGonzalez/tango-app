@@ -146,8 +146,11 @@ export class PluginsSidebar {
     ]);
     if (animate) {
       requestAnimationFrame(() => {
-        collapsible.classList.toggle("is-collapsed", isCollapsed);
-        this.#animatingId = null;
+        collapsible.offsetHeight;
+        requestAnimationFrame(() => {
+          collapsible.classList.toggle("is-collapsed", isCollapsed);
+          this.#animatingId = null;
+        });
       });
     }
     group.appendChild(collapsible);
