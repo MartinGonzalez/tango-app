@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
-  getWorkspacePathVariants,
-  getWorkspacePathVariantsSync,
+  getStagePathVariants,
+  getStagePathVariantsSync,
 } from "../src/bun/project-path.ts";
 
 let tempDir: string;
@@ -24,27 +24,27 @@ afterEach(async () => {
 describe("project-path helpers", () => {
   test("encodeClaudeProjectPath normalizes dots and path separators", () => {
     const encoded = encodeClaudeProjectPath(
-      "/Users/me/Workspace/Packages/com.example.feature"
+      "/Users/me/Stage/Packages/com.example.feature"
     );
-    expect(encoded).toBe("-Users-me-Workspace-Packages-com-example-feature");
+    expect(encoded).toBe("-Users-me-Stage-Packages-com-example-feature");
   });
 
   test("legacy encoder keeps dots for backward compatibility", () => {
     const encoded = encodeClaudeProjectPathLegacy(
-      "/Users/me/Workspace/Packages/com.example.feature"
+      "/Users/me/Stage/Packages/com.example.feature"
     );
-    expect(encoded).toBe("-Users-me-Workspace-Packages-com.example.feature");
+    expect(encoded).toBe("-Users-me-Stage-Packages-com.example.feature");
   });
 
-  test("path variants include canonical realpath for symlinked workspaces", async () => {
-    const realDir = join(tempDir, "real.workspace");
-    const linkDir = join(tempDir, "link.workspace");
+  test("path variants include canonical realpath for symlinked stages", async () => {
+    const realDir = join(tempDir, "real.stage");
+    const linkDir = join(tempDir, "link.stage");
     await mkdir(realDir, { recursive: true });
     await symlink(realDir, linkDir);
 
     const expectedReal = await realpath(linkDir);
-    const asyncVariants = await getWorkspacePathVariants(linkDir);
-    const syncVariants = getWorkspacePathVariantsSync(linkDir);
+    const asyncVariants = await getStagePathVariants(linkDir);
+    const syncVariants = getStagePathVariantsSync(linkDir);
 
     expect(asyncVariants).toContain(linkDir);
     expect(asyncVariants).toContain(expectedReal);

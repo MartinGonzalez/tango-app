@@ -23,12 +23,12 @@ type CommandResult = {
 
 type CommandRunner = (command: string, args: string[], cwd?: string) => Promise<CommandResult>;
 
-type CwdSource = "workspace" | "home";
+type CwdSource = "stage" | "home";
 
 export type AgentReviewCwdResolution = {
   cwd: string;
   source: CwdSource;
-  workspacePath: string | null;
+  stagePath: string | null;
 };
 
 const ALLOWED_REVIEW_LEVELS = new Set<PullRequestAgentReviewLevel>([
@@ -41,18 +41,18 @@ const ALLOWED_REVIEW_LEVELS = new Set<PullRequestAgentReviewLevel>([
 export class PRAgentReviewProvider {
   #baseDir: string;
   #homeDir: string;
-  #getWorkspacePaths: () => string[];
+  #getStagePaths: () => string[];
   #runCommand: CommandRunner;
 
   constructor(options?: {
     baseDir?: string;
     homeDir?: string;
-    getWorkspacePaths?: () => string[];
+    getStagePaths?: () => string[];
     runCommand?: CommandRunner;
   }) {
     this.#baseDir = options?.baseDir ?? AGENT_REVIEW_BASE_DIR;
     this.#homeDir = options?.homeDir ?? homedir();
-    this.#getWorkspacePaths = options?.getWorkspacePaths ?? (() => []);
+    this.#getStagePaths = options?.getStagePaths ?? (() => []);
     this.#runCommand = options?.runCommand ?? runCommand;
   }
 
@@ -165,18 +165,18 @@ export class PRAgentReviewProvider {
 
   async resolveCwd(repo: string): Promise<AgentReviewCwdResolution> {
     const normalizedRepo = normalizeRepoKey(repo);
-    const workspaces = this.#getWorkspacePaths()
+    const stages = this.#getStagePaths()
       .map((path) => String(path ?? "").trim())
       .filter(Boolean);
 
-    for (const workspacePath of workspaces) {
-      const remoteRepo = await this.#resolveWorkspaceRepo(workspacePath);
+    for (const stagePath of stages) {
+      const remoteRepo = await this.#resolveStageRepo(stagePath);
       if (!remoteRepo) continue;
       if (normalizeRepoKey(remoteRepo) === normalizedRepo) {
         return {
-          cwd: workspacePath,
-          source: "workspace",
-          workspacePath,
+          cwd: stagePath,
+          source: "stage",
+          stagePath,
         };
       }
     }
@@ -184,7 +184,7 @@ export class PRAgentReviewProvider {
     return {
       cwd: this.#homeDir,
       source: "home",
-      workspacePath: null,
+      stagePath: null,
     };
   }
 
@@ -194,16 +194,16 @@ export class PRAgentReviewProvider {
     headSha: string;
     outputFilePath: string;
     cwdSource: CwdSource;
-    workspacePath?: string | null;
+    stagePath?: string | null;
   }): string {
     return buildAgentReviewPrompt(params);
   }
 
-  async #resolveWorkspaceRepo(workspacePath: string): Promise<string | null> {
+  async #resolveStageRepo(stagePath: string): Promise<string | null> {
     const commandResult = await this.#runCommand(
       "git",
       ["config", "--get", "remote.origin.url"],
-      workspacePath
+      stagePath
     );
 
     if (commandResult.exitCode !== 0) {
@@ -225,14 +225,14 @@ export function buildAgentReviewPrompt(params: {
   headSha: string;
   outputFilePath: string;
   cwdSource: CwdSource;
-  workspacePath?: string | null;
+  stagePath?: string | null;
 }): string {
   const repo = String(params.repo ?? "").trim();
   const number = Math.max(1, Math.trunc(params.number));
   const headSha = String(params.headSha ?? "").trim();
   const outputFilePath = String(params.outputFilePath ?? "").trim();
-  const cwdSource = params.cwdSource === "workspace" ? "workspace" : "home";
-  const workspacePath = String(params.workspacePath ?? "").trim();
+  const cwdSource = params.cwdSource === "stage" ? "stage" : "home";
+  const stagePath = String(params.stagePath ?? "").trim();
 
   return [
     "Run a comprehensive pull request review and produce STRICT JSON output.",
@@ -292,9 +292,9 @@ export function buildAgentReviewPrompt(params: {
     "- If no suggestions, return an empty array.",
     "- Use GitHub CLI with `-R <owner/repo>` when not in the repository directory.",
     "",
-    cwdSource === "workspace"
-      ? `Execution context: local workspace available at ${workspacePath}`
-      : "Execution context: no local workspace match found; use gh with -R for repository-scoped commands.",
+    cwdSource === "stage"
+      ? `Execution context: local stage available at ${stagePath}`
+      : "Execution context: no local stage match found; use gh with -R for repository-scoped commands.",
   ].join("\n");
 }
 

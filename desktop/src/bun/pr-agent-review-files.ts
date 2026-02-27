@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const AGENT_REVIEW_BASE_DIR = join(homedir(), ".claude-sessions");
+export const AGENT_REVIEW_BASE_DIR = join(homedir(), ".tango");
 export const AGENT_REVIEW_FILE_EXTENSION = ".json";
 export const AGENT_REVIEW_LEGACY_FILE_EXTENSION = ".md";
 export const AGENT_REVIEW_PLACEHOLDER_KEY = "__claudex_agent_review_placeholder";

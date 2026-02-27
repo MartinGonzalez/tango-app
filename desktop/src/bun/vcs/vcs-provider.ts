@@ -19,7 +19,7 @@ const strategyInstances: Record<VcsKind, VcsStrategy> = {
 };
 
 /**
- * Get the VCS strategy for a workspace, with per-cwd caching.
+ * Get the VCS strategy for a stage, with per-cwd caching.
  * Cache expires after 30s to handle branch switches / VCS init.
  */
 export async function getVcsStrategy(cwd: string): Promise<VcsStrategy> {
@@ -38,7 +38,7 @@ export async function getVcsStrategy(cwd: string): Promise<VcsStrategy> {
 }
 
 /**
- * Get VCS info (kind + branch name) for a workspace.
+ * Get VCS info (kind + branch name) for a stage.
  */
 export async function getVcsInfo(cwd: string): Promise<VcsInfo> {
   const strategy = await getVcsStrategy(cwd);
@@ -47,8 +47,8 @@ export async function getVcsInfo(cwd: string): Promise<VcsInfo> {
 }
 
 /**
- * Invalidate the cached VCS strategy for a workspace.
- * Call when a workspace is removed or VCS state may have changed.
+ * Invalidate the cached VCS strategy for a stage.
+ * Call when a stage is removed or VCS state may have changed.
  */
 export function invalidateVcsCache(cwd: string): void {
   cache.delete(cwd);

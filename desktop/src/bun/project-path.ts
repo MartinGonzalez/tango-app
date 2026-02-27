@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 
 /**
- * Claude stores workspace transcript directories by replacing path separators
+ * Claude stores stage transcript directories by replacing path separators
  * and punctuation with "-".
  */
 export function encodeClaudeProjectPath(cwd: string): string {
@@ -17,10 +17,10 @@ export function encodeClaudeProjectPathLegacy(cwd: string): string {
 }
 
 /**
- * Return both the original workspace path and its canonical realpath
+ * Return both the original stage path and its canonical realpath
  * (when available) so transcript lookup works across symlinks (/var -> /private/var).
  */
-export async function getWorkspacePathVariants(cwd: string): Promise<string[]> {
+export async function getStagePathVariants(cwd: string): Promise<string[]> {
   const normalized = String(cwd ?? "").trim();
   const variants = new Set<string>();
   if (!normalized) return [];
@@ -30,13 +30,13 @@ export async function getWorkspacePathVariants(cwd: string): Promise<string[]> {
     const resolved = await realpath(normalized);
     if (resolved) variants.add(resolved);
   } catch {
-    // Ignore non-existent workspaces or resolution failures.
+    // Ignore non-existent stages or resolution failures.
   }
 
   return Array.from(variants);
 }
 
-export function getWorkspacePathVariantsSync(cwd: string): string[] {
+export function getStagePathVariantsSync(cwd: string): string[] {
   const normalized = String(cwd ?? "").trim();
   const variants = new Set<string>();
   if (!normalized) return [];
@@ -46,7 +46,7 @@ export function getWorkspacePathVariantsSync(cwd: string): string[] {
     const resolved = realpathSync(normalized);
     if (resolved) variants.add(resolved);
   } catch {
-    // Ignore non-existent workspaces or resolution failures.
+    // Ignore non-existent stages or resolution failures.
   }
 
   return Array.from(variants);

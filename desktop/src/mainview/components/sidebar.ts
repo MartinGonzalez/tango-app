@@ -16,7 +16,7 @@ function materialIcon(name: string): HTMLElement {
   }, [name]);
 }
 
-export type WorkspaceData = {
+export type StageData = {
   path: string;
   name: string;
   branch: string | null;
@@ -26,12 +26,12 @@ export type WorkspaceData = {
 };
 
 export type SidebarCallbacks = {
-  onSelectSession: (sessionId: string, workspacePath: string) => void;
-  onNewSession: (workspacePath: string) => void;
-  onAddWorkspace: () => void;
-  onRemoveWorkspace: (path: string) => void;
-  onDeleteSession: (sessionId: string, workspacePath: string) => void;
-  onToggleWorkspace: (path: string) => void;
+  onSelectSession: (sessionId: string, stagePath: string) => void;
+  onNewSession: (stagePath: string) => void;
+  onAddStage: () => void;
+  onRemoveStage: (path: string) => void;
+  onDeleteSession: (sessionId: string, stagePath: string) => void;
+  onToggleStage: (path: string) => void;
   onRenameSession: (sessionId: string, newName: string) => void;
 };
 
@@ -42,7 +42,7 @@ export class Sidebar {
   #activeSessionId: string | null = null;
   #openMenuSessionId: string | null = null;
   #renamingSessionId: string | null = null;
-  #removeWorkspaceConfirmOpen = false;
+  #removeStageConfirmOpen = false;
   #animatingPath: string | null = null;
 
   constructor(container: HTMLElement, callbacks: SidebarCallbacks) {
@@ -50,12 +50,12 @@ export class Sidebar {
 
     const header = h("div", { class: "ws-header" }, [
       h("span", { class: "ws-header-title" }, [
-        h("span", { class: "ws-header-title-text" }, ["Workspaces"]),
+        h("span", { class: "ws-header-title-text" }, ["Stages"]),
       ]),
       h("button", {
         class: "ws-add-btn",
-        onclick: () => callbacks.onAddWorkspace(),
-        title: "Add workspace",
+        onclick: () => callbacks.onAddStage(),
+        title: "Add stage",
       }, [materialIcon("add")]),
     ]);
 
@@ -79,32 +79,32 @@ export class Sidebar {
     }
   }
 
-  render(workspaces: WorkspaceData[]): void {
+  render(stages: StageData[]): void {
     // Don't re-render if a rename or menu is open (preserves UI state)
     if (this.#renamingSessionId || this.#openMenuSessionId) return;
 
     clearChildren(this.#listEl);
 
-    if (workspaces.length === 0) {
+    if (stages.length === 0) {
       this.#listEl.appendChild(
         h("div", { class: "ws-empty" }, [
-          h("div", { class: "ws-empty-text" }, ["No workspaces"]),
+          h("div", { class: "ws-empty-text" }, ["No stages"]),
           h("button", {
             class: "ws-empty-btn",
-            onclick: () => this.#callbacks.onAddWorkspace(),
-          }, ["Open Workspace"]),
+            onclick: () => this.#callbacks.onAddStage(),
+          }, ["Open Stage"]),
         ])
       );
       return;
     }
 
-    for (const ws of workspaces) {
-      this.#listEl.appendChild(this.#renderWorkspace(ws));
+    for (const ws of stages) {
+      this.#listEl.appendChild(this.#renderStage(ws));
     }
     this.#animatingPath = null;
   }
 
-  #renderWorkspace(ws: WorkspaceData): HTMLElement {
+  #renderStage(ws: StageData): HTMLElement {
     const activeCount = ws.sessions.filter(
       (s) => s.activity === "working" || s.activity === "waiting_for_input"
     ).length;
@@ -120,13 +120,13 @@ export class Sidebar {
         tabindex: "0",
         onclick: () => {
           this.#animatingPath = ws.path;
-          this.#callbacks.onToggleWorkspace(ws.path);
+          this.#callbacks.onToggleStage(ws.path);
         },
         onkeydown: (event: KeyboardEvent) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
           this.#animatingPath = ws.path;
-          this.#callbacks.onToggleWorkspace(ws.path);
+          this.#callbacks.onToggleStage(ws.path);
         },
       },
       [
@@ -151,11 +151,11 @@ export class Sidebar {
         class: "ws-action-btn ws-action-remove",
         onclick: async (e: Event) => {
           e.stopPropagation();
-          const confirmed = await this.#confirmWorkspaceRemoval(ws.name);
+          const confirmed = await this.#confirmStageRemoval(ws.name);
           if (!confirmed) return;
-          this.#callbacks.onRemoveWorkspace(ws.path);
+          this.#callbacks.onRemoveStage(ws.path);
         },
-        title: "Remove workspace",
+        title: "Remove stage",
       }, [materialIcon("delete")]),
     ]);
 
@@ -200,7 +200,7 @@ export class Sidebar {
     return folder;
   }
 
-  #renderSession(session: SessionInfo, workspacePath: string): HTMLElement {
+  #renderSession(session: SessionInfo, stagePath: string): HTMLElement {
     const dot = ACTIVITY_DOTS[session.activity] ?? ACTIVITY_DOTS.idle;
     const label = formatSessionLabel(session.topic, session.prompt);
     const isActive = session.sessionId === this.#activeSessionId;
@@ -221,7 +221,7 @@ export class Sidebar {
           if ((e.target as HTMLElement).closest(".ws-session-menu-btn, .ws-session-menu")) {
             return;
           }
-          this.#callbacks.onSelectSession(session.sessionId, workspacePath);
+          this.#callbacks.onSelectSession(session.sessionId, stagePath);
         },
       },
       [
@@ -234,7 +234,7 @@ export class Sidebar {
           class: "ws-session-menu-btn",
           onclick: (e: Event) => {
             e.stopPropagation();
-            this.#toggleSessionMenu(session.sessionId, sessionItem, workspacePath);
+            this.#toggleSessionMenu(session.sessionId, sessionItem, stagePath);
           },
           title: "Session options",
         }, [menuDotsIcon()]),
@@ -244,7 +244,7 @@ export class Sidebar {
     return sessionItem;
   }
 
-  #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement, workspacePath: string): void {
+  #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement, stagePath: string): void {
     // Close any open menu
     const existingMenu = this.#el.querySelector(".ws-session-menu");
     if (existingMenu) {
@@ -269,7 +269,7 @@ export class Sidebar {
       h("button", {
         class: "ws-session-menu-item ws-session-menu-item-danger",
         onclick: () => {
-          this.#callbacks.onDeleteSession(sessionId, workspacePath);
+          this.#callbacks.onDeleteSession(sessionId, stagePath);
           menu.remove();
           this.#openMenuSessionId = null;
         },
@@ -341,9 +341,9 @@ export class Sidebar {
     return this.#el;
   }
 
-  async #confirmWorkspaceRemoval(workspaceName: string): Promise<boolean> {
-    if (this.#removeWorkspaceConfirmOpen) return false;
-    this.#removeWorkspaceConfirmOpen = true;
+  async #confirmStageRemoval(stageName: string): Promise<boolean> {
+    if (this.#removeStageConfirmOpen) return false;
+    this.#removeStageConfirmOpen = true;
 
     return await new Promise<boolean>((resolve) => {
       const titleId = "ws-remove-confirm-title";
@@ -363,9 +363,9 @@ export class Sidebar {
         "aria-modal": "true",
         "aria-labelledby": titleId,
       }, [
-        h("div", { class: "ws-confirm-title", id: titleId }, ["Remove workspace"]),
+        h("div", { class: "ws-confirm-title", id: titleId }, ["Remove stage"]),
         h("div", { class: "ws-confirm-text" }, [
-          `Remove "${workspaceName}" from the workspace list?`,
+          `Remove "${stageName}" from the stage list?`,
         ]),
         h("div", { class: "ws-confirm-actions" }, [cancelBtn, removeBtn]),
       ]);
@@ -376,7 +376,7 @@ export class Sidebar {
         settled = true;
         overlay.remove();
         document.removeEventListener("keydown", onKeyDown, true);
-        this.#removeWorkspaceConfirmOpen = false;
+        this.#removeStageConfirmOpen = false;
         resolve(result);
       };
 

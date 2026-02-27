@@ -42,7 +42,7 @@ export class PRsSidebar {
     const header = h("div", { class: "prs-sidebar-header" }, [
       h("button", {
         class: "prs-sidebar-back-btn",
-        title: "Back to workspaces",
+        title: "Back to stages",
         onclick: () => this.#callbacks.onBack(),
       }, ["\u2190"]),
       h("span", { class: "prs-sidebar-title" }, ["PRs"]),

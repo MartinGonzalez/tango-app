@@ -14,7 +14,7 @@ import type {
   TaskSourceKind,
 } from "../shared/types.ts";
 
-const DEFAULT_DB_PATH = join(homedir(), ".claude-sessions", "tasks.db");
+const DEFAULT_DB_PATH = join(homedir(), ".tango", "tasks.db");
 const CURRENT_SCHEMA_VERSION = 1;
 
 type TaskUpdateFields = {
@@ -50,7 +50,7 @@ type TaskRunUpdateFields = {
 
 type TaskRow = {
   id: string;
-  workspace_path: string;
+  stage_path: string;
   title: string;
   notes_md: string;
   plan_md: string | null;
@@ -100,12 +100,12 @@ export class TasksStore {
     this.#db.close(false);
   }
 
-  listWorkspaceTasks(workspacePath: string): TaskCardSummary[] {
+  listStageTasks(stagePath: string): TaskCardSummary[] {
     const rows = this.#db.query(
       `
       SELECT
         id,
-        workspace_path,
+        stage_path,
         title,
         status,
         updated_at,
@@ -115,12 +115,12 @@ export class TasksStore {
           ELSE 1
         END AS has_plan
       FROM tasks
-      WHERE workspace_path = ?
+      WHERE stage_path = ?
       ORDER BY updated_at DESC
       `
-    ).all(workspacePath) as Array<{
+    ).all(stagePath) as Array<{
       id: string;
-      workspace_path: string;
+      stage_path: string;
       title: string;
       status: string;
       updated_at: string;
@@ -129,7 +129,7 @@ export class TasksStore {
 
     return rows.map((row) => ({
       id: row.id,
-      workspacePath: row.workspace_path,
+      stagePath: row.stage_path,
       title: row.title,
       status: normalizeTaskStatus(row.status),
       updatedAt: row.updated_at,
@@ -142,7 +142,7 @@ export class TasksStore {
       `
       SELECT
         id,
-        workspace_path,
+        stage_path,
         title,
         notes_md,
         plan_md,
@@ -197,7 +197,7 @@ export class TasksStore {
 
     return {
       id: taskRow.id,
-      workspacePath: taskRow.workspace_path,
+      stagePath: taskRow.stage_path,
       title: taskRow.title,
       notes: taskRow.notes_md,
       planMarkdown: taskRow.plan_md,
@@ -209,15 +209,15 @@ export class TasksStore {
     };
   }
 
-  getTaskWorkspacePath(taskId: string): string | null {
-    const row = this.#db.query("SELECT workspace_path FROM tasks WHERE id = ?").get(taskId) as {
-      workspace_path: string;
+  getTaskStagePath(taskId: string): string | null {
+    const row = this.#db.query("SELECT stage_path FROM tasks WHERE id = ?").get(taskId) as {
+      stage_path: string;
     } | null;
-    return row?.workspace_path ?? null;
+    return row?.stage_path ?? null;
   }
 
   createTask(
-    workspacePath: string,
+    stagePath: string,
     title: string,
     notesMd: string
   ): TaskCardDetail {
@@ -228,7 +228,7 @@ export class TasksStore {
       `
       INSERT INTO tasks (
         id,
-        workspace_path,
+        stage_path,
         title,
         notes_md,
         plan_md,
@@ -242,7 +242,7 @@ export class TasksStore {
         version
       ) VALUES (?, ?, ?, ?, NULL, 'todo', ?, ?, NULL, NULL, NULL, NULL, 1)
       `
-    ).run(id, workspacePath, title, notesMd, now, now);
+    ).run(id, stagePath, title, notesMd, now, now);
 
     const detail = this.getTaskDetail(id);
     if (!detail) {
@@ -654,7 +654,7 @@ export class TasksStore {
         this.#db.exec(`
           CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY,
-            workspace_path TEXT NOT NULL,
+            stage_path TEXT NOT NULL,
             title TEXT NOT NULL,
             notes_md TEXT NOT NULL DEFAULT '',
             plan_md TEXT,
@@ -710,8 +710,8 @@ export class TasksStore {
             FOREIGN KEY (run_id) REFERENCES task_runs(id) ON DELETE SET NULL
           );
 
-          CREATE INDEX IF NOT EXISTS idx_tasks_workspace_updated
-            ON tasks(workspace_path, updated_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_tasks_stage_updated
+            ON tasks(stage_path, updated_at DESC);
 
           CREATE INDEX IF NOT EXISTS idx_task_sources_task_updated
             ON task_sources(task_id, updated_at DESC);

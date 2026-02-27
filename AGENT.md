@@ -1,6 +1,6 @@
-# Claude Watcher — Agent Documentation
+# Tango — Agent Documentation
 
-This document provides technical details for AI agents working on the claude-watcher codebase.
+This document provides technical details for AI agents working on the Tango codebase.
 
 ## Architecture Overview
 
@@ -14,10 +14,10 @@ This document provides technical details for AI agents working on the claude-wat
 │  │  ├─ diff-provider.ts        Git diff + snapshot diff    │
 │  │  ├─ transcript-reader.ts    Parses .jsonl transcripts   │
 │  │  ├─ session-history.ts      Reads ~/.claude/projects/   │
-│  │  ├─ workspace-store.ts      Persists workspaces         │
+│  │  ├─ stage-store.ts           Persists stages              │
 │  │  └─ session-names-store.ts  Custom session names        │
 │  └─ WebView (Native WebKit)                                │
-│     ├─ sidebar.ts               Workspace/session list     │
+│     ├─ sidebar.ts               Stage/session list          │
 │     ├─ chat-view.ts             Chat UI + tool approvals   │
 │     ├─ diff-view.ts             Diff viewer                │
 │     └─ files-panel.ts           Changed files list         │
@@ -86,7 +86,7 @@ Snapshot structure:
 #### diff-provider.ts
 Two modes:
 1. **Git mode**: Runs `git diff HEAD`, parses unified diff
-2. **Snapshot mode**: For non-git workspaces, captures file state before session starts, then compares with LCS algorithm
+2. **Snapshot mode**: For non-git stages, captures file state before session starts, then compares with LCS algorithm
 
 #### transcript-reader.ts
 Parses `.jsonl` transcript files from `~/.claude/projects/`.
@@ -103,17 +103,17 @@ Path encoding: `/Users/foo/bar` → `-Users-foo-bar`
 
 Returns metadata: sessionId, prompt, topic, cwd, model, timestamps, transcriptPath
 
-#### workspace-store.ts
-Persists recent workspaces to `~/.claude-sessions/workspaces.json`
+#### stage-store.ts
+Persists recent stages to `~/.tango/stages.json`
 
 #### session-names-store.ts
-Persists custom session names to `~/.claude-sessions/session-names.json`
+Persists custom session names to `~/.tango/session-names.json`
 
 Format: `{ "session-id-uuid": "My Custom Name" }`
 
 #### hook-installer.ts
 Auto-installs the PreToolUse hook on startup:
-1. Writes hook script to `~/.claude-sessions/hooks/pre-tool-use.sh`
+1. Writes hook script to `~/.tango/hooks/pre-tool-use.sh`
 2. Adds entry to `~/.claude/settings.json` under `hooks.PreToolUse`
 
 Hook logic:
@@ -129,8 +129,8 @@ Hook logic:
 #### Components
 
 **sidebar.ts**
-- Renders workspaces and sessions
-- Supports expand/collapse workspaces
+- Renders stages and sessions
+- Supports expand/collapse stages
 - 3-dot menu for session rename
 - Activity indicators (working, waiting, idle, finished)
 - Blocks re-render while rename input is active
@@ -165,11 +165,11 @@ Event handling:
 ```typescript
 {
   snapshot: Snapshot | null;
-  workspaces: string[];
-  expandedWorkspaces: Set<string>;
-  activeWorkspace: string | null;
+  stages: string[];
+  expandedStages: Set<string>;
+  activeStage: string | null;
   activeSessionId: string | null;
-  historySessions: Record<string, HistorySession[]>;
+  historySessions: Record<string, HistorySession[]>; // keyed by stage path
   liveSessions: Set<string>; // IDs with running processes
   customSessionNames: Record<string, string>;
 }
@@ -207,9 +207,9 @@ Event handling:
 2. Inline input appears, sidebar blocks re-render
 3. User types new name + Enter
 4. `onRenameSession(sessionId, newName)` → `renameSession` RPC
-5. Backend saves to `~/.claude-sessions/session-names.json`
+5. Backend saves to `~/.tango/session-names.json`
 6. Webview updates `customSessionNames` state
-7. `buildWorkspaceData()` applies custom name over topic
+7. `buildStageData()` applies custom name over topic
 8. Sidebar re-renders with new name
 
 ## File Locations
@@ -217,10 +217,10 @@ Event handling:
 ### Config/Data
 - `~/.claude/settings.json` - Claude Code settings, hooks config
 - `~/.claude/projects/<encoded-path>/<session-id>.jsonl` - Transcripts
-- `~/.claude-sessions/hooks/pre-tool-use.sh` - Tool approval hook
-- `~/.claude-sessions/workspaces.json` - Recent workspaces
-- `~/.claude-sessions/session-names.json` - Custom session names
-- `~/.claude-sessions/snapshots/<cwd-hash>/` - Non-git workspace snapshots
+- `~/.tango/hooks/pre-tool-use.sh` - Tool approval hook
+- `~/.tango/stages.json` - Recent stages
+- `~/.tango/session-names.json` - Custom session names
+- `~/.tango/snapshots/<cwd-hash>/` - Non-git stage snapshots
 
 ### Source
 - `desktop/src/bun/` - Main process (Bun)

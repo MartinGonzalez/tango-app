@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { ConnectorsRepository } from "../src/bun/connectors-repository.ts";
-import type { ConnectorProvider, WorkspaceConnector } from "../src/shared/types.ts";
-import type { WorkspaceConnectorRecord } from "../src/bun/connectors-store.ts";
+import type { ConnectorProvider, StageConnector } from "../src/shared/types.ts";
+import type { StageConnectorRecord } from "../src/bun/connectors-store.ts";
 
-const SLACK_KEYCHAIN_SERVICE = "dev.claude-sessions.app.connectors.slack";
-const JIRA_KEYCHAIN_SERVICE = "dev.claude-sessions.app.connectors.jira";
+const SLACK_KEYCHAIN_SERVICE = "dev.tango.app.connectors.slack";
+const JIRA_KEYCHAIN_SERVICE = "dev.tango.app.connectors.jira";
 
 describe("ConnectorsRepository", () => {
   test("starts auth session and completes Slack OAuth callback", async () => {
@@ -54,15 +54,15 @@ describe("ConnectorsRepository", () => {
     const status = await repo.getConnectorAuthStatus(auth.id);
     expect(status.status).toBe("completed");
 
-    const connectors = await repo.listWorkspaceConnectors("/repo/a");
+    const connectors = await repo.listStageConnectors("/repo/a");
     expect(connectors).toHaveLength(2);
     const slack = connectors.find((entry) => entry.provider === "slack");
     expect(slack?.status).toBe("connected");
     const jira = connectors.find((entry) => entry.provider === "jira");
     expect(jira?.status).toBe("disconnected");
-    const stored = store.getWorkspaceConnectorRecord("/repo/a", "slack");
+    const stored = store.getStageConnectorRecord("/repo/a", "slack");
     expect(stored).not.toBeNull();
-    expect(stored?.keychainAccount).toMatch(/^workspace:[a-f0-9]{64}$/);
+    expect(stored?.keychainAccount).toMatch(/^stage:[a-f0-9]{64}$/);
 
     const token = await repo.getSlackAccessToken("/repo/a");
     expect(token).toBe("xoxp-access");
@@ -129,19 +129,19 @@ describe("ConnectorsRepository", () => {
       }),
     });
 
-    store.upsertWorkspaceConnector({
-      workspacePath: "/repo/a",
+    store.upsertStageConnector({
+      stagePath: "/repo/a",
       provider: "slack",
       status: "connected",
-      externalWorkspaceId: "T1",
-      externalWorkspaceName: "Acme",
+      externalStageId: "T1",
+      externalStageName: "Acme",
       externalUserId: "U1",
       scopes: ["channels:history"],
       tokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
       lastError: null,
-      keychainAccount: "workspace:test",
+      keychainAccount: "stage:test",
     });
-    await keychain.setSecret(SLACK_KEYCHAIN_SERVICE, "workspace:test", JSON.stringify({
+    await keychain.setSecret(SLACK_KEYCHAIN_SERVICE, "stage:test", JSON.stringify({
       accessToken: "xoxp-old",
       refreshToken: "xoxe-refresh",
       expiresAt: new Date(Date.now() - 1_000).toISOString(),
@@ -154,7 +154,7 @@ describe("ConnectorsRepository", () => {
 
     const accessToken = await repo.getSlackAccessToken("/repo/a");
     expect(accessToken).toBe("xoxp-fresh");
-    const connectors = await repo.listWorkspaceConnectors("/repo/a");
+    const connectors = await repo.listStageConnectors("/repo/a");
     const slack = connectors.find((entry) => entry.provider === "slack");
     expect(slack?.status).toBe("connected");
     expect(slack?.lastError).toBeNull();
@@ -175,19 +175,19 @@ describe("ConnectorsRepository", () => {
       }),
     });
 
-    store.upsertWorkspaceConnector({
-      workspacePath: "/repo/a",
+    store.upsertStageConnector({
+      stagePath: "/repo/a",
       provider: "slack",
       status: "connected",
-      externalWorkspaceId: "T1",
-      externalWorkspaceName: "Acme",
+      externalStageId: "T1",
+      externalStageName: "Acme",
       externalUserId: "U1",
       scopes: ["channels:history"],
       tokenExpiresAt: new Date(Date.now() - 1_000).toISOString(),
       lastError: null,
-      keychainAccount: "workspace:test",
+      keychainAccount: "stage:test",
     });
-    await keychain.setSecret(SLACK_KEYCHAIN_SERVICE, "workspace:test", JSON.stringify({
+    await keychain.setSecret(SLACK_KEYCHAIN_SERVICE, "stage:test", JSON.stringify({
       accessToken: "xoxp-old",
       refreshToken: "xoxe-refresh",
       expiresAt: new Date(Date.now() - 1_000).toISOString(),
@@ -202,7 +202,7 @@ describe("ConnectorsRepository", () => {
       "Connect Slack in Connectors to fetch this source"
     );
 
-    const connectors = await repo.listWorkspaceConnectors("/repo/a");
+    const connectors = await repo.listStageConnectors("/repo/a");
     const slack = connectors.find((entry) => entry.provider === "slack");
     expect(slack?.status).toBe("error");
     expect(slack?.lastError).toContain("invalid_auth");
@@ -262,12 +262,12 @@ describe("ConnectorsRepository", () => {
     const status = await repo.getConnectorAuthStatus(auth.id);
     expect(status.status).toBe("completed");
 
-    const connectors = await repo.listWorkspaceConnectors("/repo/a");
+    const connectors = await repo.listStageConnectors("/repo/a");
     const jira = connectors.find((entry) => entry.provider === "jira");
     expect(jira?.status).toBe("connected");
-    expect(jira?.externalWorkspaceId).toBe("cloud-1");
+    expect(jira?.externalStageId).toBe("cloud-1");
 
-    const stored = store.getWorkspaceConnectorRecord("/repo/a", "jira");
+    const stored = store.getStageConnectorRecord("/repo/a", "jira");
     expect(stored).not.toBeNull();
     const secret = await keychain.getSecret(
       JIRA_KEYCHAIN_SERVICE,
@@ -278,17 +278,17 @@ describe("ConnectorsRepository", () => {
 });
 
 class MemoryConnectorsStore {
-  #records = new Map<string, WorkspaceConnectorRecord>();
+  #records = new Map<string, StageConnectorRecord>();
 
   close(): void {}
 
-  listWorkspaceConnectors(workspacePath: string): WorkspaceConnector[] {
-    return this.listWorkspaceConnectorRecords(workspacePath).map((record) => ({
-      workspacePath: record.workspacePath,
+  listStageConnectors(stagePath: string): StageConnector[] {
+    return this.listStageConnectorRecords(stagePath).map((record) => ({
+      stagePath: record.stagePath,
       provider: record.provider,
       status: record.status,
-      externalWorkspaceId: record.externalWorkspaceId,
-      externalWorkspaceName: record.externalWorkspaceName,
+      externalStageId: record.externalStageId,
+      externalStageName: record.externalStageName,
       externalUserId: record.externalUserId,
       scopes: [...record.scopes],
       tokenExpiresAt: record.tokenExpiresAt,
@@ -297,43 +297,43 @@ class MemoryConnectorsStore {
     }));
   }
 
-  listWorkspaceConnectorRecords(workspacePath: string): WorkspaceConnectorRecord[] {
-    const entries: WorkspaceConnectorRecord[] = [];
+  listStageConnectorRecords(stagePath: string): StageConnectorRecord[] {
+    const entries: StageConnectorRecord[] = [];
     for (const record of this.#records.values()) {
-      if (record.workspacePath !== workspacePath) continue;
+      if (record.stagePath !== stagePath) continue;
       entries.push({ ...record, scopes: [...record.scopes] });
     }
     return entries;
   }
 
-  getWorkspaceConnectorRecord(
-    workspacePath: string,
+  getStageConnectorRecord(
+    stagePath: string,
     provider: ConnectorProvider
-  ): WorkspaceConnectorRecord | null {
-    return this.#records.get(makeKey(workspacePath, provider)) ?? null;
+  ): StageConnectorRecord | null {
+    return this.#records.get(makeKey(stagePath, provider)) ?? null;
   }
 
-  upsertWorkspaceConnector(input: {
-    workspacePath: string;
+  upsertStageConnector(input: {
+    stagePath: string;
     provider: ConnectorProvider;
     status: "connected" | "disconnected" | "error";
-    externalWorkspaceId?: string | null;
-    externalWorkspaceName?: string | null;
+    externalStageId?: string | null;
+    externalStageName?: string | null;
     externalUserId?: string | null;
     scopes?: string[];
     tokenExpiresAt?: string | null;
     lastError?: string | null;
     keychainAccount?: string | null;
-  }): WorkspaceConnectorRecord {
-    const key = makeKey(input.workspacePath, input.provider);
+  }): StageConnectorRecord {
+    const key = makeKey(input.stagePath, input.provider);
     const existing = this.#records.get(key);
     const now = new Date().toISOString();
-    const next: WorkspaceConnectorRecord = {
-      workspacePath: input.workspacePath,
+    const next: StageConnectorRecord = {
+      stagePath: input.stagePath,
       provider: input.provider,
       status: input.status,
-      externalWorkspaceId: input.externalWorkspaceId ?? existing?.externalWorkspaceId ?? null,
-      externalWorkspaceName: input.externalWorkspaceName ?? existing?.externalWorkspaceName ?? null,
+      externalStageId: input.externalStageId ?? existing?.externalStageId ?? null,
+      externalStageName: input.externalStageName ?? existing?.externalStageName ?? null,
       externalUserId: input.externalUserId ?? existing?.externalUserId ?? null,
       scopes: [...(input.scopes ?? existing?.scopes ?? [])],
       tokenExpiresAt: input.tokenExpiresAt ?? existing?.tokenExpiresAt ?? null,
@@ -346,8 +346,8 @@ class MemoryConnectorsStore {
     return next;
   }
 
-  deleteWorkspaceConnector(workspacePath: string, provider: ConnectorProvider): void {
-    this.#records.delete(makeKey(workspacePath, provider));
+  deleteStageConnector(stagePath: string, provider: ConnectorProvider): void {
+    this.#records.delete(makeKey(stagePath, provider));
   }
 }
 

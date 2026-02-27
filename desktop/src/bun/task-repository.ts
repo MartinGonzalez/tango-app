@@ -18,8 +18,8 @@ import {
 import type { JiraAuthContext } from "./connectors-repository.ts";
 
 type ConnectorsAccess = {
-  getSlackAccessToken: (workspacePath: string) => Promise<string>;
-  getJiraAuthContext: (workspacePath: string) => Promise<JiraAuthContext>;
+  getSlackAccessToken: (stagePath: string) => Promise<string>;
+  getJiraAuthContext: (stagePath: string) => Promise<JiraAuthContext>;
 };
 
 type UpdateTaskPatch = {
@@ -38,7 +38,7 @@ type UpdateTaskSourcePatch = {
 export type PreparedTaskRun = {
   run: TaskRun;
   task: TaskCardDetail;
-  workspacePath: string;
+  stagePath: string;
   prompt: string;
 };
 
@@ -55,18 +55,18 @@ export class TaskRepository {
     this.#store.close();
   }
 
-  listWorkspaceTasks(workspacePath: string): TaskCardSummary[] {
-    return this.#store.listWorkspaceTasks(workspacePath);
+  listStageTasks(stagePath: string): TaskCardSummary[] {
+    return this.#store.listStageTasks(stagePath);
   }
 
   getTaskDetail(taskId: string): TaskCardDetail | null {
     return this.#store.getTaskDetail(taskId);
   }
 
-  createTask(workspacePath: string, title?: string, notes?: string): TaskCardDetail {
+  createTask(stagePath: string, title?: string, notes?: string): TaskCardDetail {
     const safeTitle = collapseWhitespace(title ?? "") || "Untitled task";
     const safeNotes = String(notes ?? "");
-    return this.#store.createTask(workspacePath, safeTitle, safeNotes);
+    return this.#store.createTask(stagePath, safeTitle, safeNotes);
   }
 
   updateTask(taskId: string, patch: UpdateTaskPatch): TaskCardDetail | null {
@@ -176,7 +176,7 @@ export class TaskRepository {
 
       let accessToken: string;
       try {
-        accessToken = await this.#connectors.getSlackAccessToken(task.workspacePath);
+        accessToken = await this.#connectors.getSlackAccessToken(task.stagePath);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return this.#store.updateTaskSource(sourceId, {
@@ -213,7 +213,7 @@ export class TaskRepository {
 
       let jiraAuth: JiraAuthContext;
       try {
-        jiraAuth = await this.#connectors.getJiraAuthContext(task.workspacePath);
+        jiraAuth = await this.#connectors.getJiraAuthContext(task.stagePath);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return this.#store.updateTaskSource(sourceId, {
@@ -330,7 +330,7 @@ export class TaskRepository {
     return {
       run,
       task: updated,
-      workspacePath: task.workspacePath,
+      stagePath: task.stagePath,
       prompt,
     };
   }

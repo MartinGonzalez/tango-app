@@ -48,7 +48,7 @@ export function connectorsToolIcon(className = "sidebar-primary-icon"): HTMLElem
   }, [materialIcon("link")]);
 }
 
-export function workspaceBranchIcon(className = "vcs-branch-icon"): HTMLElement {
+export function stageBranchIcon(className = "vcs-branch-icon"): HTMLElement {
   return h("span", {
     class: className,
     "aria-hidden": "true",
@@ -60,7 +60,7 @@ export function workspaceBranchIcon(className = "vcs-branch-icon"): HTMLElement 
  */
 export function vcsBranchLabel(branch: string): HTMLElement {
   return h("span", { class: "vcs-branch" }, [
-    workspaceBranchIcon(),
+    stageBranchIcon(),
     h("span", { class: "vcs-branch-text" }, [branch]),
   ]);
 }

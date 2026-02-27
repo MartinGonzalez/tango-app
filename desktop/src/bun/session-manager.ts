@@ -301,7 +301,7 @@ function buildUserMessageContent(
   const absoluteFiles = normalized.map((rel) => join(cwd, rel));
   const fileLines = absoluteFiles.map((abs, index) => {
     const rel = normalized[index];
-    return `- ${abs} (workspace: ${rel})`;
+    return `- ${abs} (stage: ${rel})`;
   });
 
   const attachmentHeader = [

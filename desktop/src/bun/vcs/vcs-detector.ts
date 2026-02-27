@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import type { VcsKind } from "./types.ts";
 
 /**
- * Detect the VCS type for a workspace directory.
+ * Detect the VCS type for a stage directory.
  * Checks .git first (most common), then .svn.
  * Walks up to parent directories to handle subdirectories within a repo.
  */

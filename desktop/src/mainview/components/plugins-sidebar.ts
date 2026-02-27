@@ -33,7 +33,7 @@ export class PluginsSidebar {
     const header = h("div", { class: "plugins-sidebar-header" }, [
       h("button", {
         class: "plugins-sidebar-back-btn",
-        title: "Back to workspaces",
+        title: "Back to stages",
         onclick: () => this.#callbacks.onBack(),
       }, ["\u2190"]),
       h("span", { class: "plugins-sidebar-title" }, ["Plugins"]),

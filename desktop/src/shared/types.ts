@@ -138,7 +138,7 @@ export type VcsInfo = {
   branch: string | null;
 };
 
-export type WorkspaceFileContent = {
+export type StageFileContent = {
   content: string;
   truncated: boolean;
   isBinary: boolean;
@@ -342,7 +342,7 @@ export type TaskRunStatus =
 
 export type TaskCardSummary = {
   id: string;
-  workspacePath: string;
+  stagePath: string;
   title: string;
   status: TaskCardStatus;
   updatedAt: string;
@@ -379,7 +379,7 @@ export type TaskRun = {
 
 export type TaskCardDetail = {
   id: string;
-  workspacePath: string;
+  stagePath: string;
   title: string;
   notes: string;
   planMarkdown: string | null;
@@ -396,12 +396,12 @@ export type ConnectorProvider = "slack" | "jira";
 
 export type ConnectorStatus = "connected" | "disconnected" | "error";
 
-export type WorkspaceConnector = {
-  workspacePath: string;
+export type StageConnector = {
+  stagePath: string;
   provider: ConnectorProvider;
   status: ConnectorStatus;
-  externalWorkspaceId: string | null;
-  externalWorkspaceName: string | null;
+  externalStageId: string | null;
+  externalStageName: string | null;
   externalUserId: string | null;
   scopes: string[];
   tokenExpiresAt: string | null;
@@ -417,7 +417,7 @@ export type ConnectorAuthSessionStatus =
 
 export type ConnectorAuthSession = {
   id: string;
-  workspacePath: string;
+  stagePath: string;
   provider: ConnectorProvider;
   status: ConnectorAuthSessionStatus;
   authorizeUrl: string | null;
@@ -707,7 +707,7 @@ export type AppRPC = {
         };
         response: CommitExecutionResult;
       };
-      getWorkspaces: {
+      getStages: {
         params: {};
         response: string[];
       };
@@ -715,7 +715,7 @@ export type AppRPC = {
         params: {};
         response: Record<string, string>;
       };
-      getWorkspaceFiles: {
+      getStageFiles: {
         params: { cwd: string };
         response: string[];
       };
@@ -727,8 +727,8 @@ export type AppRPC = {
         params: {};
         response: InstalledPlugin[];
       };
-      getWorkspaceTasks: {
-        params: { workspacePath: string };
+      getStageTasks: {
+        params: { stagePath: string };
         response: TaskCardSummary[];
       };
       getTaskDetail: {
@@ -736,7 +736,7 @@ export type AppRPC = {
         response: TaskCardDetail | null;
       };
       createTask: {
-        params: { workspacePath: string; title?: string; notes?: string };
+        params: { stagePath: string; title?: string; notes?: string };
         response: TaskCardDetail;
       };
       updateTask: {
@@ -791,13 +791,13 @@ export type AppRPC = {
         params: { taskId: string; limit?: number };
         response: TaskRun[];
       };
-      getWorkspaceConnectors: {
-        params: { workspacePath: string };
-        response: WorkspaceConnector[];
+      getStageConnectors: {
+        params: { stagePath: string };
+        response: StageConnector[];
       };
       startConnectorAuth: {
         params: {
-          workspacePath: string;
+          stagePath: string;
           provider: ConnectorProvider;
         };
         response: ConnectorAuthSession;
@@ -806,9 +806,9 @@ export type AppRPC = {
         params: { authSessionId: string };
         response: ConnectorAuthSession;
       };
-      disconnectWorkspaceConnector: {
+      disconnectStageConnector: {
         params: {
-          workspacePath: string;
+          stagePath: string;
           provider: ConnectorProvider;
         };
         response: void;
@@ -901,13 +901,13 @@ export type AppRPC = {
       };
       getFileContent: {
         params: { cwd: string; path: string; maxBytes?: number };
-        response: WorkspaceFileContent;
+        response: StageFileContent;
       };
-      addWorkspace: {
+      addStage: {
         params: { path: string };
         response: void;
       };
-      removeWorkspace: {
+      removeStage: {
         params: { path: string };
         response: void;
       };
@@ -944,7 +944,7 @@ export type AppRPC = {
       };
       toolApproval: ToolApprovalRequest;
       tasksChanged: {
-        workspacePath: string;
+        stagePath: string;
         taskId?: string;
       };
       pullRequestAgentReviewChanged: {

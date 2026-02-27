@@ -11,7 +11,7 @@ export class ConnectorsSidebar {
     const header = h("div", { class: "connectors-sidebar-header" }, [
       h("button", {
         class: "connectors-sidebar-back-btn",
-        title: "Back to workspaces",
+        title: "Back to stages",
         onclick: () => callbacks.onBack(),
       }, ["\u2190"]),
       h("span", { class: "connectors-sidebar-title" }, ["Connectors"]),

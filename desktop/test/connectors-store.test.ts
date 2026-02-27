@@ -19,73 +19,73 @@ afterEach(async () => {
 });
 
 describe("ConnectorsStore", () => {
-  test("upserts and lists workspace connector records", () => {
+  test("upserts and lists stage connector records", () => {
     const store = new ConnectorsStore(dbPath);
 
-    const upserted = store.upsertWorkspaceConnector({
-      workspacePath: "/repo/a",
+    const upserted = store.upsertStageConnector({
+      stagePath: "/repo/a",
       provider: "slack",
       status: "connected",
-      externalWorkspaceId: "T123",
-      externalWorkspaceName: "Acme",
+      externalStageId: "T123",
+      externalStageName: "Acme",
       externalUserId: "U123",
       scopes: ["channels:history", "groups:history"],
       tokenExpiresAt: "2026-03-01T00:00:00.000Z",
       lastError: null,
-      keychainAccount: "workspace:abc",
+      keychainAccount: "stage:abc",
     });
 
     expect(upserted.provider).toBe("slack");
     expect(upserted.status).toBe("connected");
-    expect(upserted.externalWorkspaceId).toBe("T123");
-    expect(upserted.keychainAccount).toBe("workspace:abc");
+    expect(upserted.externalStageId).toBe("T123");
+    expect(upserted.keychainAccount).toBe("stage:abc");
 
-    const listed = store.listWorkspaceConnectors("/repo/a");
+    const listed = store.listStageConnectors("/repo/a");
     expect(listed).toHaveLength(1);
     expect(listed[0].provider).toBe("slack");
     expect(listed[0].status).toBe("connected");
     expect(listed[0].scopes).toEqual(["channels:history", "groups:history"]);
 
-    const jira = store.upsertWorkspaceConnector({
-      workspacePath: "/repo/a",
+    const jira = store.upsertStageConnector({
+      stagePath: "/repo/a",
       provider: "jira",
       status: "connected",
-      externalWorkspaceId: "cloud-123",
-      externalWorkspaceName: "Acme Jira",
+      externalStageId: "cloud-123",
+      externalStageName: "Acme Jira",
       externalUserId: null,
       scopes: ["offline_access", "read:jira-work"],
       tokenExpiresAt: "2026-03-01T00:00:00.000Z",
       lastError: null,
-      keychainAccount: "workspace:abc",
+      keychainAccount: "stage:abc",
     });
     expect(jira.provider).toBe("jira");
-    expect(jira.externalWorkspaceId).toBe("cloud-123");
+    expect(jira.externalStageId).toBe("cloud-123");
 
-    const listedWithJira = store.listWorkspaceConnectors("/repo/a");
+    const listedWithJira = store.listStageConnectors("/repo/a");
     expect(listedWithJira).toHaveLength(2);
     expect(listedWithJira.map((entry) => entry.provider)).toEqual(["jira", "slack"]);
 
-    const updated = store.upsertWorkspaceConnector({
-      workspacePath: "/repo/a",
+    const updated = store.upsertStageConnector({
+      stagePath: "/repo/a",
       provider: "slack",
       status: "error",
-      externalWorkspaceId: "T123",
-      externalWorkspaceName: "Acme",
+      externalStageId: "T123",
+      externalStageName: "Acme",
       externalUserId: "U123",
       scopes: ["channels:history"],
       tokenExpiresAt: null,
       lastError: "token expired",
-      keychainAccount: "workspace:abc",
+      keychainAccount: "stage:abc",
     });
     expect(updated.status).toBe("error");
     expect(updated.lastError).toBe("token expired");
 
-    store.deleteWorkspaceConnector("/repo/a", "slack");
-    expect(store.listWorkspaceConnectors("/repo/a").map((entry) => entry.provider)).toEqual([
+    store.deleteStageConnector("/repo/a", "slack");
+    expect(store.listStageConnectors("/repo/a").map((entry) => entry.provider)).toEqual([
       "jira",
     ]);
-    store.deleteWorkspaceConnector("/repo/a", "jira");
-    expect(store.listWorkspaceConnectors("/repo/a")).toEqual([]);
+    store.deleteStageConnector("/repo/a", "jira");
+    expect(store.listStageConnectors("/repo/a")).toEqual([]);
     store.close();
   });
 });

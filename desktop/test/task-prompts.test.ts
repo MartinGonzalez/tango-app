@@ -4,9 +4,9 @@ import type { TaskCardDetail } from "../src/shared/types.ts";
 
 const SAMPLE_TASK: TaskCardDetail = {
   id: "task-1",
-  workspacePath: "/repo/a",
+  stagePath: "/repo/a",
   title: "Implement tasks sidebar",
-  notes: "Need a sidebar grouped by workspace.",
+  notes: "Need a sidebar grouped by stage.",
   planMarkdown: "1. Add state\n2. Add UI",
   status: "planned",
   sources: [
@@ -51,6 +51,6 @@ describe("task prompts", () => {
     const prompt = buildTaskActionPrompt(SAMPLE_TASK, "execute");
     expect(prompt).toContain("Execute this engineering task");
     expect(prompt).toContain("## Existing Plan");
-    expect(prompt).toContain("Need a sidebar grouped by workspace");
+    expect(prompt).toContain("Need a sidebar grouped by stage");
   });
 });

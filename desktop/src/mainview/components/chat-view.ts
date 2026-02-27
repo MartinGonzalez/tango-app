@@ -60,7 +60,7 @@ export class ChatView {
   #el: HTMLElement;
   #headerEl: HTMLElement;
   #headerTitleEl: HTMLElement;
-  #headerWorkspaceEl: HTMLElement;
+  #headerStageEl: HTMLElement;
   #headerMenuEl: HTMLElement;
   #headerMenuBtnEl: HTMLButtonElement;
   #headerOpenInFinderBtn: HTMLButtonElement;
@@ -92,7 +92,7 @@ export class ChatView {
   #fullAccess: boolean = true;
   #callbacks: ChatCallbacks;
   #isWaiting: boolean = false;
-  #workspacePath: string | null = null;
+  #stagePath: string | null = null;
   #mentionVisible: boolean = false;
   #mentionMode: MentionMode | null = null;
   #mentionSelection: number = 0;
@@ -138,8 +138,8 @@ export class ChatView {
     };
 
     this.#headerTitleEl = h("span", { class: "chat-header-title" }, ["New session"]);
-    this.#headerWorkspaceEl = h("span", {
-      class: "chat-header-workspace",
+    this.#headerStageEl = h("span", {
+      class: "chat-header-stage",
       hidden: true,
     });
     this.#headerOpenInFinderBtn = h(
@@ -149,7 +149,7 @@ export class ChatView {
         class: "chat-header-menu-item",
         onclick: (e: Event) => {
           e.preventDefault();
-          const path = this.#workspacePath;
+          const path = this.#stagePath;
           if (!path) return;
           this.#callbacks.onOpenInFinder?.(path);
           this.#setHeaderMenuOpen(false);
@@ -184,7 +184,7 @@ export class ChatView {
     this.#headerEl = h("div", { class: "chat-header" }, [
       h("div", { class: "chat-header-meta" }, [
         this.#headerTitleEl,
-        this.#headerWorkspaceEl,
+        this.#headerStageEl,
       ]),
       this.#headerMenuEl,
     ]);
@@ -564,21 +564,21 @@ export class ChatView {
     this.#clearSelectedFiles();
   }
 
-  setHeader(sessionTitle: string, workspacePath: string | null): void {
+  setHeader(sessionTitle: string, stagePath: string | null): void {
     const title = sessionTitle.trim() || "New session";
     this.#headerTitleEl.textContent = title;
 
-    this.#workspacePath = workspacePath;
-    if (workspacePath) {
-      const name = basename(workspacePath);
-      this.#headerWorkspaceEl.textContent = name;
-      this.#headerWorkspaceEl.title = workspacePath;
-      this.#headerWorkspaceEl.hidden = false;
+    this.#stagePath = stagePath;
+    if (stagePath) {
+      const name = basename(stagePath);
+      this.#headerStageEl.textContent = name;
+      this.#headerStageEl.title = stagePath;
+      this.#headerStageEl.hidden = false;
       this.#headerOpenInFinderBtn.disabled = false;
     } else {
-      this.#headerWorkspaceEl.textContent = "";
-      this.#headerWorkspaceEl.removeAttribute("title");
-      this.#headerWorkspaceEl.hidden = true;
+      this.#headerStageEl.textContent = "";
+      this.#headerStageEl.removeAttribute("title");
+      this.#headerStageEl.hidden = true;
       this.#headerOpenInFinderBtn.disabled = true;
       this.#setHeaderMenuOpen(false);
     }
@@ -1615,8 +1615,8 @@ function parseAttachedFileLine(line: string): string | null {
   const match = line.match(/^-+\s+(.+?)(?:\s+\(workspace:\s*(.+?)\))?$/);
   if (!match) return null;
 
-  const workspacePath = match[2]?.trim();
-  if (workspacePath) return workspacePath;
+  const parsedPath = match[2]?.trim();
+  if (parsedPath) return parsedPath;
 
   const absolutePath = match[1]?.trim();
   if (!absolutePath) return null;

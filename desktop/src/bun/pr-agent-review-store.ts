@@ -14,7 +14,7 @@ import {
   parseAgentReviewVersionFromFileName,
 } from "./pr-agent-review-files.ts";
 
-const DEFAULT_STORE_PATH = join(homedir(), ".claude-sessions", "pr-agent-reviews.json");
+const DEFAULT_STORE_PATH = join(homedir(), ".tango", "pr-agent-reviews.json");
 
 type StoredAgentReviewMap = Record<string, PullRequestAgentReviewRun[]>;
 

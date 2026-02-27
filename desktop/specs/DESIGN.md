@@ -207,13 +207,13 @@ All secondary sidebars (PRs, Tasks, Plugins, Connectors) share this header:
 - Header padding: `12px 12px 10px`
 - Separated from content by `1px solid var(--border)`
 
-The primary sidebar (Workspaces) has a simpler header with a `10px` uppercase section title.
+The primary sidebar (Stages) has a simpler header with a `10px` uppercase section title.
 
 ---
 
 ## VCS Branch Label (shared component)
 
-Reusable inline component for displaying a VCS branch name with icon. Used in Workspaces sidebar group headers, Tasks sidebar group headers, and anywhere a branch name is shown.
+Reusable inline component for displaying a VCS branch name with icon. Used in Stages sidebar group headers, Tasks sidebar group headers, and anywhere a branch name is shown.
 
 ### Structure
 
@@ -266,4 +266,4 @@ vcsBranchLabel(branch ?? "No branch");
 
 - `gap: 0` + `width: 14px; overflow: hidden` on the icon eliminates the built-in glyph padding from Material Symbols, keeping icon and text flush.
 - Supports Git, SVN, and any future VCS — the label is VCS-agnostic.
-- The `workspaceBranchIcon()` function (in `icons.ts`) can still be used standalone with a custom class for non-label contexts (e.g. diff-view toolbar button).
+- The `stageBranchIcon()` function (in `icons.ts`) can still be used standalone with a custom class for non-label contexts (e.g. diff-view toolbar button).

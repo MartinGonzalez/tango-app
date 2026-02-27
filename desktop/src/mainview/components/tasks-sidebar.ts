@@ -6,16 +6,16 @@ function materialIcon(name: string): HTMLElement {
   return h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, [name]);
 }
 
-export type TaskWorkspaceGroup = {
-  workspacePath: string;
-  workspaceName: string;
+export type TaskStageGroup = {
+  stagePath: string;
+  stageName: string;
   branch: string | null;
   tasks: TaskCardSummary[];
 };
 
 export type TasksSidebarCallbacks = {
-  onSelectTask: (taskId: string, workspacePath: string) => void;
-  onCreateTask: (workspacePath: string) => void;
+  onSelectTask: (taskId: string, stagePath: string) => void;
+  onCreateTask: (stagePath: string) => void;
   onBack: () => void;
 };
 
@@ -23,11 +23,11 @@ export class TasksSidebar {
   #el: HTMLElement;
   #listEl: HTMLElement;
   #callbacks: TasksSidebarCallbacks;
-  #groups: TaskWorkspaceGroup[] = [];
+  #groups: TaskStageGroup[] = [];
   #selectedTaskId: string | null = null;
   #loading = false;
-  #expandedWorkspacePaths = new Set<string>();
-  #collapsedWorkspacePaths = new Set<string>();
+  #expandedStagePaths = new Set<string>();
+  #collapsedStagePaths = new Set<string>();
   #animatingPath: string | null = null;
 
   constructor(container: HTMLElement, callbacks: TasksSidebarCallbacks) {
@@ -36,7 +36,7 @@ export class TasksSidebar {
     const header = h("div", { class: "tasks-sidebar-header" }, [
       h("button", {
         class: "tasks-sidebar-back-btn",
-        title: "Back to workspaces",
+        title: "Back to stages",
         onclick: () => this.#callbacks.onBack(),
       }, ["\u2190"]),
       h("span", { class: "tasks-sidebar-title" }, ["Tasks"]),
@@ -52,7 +52,7 @@ export class TasksSidebar {
     container.appendChild(this.#el);
   }
 
-  render(groups: TaskWorkspaceGroup[], opts?: { loading?: boolean }): void {
+  render(groups: TaskStageGroup[], opts?: { loading?: boolean }): void {
     this.#groups = groups;
     this.#loading = Boolean(opts?.loading);
     this.#renderContent();
@@ -75,7 +75,7 @@ export class TasksSidebar {
 
     if (this.#groups.length === 0) {
       this.#listEl.appendChild(
-        h("div", { class: "tasks-sidebar-empty" }, ["No workspaces"])
+        h("div", { class: "tasks-sidebar-empty" }, ["No stages"])
       );
       return;
     }
@@ -86,20 +86,20 @@ export class TasksSidebar {
     this.#animatingPath = null;
   }
 
-  #renderGroup(group: TaskWorkspaceGroup): HTMLElement {
+  #renderGroup(group: TaskStageGroup): HTMLElement {
     const groupHasSelection = group.tasks.some((t) => t.id === this.#selectedTaskId);
-    const isExpanded = this.#expandedWorkspacePaths.has(group.workspacePath)
-      || (groupHasSelection && !this.#collapsedWorkspacePaths.has(group.workspacePath));
+    const isExpanded = this.#expandedStagePaths.has(group.stagePath)
+      || (groupHasSelection && !this.#collapsedStagePaths.has(group.stagePath));
     const isCollapsed = !isExpanded;
     const toggleCollapsed = () => {
       if (isExpanded) {
-        this.#expandedWorkspacePaths.delete(group.workspacePath);
-        this.#collapsedWorkspacePaths.add(group.workspacePath);
+        this.#expandedStagePaths.delete(group.stagePath);
+        this.#collapsedStagePaths.add(group.stagePath);
       } else {
-        this.#expandedWorkspacePaths.add(group.workspacePath);
-        this.#collapsedWorkspacePaths.delete(group.workspacePath);
+        this.#expandedStagePaths.add(group.stagePath);
+        this.#collapsedStagePaths.delete(group.stagePath);
       }
-      this.#animatingPath = group.workspacePath;
+      this.#animatingPath = group.stagePath;
       this.#renderContent();
     };
 
@@ -116,7 +116,7 @@ export class TasksSidebar {
         },
       }, [
         h("div", { class: "task-group-meta" }, [
-          h("span", { class: "task-group-title", title: group.workspacePath }, [group.workspaceName]),
+          h("span", { class: "task-group-title", title: group.stagePath }, [group.stageName]),
           group.branch ? vcsBranchLabel(group.branch) : null,
         ].filter(Boolean) as HTMLElement[]),
         ...(!isCollapsed ? [h("button", {
@@ -124,7 +124,7 @@ export class TasksSidebar {
           title: "New task",
           onclick: (event: Event) => {
             event.stopPropagation();
-            this.#callbacks.onCreateTask(group.workspacePath);
+            this.#callbacks.onCreateTask(group.stagePath);
           },
         }, ["+"])] : []),
       ]),
@@ -136,11 +136,11 @@ export class TasksSidebar {
       list.appendChild(h("div", { class: "task-group-empty" }, ["No tasks"]));
     } else {
       for (const task of group.tasks) {
-        list.appendChild(this.#renderTaskRow(task, group.workspacePath));
+        list.appendChild(this.#renderTaskRow(task, group.stagePath));
       }
     }
 
-    const animate = group.workspacePath === this.#animatingPath;
+    const animate = group.stagePath === this.#animatingPath;
     const initialCollapsed = animate ? !isCollapsed : isCollapsed;
     const collapsible = h("div", { class: `collapsible${initialCollapsed ? " is-collapsed" : ""}` }, [
       h("div", { class: "collapsible-inner" }, [list]),
@@ -157,12 +157,12 @@ export class TasksSidebar {
     return wrapper;
   }
 
-  #renderTaskRow(task: TaskCardSummary, workspacePath: string): HTMLElement {
+  #renderTaskRow(task: TaskCardSummary, stagePath: string): HTMLElement {
     const isActive = task.id === this.#selectedTaskId;
 
     return h("button", {
       class: `task-row${isActive ? " active" : ""}`,
-      onclick: () => this.#callbacks.onSelectTask(task.id, workspacePath),
+      onclick: () => this.#callbacks.onSelectTask(task.id, stagePath),
       title: task.title,
     }, [
       h("span", { class: "task-row-title" }, [task.title]),

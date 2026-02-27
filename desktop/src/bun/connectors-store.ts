@@ -5,18 +5,18 @@ import { Database } from "bun:sqlite";
 import type {
   ConnectorProvider,
   ConnectorStatus,
-  WorkspaceConnector,
+  StageConnector,
 } from "../shared/types.ts";
 
-const DEFAULT_DB_PATH = join(homedir(), ".claude-sessions", "connectors.db");
+const DEFAULT_DB_PATH = join(homedir(), ".tango", "connectors.db");
 const CURRENT_SCHEMA_VERSION = 1;
 
-type WorkspaceConnectorRow = {
-  workspace_path: string;
+type StageConnectorRow = {
+  stage_path: string;
   provider: string;
   status: string;
-  external_workspace_id: string | null;
-  external_workspace_name: string | null;
+  external_stage_id: string | null;
+  external_stage_name: string | null;
   external_user_id: string | null;
   scopes: string | null;
   token_expires_at: string | null;
@@ -26,17 +26,17 @@ type WorkspaceConnectorRow = {
   updated_at: string;
 };
 
-export type WorkspaceConnectorRecord = WorkspaceConnector & {
+export type StageConnectorRecord = StageConnector & {
   keychainAccount: string | null;
   createdAt: string;
 };
 
-type UpsertWorkspaceConnectorInput = {
-  workspacePath: string;
+type UpsertStageConnectorInput = {
+  stagePath: string;
   provider: ConnectorProvider;
   status: ConnectorStatus;
-  externalWorkspaceId?: string | null;
-  externalWorkspaceName?: string | null;
+  externalStageId?: string | null;
+  externalStageName?: string | null;
   externalUserId?: string | null;
   scopes?: string[];
   tokenExpiresAt?: string | null;
@@ -59,13 +59,13 @@ export class ConnectorsStore {
     this.#db.close(false);
   }
 
-  listWorkspaceConnectors(workspacePath: string): WorkspaceConnector[] {
-    return this.listWorkspaceConnectorRecords(workspacePath).map((record) => ({
-      workspacePath: record.workspacePath,
+  listStageConnectors(stagePath: string): StageConnector[] {
+    return this.listStageConnectorRecords(stagePath).map((record) => ({
+      stagePath: record.stagePath,
       provider: record.provider,
       status: record.status,
-      externalWorkspaceId: record.externalWorkspaceId,
-      externalWorkspaceName: record.externalWorkspaceName,
+      externalStageId: record.externalStageId,
+      externalStageName: record.externalStageName,
       externalUserId: record.externalUserId,
       scopes: [...record.scopes],
       tokenExpiresAt: record.tokenExpiresAt,
@@ -74,15 +74,15 @@ export class ConnectorsStore {
     }));
   }
 
-  listWorkspaceConnectorRecords(workspacePath: string): WorkspaceConnectorRecord[] {
+  listStageConnectorRecords(stagePath: string): StageConnectorRecord[] {
     const rows = this.#db.query(
       `
       SELECT
-        workspace_path,
+        stage_path,
         provider,
         status,
-        external_workspace_id,
-        external_workspace_name,
+        external_stage_id,
+        external_stage_name,
         external_user_id,
         scopes,
         token_expires_at,
@@ -90,27 +90,27 @@ export class ConnectorsStore {
         keychain_account,
         created_at,
         updated_at
-      FROM workspace_connectors
-      WHERE workspace_path = ?
+      FROM stage_connectors
+      WHERE stage_path = ?
       ORDER BY provider ASC
       `
-    ).all(workspacePath) as WorkspaceConnectorRow[];
+    ).all(stagePath) as StageConnectorRow[];
 
-    return rows.map(mapWorkspaceConnectorRow);
+    return rows.map(mapStageConnectorRow);
   }
 
-  getWorkspaceConnectorRecord(
-    workspacePath: string,
+  getStageConnectorRecord(
+    stagePath: string,
     provider: ConnectorProvider
-  ): WorkspaceConnectorRecord | null {
+  ): StageConnectorRecord | null {
     const row = this.#db.query(
       `
       SELECT
-        workspace_path,
+        stage_path,
         provider,
         status,
-        external_workspace_id,
-        external_workspace_name,
+        external_stage_id,
+        external_stage_name,
         external_user_id,
         scopes,
         token_expires_at,
@@ -118,28 +118,28 @@ export class ConnectorsStore {
         keychain_account,
         created_at,
         updated_at
-      FROM workspace_connectors
-      WHERE workspace_path = ?
+      FROM stage_connectors
+      WHERE stage_path = ?
         AND provider = ?
       LIMIT 1
       `
-    ).get(workspacePath, provider) as WorkspaceConnectorRow | null;
+    ).get(stagePath, provider) as StageConnectorRow | null;
 
-    return row ? mapWorkspaceConnectorRow(row) : null;
+    return row ? mapStageConnectorRow(row) : null;
   }
 
-  upsertWorkspaceConnector(input: UpsertWorkspaceConnectorInput): WorkspaceConnectorRecord {
+  upsertStageConnector(input: UpsertStageConnectorInput): StageConnectorRecord {
     const now = isoNow();
     const scopes = normalizeScopes(input.scopes).join(",");
 
     this.#db.query(
       `
-      INSERT INTO workspace_connectors (
-        workspace_path,
+      INSERT INTO stage_connectors (
+        stage_path,
         provider,
         status,
-        external_workspace_id,
-        external_workspace_name,
+        external_stage_id,
+        external_stage_name,
         external_user_id,
         scopes,
         token_expires_at,
@@ -148,10 +148,10 @@ export class ConnectorsStore {
         created_at,
         updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(workspace_path, provider) DO UPDATE SET
+      ON CONFLICT(stage_path, provider) DO UPDATE SET
         status = excluded.status,
-        external_workspace_id = excluded.external_workspace_id,
-        external_workspace_name = excluded.external_workspace_name,
+        external_stage_id = excluded.external_stage_id,
+        external_stage_name = excluded.external_stage_name,
         external_user_id = excluded.external_user_id,
         scopes = excluded.scopes,
         token_expires_at = excluded.token_expires_at,
@@ -160,11 +160,11 @@ export class ConnectorsStore {
         updated_at = excluded.updated_at
       `
     ).run(
-      input.workspacePath,
+      input.stagePath,
       input.provider,
       normalizeStatus(input.status),
-      normalizeNullableString(input.externalWorkspaceId),
-      normalizeNullableString(input.externalWorkspaceName),
+      normalizeNullableString(input.externalStageId),
+      normalizeNullableString(input.externalStageName),
       normalizeNullableString(input.externalUserId),
       scopes || null,
       normalizeNullableString(input.tokenExpiresAt),
@@ -174,24 +174,24 @@ export class ConnectorsStore {
       now
     );
 
-    const record = this.getWorkspaceConnectorRecord(
-      input.workspacePath,
+    const record = this.getStageConnectorRecord(
+      input.stagePath,
       input.provider
     );
     if (!record) {
-      throw new Error("Failed to upsert workspace connector");
+      throw new Error("Failed to upsert stage connector");
     }
     return record;
   }
 
-  deleteWorkspaceConnector(workspacePath: string, provider: ConnectorProvider): void {
+  deleteStageConnector(stagePath: string, provider: ConnectorProvider): void {
     this.#db.query(
       `
-      DELETE FROM workspace_connectors
-      WHERE workspace_path = ?
+      DELETE FROM stage_connectors
+      WHERE stage_path = ?
         AND provider = ?
       `
-    ).run(workspacePath, provider);
+    ).run(stagePath, provider);
   }
 
   #getUserVersion(): number {
@@ -213,12 +213,12 @@ export class ConnectorsStore {
     try {
       if (current < 1) {
         this.#db.exec(`
-          CREATE TABLE IF NOT EXISTS workspace_connectors (
-            workspace_path TEXT NOT NULL,
+          CREATE TABLE IF NOT EXISTS stage_connectors (
+            stage_path TEXT NOT NULL,
             provider TEXT NOT NULL,
             status TEXT NOT NULL,
-            external_workspace_id TEXT,
-            external_workspace_name TEXT,
+            external_stage_id TEXT,
+            external_stage_name TEXT,
             external_user_id TEXT,
             scopes TEXT,
             token_expires_at TEXT,
@@ -226,11 +226,11 @@ export class ConnectorsStore {
             keychain_account TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY(workspace_path, provider)
+            PRIMARY KEY(stage_path, provider)
           );
 
-          CREATE INDEX IF NOT EXISTS idx_workspace_connectors_workspace
-            ON workspace_connectors(workspace_path, provider);
+          CREATE INDEX IF NOT EXISTS idx_stage_connectors_stage
+            ON stage_connectors(stage_path, provider);
         `);
       }
 
@@ -243,13 +243,13 @@ export class ConnectorsStore {
   }
 }
 
-function mapWorkspaceConnectorRow(row: WorkspaceConnectorRow): WorkspaceConnectorRecord {
+function mapStageConnectorRow(row: StageConnectorRow): StageConnectorRecord {
   return {
-    workspacePath: row.workspace_path,
+    stagePath: row.stage_path,
     provider: normalizeProvider(row.provider),
     status: normalizeStatus(row.status),
-    externalWorkspaceId: row.external_workspace_id,
-    externalWorkspaceName: row.external_workspace_name,
+    externalStageId: row.external_stage_id,
+    externalStageName: row.external_stage_name,
     externalUserId: row.external_user_id,
     scopes: parseScopes(row.scopes),
     tokenExpiresAt: row.token_expires_at,

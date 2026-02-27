@@ -1,11 +1,11 @@
 import { h, clearChildren } from "../lib/dom.ts";
-import { workspaceBranchIcon } from "../lib/icons.ts";
+import { stageBranchIcon } from "../lib/icons.ts";
 import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type {
   DiffFile,
   DiffLine,
   PullRequestReviewThread,
-  WorkspaceFileContent,
+  StageFileContent,
 } from "../../shared/types.ts";
 import { renderMarkdown } from "./chat-view.ts";
 import Prism from "prismjs";
@@ -35,7 +35,7 @@ import "prismjs/components/prism-php";
 export type DiffViewCallbacks = {
   onBranchPanelToggle?: (visible: boolean) => void;
   onCommitClick?: () => void;
-  onRequestFullFile?: (path: string) => Promise<WorkspaceFileContent>;
+  onRequestFullFile?: (path: string) => Promise<StageFileContent>;
   onToggleFileSeen?: (path: string, seen: boolean) => void;
   onReplyReviewThread?: (
     thread: PullRequestReviewThread,
@@ -154,7 +154,7 @@ export class DiffView {
       class: "dv-icon-btn",
       title: "Toggle branch history",
       onclick: () => this.toggleBranchPanel(),
-    }, [workspaceBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
+    }, [stageBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
 
     this.#commitBtn = h("button", {
       class: "dv-commit-btn",

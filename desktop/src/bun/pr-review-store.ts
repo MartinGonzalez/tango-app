@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { PullRequestReviewState } from "../shared/types.ts";
 
-const DEFAULT_STORE_PATH = join(homedir(), ".claude-sessions", "pr-review-state.json");
+const DEFAULT_STORE_PATH = join(homedir(), ".tango", "pr-review-state.json");
 
 type StoredFileState = {
   sha: string | null;

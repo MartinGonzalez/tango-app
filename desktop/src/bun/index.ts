@@ -14,7 +14,7 @@ import {
   setTurnDiffSession,
   remapTurnDiffSessionId,
   clearLastTurnDiffForSession,
-  clearLastTurnDiffForWorkspace,
+  clearLastTurnDiffForStage,
 } from "./diff-provider.ts";
 import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
 import { getVcsStrategy, getVcsInfo, invalidateVcsCache } from "./vcs/vcs-provider.ts";
@@ -23,16 +23,16 @@ import {
   getCommitContext,
   performCommit,
 } from "./commit-provider.ts";
-import { listSessionsForWorkspace } from "./session-history.ts";
-import { WorkspaceStore } from "./workspace-store.ts";
+import { listSessionsForStage } from "./session-history.ts";
+import { StageStore } from "./stage-store.ts";
 import { ApprovalServer } from "./approval-server.ts";
 import { installApprovalHook } from "./hook-installer.ts";
 import { SessionNamesStore } from "./session-names-store.ts";
 import {
-  getWorkspaceFiles,
-  getWorkspaceFileContent,
-  invalidateWorkspaceFilesCache,
-} from "./workspace-files.ts";
+  getStageFiles,
+  getStageFileContent,
+  invalidateStageFilesCache,
+} from "./stage-files.ts";
 import {
   getSlashCommands,
   invalidateSlashCommandsCache,
@@ -59,7 +59,7 @@ import { ConnectorsRepository } from "./connectors-repository.ts";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
-  getWorkspacePathVariantsSync,
+  getStagePathVariantsSync,
 } from "./project-path.ts";
 import type {
   AppRPC,
@@ -73,13 +73,13 @@ import type {
   PullRequestAgentReviewRun,
 } from "../shared/types.ts";
 
-console.log("Claudex starting...");
+console.log("Tango starting...");
 
 // ── Services ─────────────────────────────────────────────────────
 
 const watcher = new WatcherClient();
 const sessions = new SessionManager();
-const workspaces = new WorkspaceStore();
+const stages = new StageStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
 const connectors = new ConnectorsRepository();
@@ -87,7 +87,7 @@ const taskRepository = new TaskRepository(undefined, connectors);
 const prReviewStore = new PRReviewStore();
 const prAgentReviewStore = new PRAgentReviewStore();
 const prAgentReviewProvider = new PRAgentReviewProvider({
-  getWorkspacePaths: () => workspaces.getAll(),
+  getStagePaths: () => stages.getAll(),
 });
 
 let latestSnapshot: Snapshot | null = null;
@@ -97,7 +97,7 @@ const taskRunsBySession = new Map<string, {
   runId: string;
   taskId: string;
   action: TaskAction;
-  workspacePath: string;
+  stagePath: string;
 }>();
 const prAgentRunsBySession = new Map<string, {
   runId: string;
@@ -276,7 +276,7 @@ sessions.onEnd((sessionId, exitCode) => {
         exitCode,
         error: exitCode === 0 ? null : `Session exited with code ${exitCode}`,
       });
-      notifyTasksChanged(task.workspacePath, task.id);
+      notifyTasksChanged(task.stagePath, task.id);
     } catch (err) {
       console.warn("Failed to finalize task run:", err);
     }
@@ -364,7 +364,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           // Register the tempId immediately (will be updated to realId on resolve)
           approvals.registerSession(sessionId, fullAccess ?? true);
           sessionCwds.set(sessionId, cwd);
-          await workspaces.add(cwd);
+          await stages.add(cwd);
           return { sessionId };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -477,7 +477,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       getSessionHistory: async ({ cwd }) => {
-        const sessions = await listSessionsForWorkspace(cwd);
+        const sessions = await listSessionsForStage(cwd);
         return sessions.filter((session) => !isHiddenTaskSession(session.sessionId, session.prompt));
       },
 
@@ -540,18 +540,18 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return performCommit(cwd, message, includeUnstaged ?? true, mode ?? "commit");
       },
 
-      getWorkspaces: async () => {
-        await workspaces.load();
-        return workspaces.getAll();
+      getStages: async () => {
+        await stages.load();
+        return stages.getAll();
       },
 
       getSessionNames: async () => {
         return sessionNames.getAll();
       },
 
-      getWorkspaceFiles: async ({ cwd }: { cwd: string }) => {
+      getStageFiles: async ({ cwd }: { cwd: string }) => {
         if (!cwd) return [];
-        return getWorkspaceFiles(cwd);
+        return getStageFiles(cwd);
       },
 
       getFileContent: async ({
@@ -563,7 +563,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         path: string;
         maxBytes?: number;
       }) => {
-        return getWorkspaceFileContent(cwd, path, maxBytes);
+        return getStageFileContent(cwd, path, maxBytes);
       },
 
       getSlashCommands: async ({ cwd }: { cwd: string }) => {
@@ -575,13 +575,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getInstalledPlugins();
       },
 
-      getWorkspaceTasks: async ({
-        workspacePath,
+      getStageTasks: async ({
+        stagePath,
       }: {
-        workspacePath: string;
+        stagePath: string;
       }) => {
-        if (!workspacePath) return [];
-        return taskRepository.listWorkspaceTasks(workspacePath);
+        if (!stagePath) return [];
+        return taskRepository.listStageTasks(stagePath);
       },
 
       getTaskDetail: async ({ taskId }: { taskId: string }) => {
@@ -590,16 +590,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       createTask: async ({
-        workspacePath,
+        stagePath,
         title,
         notes,
       }: {
-        workspacePath: string;
+        stagePath: string;
         title?: string;
         notes?: string;
       }) => {
-        const task = taskRepository.createTask(workspacePath, title, notes);
-        notifyTasksChanged(task.workspacePath, task.id);
+        const task = taskRepository.createTask(stagePath, title, notes);
+        notifyTasksChanged(task.stagePath, task.id);
         return task;
       },
 
@@ -618,16 +618,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         if (!taskId) return null;
         const task = taskRepository.updateTask(taskId, patch);
         if (task) {
-          notifyTasksChanged(task.workspacePath, task.id);
+          notifyTasksChanged(task.stagePath, task.id);
         }
         return task;
       },
 
       deleteTask: async ({ taskId }: { taskId: string }) => {
-        const workspacePath = taskRepository.getTaskDetail(taskId)?.workspacePath ?? null;
+        const stagePath = taskRepository.getTaskDetail(taskId)?.stagePath ?? null;
         taskRepository.deleteTask(taskId);
-        if (workspacePath) {
-          notifyTasksChanged(workspacePath);
+        if (stagePath) {
+          notifyTasksChanged(stagePath);
         }
       },
 
@@ -656,7 +656,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
         const task = taskRepository.getTaskDetail(taskId);
         if (task) {
-          notifyTasksChanged(task.workspacePath, task.id);
+          notifyTasksChanged(task.stagePath, task.id);
         }
         return source;
       },
@@ -681,7 +681,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         if (source) {
           const task = taskRepository.getTaskDetail(source.taskId);
           if (task) {
-            notifyTasksChanged(task.workspacePath, task.id);
+            notifyTasksChanged(task.stagePath, task.id);
           }
         }
         return source;
@@ -692,7 +692,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         taskRepository.removeTaskSource(sourceId);
         if (source) {
           const task = taskRepository.getTaskDetail(source.taskId);
-          if (task) notifyTasksChanged(task.workspacePath, task.id);
+          if (task) notifyTasksChanged(task.stagePath, task.id);
         }
       },
 
@@ -701,7 +701,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         if (source) {
           const task = taskRepository.getTaskDetail(source.taskId);
           if (task) {
-            notifyTasksChanged(task.workspacePath, task.id);
+            notifyTasksChanged(task.stagePath, task.id);
           }
         }
         return source;
@@ -715,17 +715,17 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         action: TaskAction;
       }) => {
         const prepared = taskRepository.prepareTaskRun(taskId, action);
-        notifyTasksChanged(prepared.workspacePath, prepared.task.id);
+        notifyTasksChanged(prepared.stagePath, prepared.task.id);
 
         let sessionId: string | null = null;
         try {
           if (action === "execute") {
-            await beginTurnDiff(prepared.workspacePath).catch(() => {});
+            await beginTurnDiff(prepared.stagePath).catch(() => {});
           }
 
           const tempSessionId = await sessions.spawn(
             prepared.prompt,
-            prepared.workspacePath,
+            prepared.stagePath,
             true,
             undefined,
             [],
@@ -742,7 +742,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           }
 
           if (action === "execute") {
-            await setTurnDiffSession(prepared.workspacePath, tempSessionId).catch(() => {});
+            await setTurnDiffSession(prepared.stagePath, tempSessionId).catch(() => {});
           }
 
           taskRepository.bindRunSession(prepared.run.id, tempSessionId);
@@ -750,19 +750,19 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             runId: prepared.run.id,
             taskId: prepared.task.id,
             action,
-            workspacePath: prepared.workspacePath,
+            stagePath: prepared.stagePath,
           });
-          sessionCwds.set(tempSessionId, prepared.workspacePath);
+          sessionCwds.set(tempSessionId, prepared.stagePath);
           approvals.registerSession(tempSessionId, true);
-          await workspaces.add(prepared.workspacePath);
-          notifyTasksChanged(prepared.workspacePath, prepared.task.id);
+          await stages.add(prepared.stagePath);
+          notifyTasksChanged(prepared.stagePath, prepared.task.id);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           taskRepository.finalizeRun(prepared.run.id, {
             success: false,
             error: message,
           });
-          notifyTasksChanged(prepared.workspacePath, prepared.task.id);
+          notifyTasksChanged(prepared.stagePath, prepared.task.id);
           throw err;
         }
 
@@ -782,23 +782,23 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return taskRepository.getTaskRuns(taskId, limit ?? 20);
       },
 
-      getWorkspaceConnectors: async ({
-        workspacePath,
+      getStageConnectors: async ({
+        stagePath,
       }: {
-        workspacePath: string;
+        stagePath: string;
       }) => {
-        if (!workspacePath) return [];
-        return connectors.listWorkspaceConnectors(workspacePath);
+        if (!stagePath) return [];
+        return connectors.listStageConnectors(stagePath);
       },
 
       startConnectorAuth: async ({
-        workspacePath,
+        stagePath,
         provider,
       }: {
-        workspacePath: string;
+        stagePath: string;
         provider: ConnectorProvider;
       }) => {
-        return connectors.startConnectorAuth(workspacePath, provider);
+        return connectors.startConnectorAuth(stagePath, provider);
       },
 
       getConnectorAuthStatus: async ({
@@ -809,14 +809,14 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return connectors.getConnectorAuthStatus(authSessionId);
       },
 
-      disconnectWorkspaceConnector: async ({
-        workspacePath,
+      disconnectStageConnector: async ({
+        stagePath,
         provider,
       }: {
-        workspacePath: string;
+        stagePath: string;
         provider: ConnectorProvider;
       }) => {
-        await connectors.disconnectWorkspaceConnector(workspacePath, provider);
+        await connectors.disconnectStageConnector(stagePath, provider);
       },
 
       getAssignedPullRequests: async ({ limit }: { limit?: number }) => {
@@ -1006,7 +1006,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             headSha: normalizedHeadSha,
             outputFilePath: run.filePath,
             cwdSource: cwdResolution.source,
-            workspacePath: cwdResolution.workspacePath,
+            stagePath: cwdResolution.stagePath,
           });
 
           const sessionId = await sessions.spawn(
@@ -1115,20 +1115,20 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return { sessionId };
       },
 
-      addWorkspace: async ({ path }) => {
-        await workspaces.add(path);
-        invalidateWorkspaceFilesCache(path);
+      addStage: async ({ path }) => {
+        await stages.add(path);
+        invalidateStageFilesCache(path);
         invalidateSlashCommandsCache(path);
         invalidateInstalledPluginsCache();
       },
 
-      removeWorkspace: async ({ path }) => {
-        await workspaces.remove(path);
-        await clearLastTurnDiffForWorkspace(path).catch((err) => {
-          console.warn("Failed to clear workspace diff state:", err);
+      removeStage: async ({ path }) => {
+        await stages.remove(path);
+        await clearLastTurnDiffForStage(path).catch((err) => {
+          console.warn("Failed to clear stage diff state:", err);
         });
         invalidateVcsCache(path);
-        invalidateWorkspaceFilesCache(path);
+        invalidateStageFilesCache(path);
         invalidateSlashCommandsCache(path);
         invalidateInstalledPluginsCache();
       },
@@ -1179,7 +1179,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           const proc = Bun.spawn([
             "osascript",
             "-e",
-            'set theFolder to choose folder with prompt "Select workspace directory"',
+            'set theFolder to choose folder with prompt "Select stage directory"',
             "-e",
             'return POSIX path of theFolder',
           ], { stdout: "pipe", stderr: "pipe" });
@@ -1278,7 +1278,7 @@ function resolveSessionCwd(sessionId: string): string | null {
 }
 
 function guessTranscriptPaths(cwd: string, sessionId: string): string[] {
-  const variants = getWorkspacePathVariantsSync(cwd);
+  const variants = getStagePathVariantsSync(cwd);
   const paths = new Set<string>();
   for (const variant of variants) {
     const encoded = encodeClaudeProjectPath(variant);
@@ -1289,10 +1289,10 @@ function guessTranscriptPaths(cwd: string, sessionId: string): string[] {
   return Array.from(paths);
 }
 
-function notifyTasksChanged(workspacePath: string, taskId?: string): void {
-  if (!workspacePath) return;
+function notifyTasksChanged(stagePath: string, taskId?: string): void {
+  if (!stagePath) return;
   mainRPC?.send.tasksChanged({
-    workspacePath,
+    stagePath,
     taskId,
   });
 }
@@ -1401,7 +1401,7 @@ function buildPullRequestAgentApplyPrompt(params: {
 
   return [
     "Apply one actionable item from an Agent Review to a pull request branch.",
-    "Use a temporary clone only. Do not modify any existing local workspace clone.",
+    "Use a temporary clone only. Do not modify any existing local stage clone.",
     "",
     `Repository: ${repo}`,
     `PR: #${number}`,
@@ -1648,7 +1648,7 @@ function finalizeBackgroundTaskRunFromEvent(
     runId: string;
     taskId: string;
     action: TaskAction;
-    workspacePath: string;
+    stagePath: string;
   },
   event: unknown
 ): boolean {
@@ -1673,7 +1673,7 @@ function finalizeBackgroundTaskRunFromEvent(
       output,
       error,
     });
-    notifyTasksChanged(task.workspacePath, task.id);
+    notifyTasksChanged(task.stagePath, task.id);
   } catch (err) {
     console.warn("Failed to finalize background task run from result event:", err);
   } finally {
@@ -1689,7 +1689,7 @@ function finalizeExecuteTaskRunFromEvent(
     runId: string;
     taskId: string;
     action: TaskAction;
-    workspacePath: string;
+    stagePath: string;
   },
   event: unknown
 ): void {
@@ -1714,7 +1714,7 @@ function finalizeExecuteTaskRunFromEvent(
       output,
       error,
     });
-    notifyTasksChanged(task.workspacePath, task.id);
+    notifyTasksChanged(task.stagePath, task.id);
   } catch (err) {
     console.warn("Failed to finalize execute task run from result event:", err);
   }
@@ -1753,7 +1753,7 @@ function extractTaskRunOutput(event: unknown): string {
 ApplicationMenu.setApplicationMenu([
   {
     submenu: [
-      { label: "About Claudex", role: "about" as any },
+      { label: "About Tango", role: "about" as any },
       { type: "separator" },
       { label: "Quit", role: "quit" },
     ],
@@ -1767,9 +1767,9 @@ ApplicationMenu.setApplicationMenu([
         action: "new-session",
       },
       {
-        label: "Open Workspace",
+        label: "Open Stage",
         accelerator: "CmdOrCtrl+O",
-        action: "open-workspace",
+        action: "open-stage",
       },
       { type: "separator" },
       { label: "Close Window", accelerator: "CmdOrCtrl+W", role: "close" as any },
@@ -1821,7 +1821,7 @@ ApplicationMenu.setApplicationMenu([
 ]);
 
 const mainWindow = new BrowserWindow({
-  title: "Claudex",
+  title: "Tango",
   url: "views://mainview/index.html",
   frame: {
     width: 1200,
@@ -1852,7 +1852,7 @@ approvals.onApprovalRequest((req) => {
 
 // ── Start ────────────────────────────────────────────────────────
 
-await workspaces.load();
+await stages.load();
 await sessionNames.load();
 await prReviewStore.load();
 await prAgentReviewStore.load();
@@ -1867,7 +1867,7 @@ installApprovalHook().catch((err) => {
   console.warn("Failed to install approval hook:", err);
 });
 
-console.log("Claudex initialized");
+console.log("Tango initialized");
 
 // ── Helpers ──────────────────────────────────────────────────────
 

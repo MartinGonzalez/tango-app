@@ -2,8 +2,8 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "Claudex",
-    identifier: "dev.claude-sessions.app",
+    name: "Tango",
+    identifier: "dev.tango.app",
     version: "0.0.1",
   },
   build: {

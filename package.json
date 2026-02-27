@@ -1,8 +1,8 @@
 {
-  "name": "claude-watcher",
+  "name": "tango",
   "version": "0.0.1",
   "private": true,
-  "description": "Claude Watcher workspace orchestrator",
+  "description": "Tango stage orchestrator",
   "scripts": {
     "dev:server": "cd server && npm start",
     "test:server": "cd server && npm test",
