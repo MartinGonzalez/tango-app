@@ -1,5 +1,5 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -51,11 +51,13 @@ import {
   createPullRequestReviewComment,
 } from "./pr-provider.ts";
 import { TaskRepository } from "./task-repository.ts";
+import { TasksStore } from "./tasks-store.ts";
 import { PRReviewStore } from "./pr-review-store.ts";
 import { PRAgentReviewStore } from "./pr-agent-review-store.ts";
 import { PRAgentReviewProvider } from "./pr-agent-review-provider.ts";
 import { isAgentReviewPlaceholderPayload } from "./pr-agent-review-files.ts";
 import { ConnectorsRepository } from "./connectors-repository.ts";
+import { InstrumentRuntime } from "./instruments/runtime.ts";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
@@ -63,6 +65,8 @@ import {
 } from "./project-path.ts";
 import type {
   AppRPC,
+  InstrumentBackendContext,
+  InstrumentRegistryEntry,
   SessionInfo,
   Snapshot,
   Activity,
@@ -75,6 +79,28 @@ import type {
 
 console.log("Tango starting...");
 
+const TASKS_INSTRUMENT_ID = "tasks";
+const LEGACY_TASKS_DB_PATH = join(homedir(), ".tango", "tasks.db");
+const TASKS_INSTRUMENT_DB_PATH = join(
+  homedir(),
+  ".tango",
+  "instruments",
+  TASKS_INSTRUMENT_ID,
+  "db",
+  "tasks.db"
+);
+const TASKS_MIGRATION_MARKER_KEY = "migration.tasks-db.completedAt";
+
+type TasksMigrationState = {
+  migrated: boolean;
+  blocked: boolean;
+  completedAt: string | null;
+  backupPath: string | null;
+  error: string | null;
+};
+
+let tasksMigrationState = migrateLegacyTasksDbSync();
+
 // ── Services ─────────────────────────────────────────────────────
 
 const watcher = new WatcherClient();
@@ -83,11 +109,24 @@ const stages = new StageStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
 const connectors = new ConnectorsRepository();
-const taskRepository = new TaskRepository(undefined, connectors);
+const taskRepository = new TaskRepository(
+  new TasksStore(TASKS_INSTRUMENT_DB_PATH),
+  connectors
+);
 const prReviewStore = new PRReviewStore();
 const prAgentReviewStore = new PRAgentReviewStore();
 const prAgentReviewProvider = new PRAgentReviewProvider({
   getStagePaths: () => stages.getAll(),
+});
+
+const instrumentRuntime = new InstrumentRuntime({
+  bundledInstallPaths: resolveBundledInstrumentInstallPaths(),
+  onEvent: (event) => {
+    mainRPC?.send.instrumentEvent(event);
+  },
+  invokeHandlers: {
+    tasks: (ctx, method, params) => invokeTasksInstrument(ctx, method, params),
+  },
 });
 
 let latestSnapshot: Snapshot | null = null;
@@ -120,6 +159,87 @@ const IMPROVE_TASK_MODEL = process.env.CLAUDE_TASK_IMPROVE_MODEL?.trim()
   || "claude-haiku-4-5-20251001";
 const PLAN_TASK_MODEL = process.env.CLAUDE_TASK_PLAN_MODEL?.trim()
   || "opus";
+
+function resolveBundledInstrumentInstallPaths(): string[] {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const cwd = process.cwd();
+  const explicit = process.env.TANGO_BUNDLED_INSTRUMENTS?.trim();
+  const envPaths = explicit
+    ? explicit
+      .split(",")
+      .map((value) => resolve(String(value).trim()))
+      .filter(Boolean)
+    : [];
+
+  const candidates = [
+    ...envPaths,
+    resolve(moduleDir, "../instruments/tasks"),
+    resolve(moduleDir, "../../instruments/tasks"),
+    resolve(moduleDir, "../../../instruments/tasks"),
+    resolve(cwd, "desktop/instruments/tasks"),
+    resolve(cwd, "instruments/tasks"),
+  ];
+
+  const deduped: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || deduped.includes(candidate)) continue;
+    if (!existsSync(join(candidate, "package.json"))) continue;
+    deduped.push(candidate);
+  }
+  return deduped;
+}
+
+function migrateLegacyTasksDbSync(): TasksMigrationState {
+  const state: TasksMigrationState = {
+    migrated: false,
+    blocked: false,
+    completedAt: null,
+    backupPath: null,
+    error: null,
+  };
+
+  try {
+    mkdirSync(dirname(TASKS_INSTRUMENT_DB_PATH), { recursive: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      ...state,
+      blocked: true,
+      error: `Failed to create tasks instrument db directory: ${message}`,
+    };
+  }
+
+  const targetExists = existsSync(TASKS_INSTRUMENT_DB_PATH);
+  const legacyExists = existsSync(LEGACY_TASKS_DB_PATH);
+
+  if (!legacyExists || targetExists) {
+    return state;
+  }
+
+  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
+  const backupPath = `${LEGACY_TASKS_DB_PATH}.${timestamp}.backup`;
+
+  try {
+    copyFileSync(LEGACY_TASKS_DB_PATH, backupPath);
+    copyFileSync(LEGACY_TASKS_DB_PATH, TASKS_INSTRUMENT_DB_PATH);
+    return {
+      migrated: true,
+      blocked: false,
+      completedAt: new Date().toISOString(),
+      backupPath,
+      error: null,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      migrated: false,
+      blocked: true,
+      completedAt: null,
+      backupPath,
+      error: `Tasks migration failed: ${message}`,
+    };
+  }
+}
 
 // ── Auto-start watcher server if needed ──────────────────────────
 
@@ -580,11 +700,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       }: {
         stagePath: string;
       }) => {
+        assertTasksInstrumentUsable();
         if (!stagePath) return [];
         return taskRepository.listStageTasks(stagePath);
       },
 
       getTaskDetail: async ({ taskId }: { taskId: string }) => {
+        assertTasksInstrumentUsable();
         if (!taskId) return null;
         return taskRepository.getTaskDetail(taskId);
       },
@@ -598,6 +720,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         title?: string;
         notes?: string;
       }) => {
+        assertTasksInstrumentUsable();
         const task = taskRepository.createTask(stagePath, title, notes);
         notifyTasksChanged(task.stagePath, task.id);
         return task;
@@ -615,6 +738,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           planMarkdown?: string | null;
         };
       }) => {
+        assertTasksInstrumentUsable();
         if (!taskId) return null;
         const task = taskRepository.updateTask(taskId, patch);
         if (task) {
@@ -624,6 +748,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       deleteTask: async ({ taskId }: { taskId: string }) => {
+        assertTasksInstrumentUsable();
         const stagePath = taskRepository.getTaskDetail(taskId)?.stagePath ?? null;
         taskRepository.deleteTask(taskId);
         if (stagePath) {
@@ -642,6 +767,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         url?: string | null;
         content?: string | null;
       }) => {
+        assertTasksInstrumentUsable();
         let source = taskRepository.addTaskSource(
           taskId,
           kind,
@@ -672,6 +798,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           url?: string | null;
         };
       }) => {
+        assertTasksInstrumentUsable();
         let source = taskRepository.updateTaskSource(sourceId, patch);
         if (source && patch.url !== undefined && patch.url !== null && patch.url.trim()) {
           const fetched = await taskRepository.fetchTaskSource(source.id);
@@ -688,6 +815,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       removeTaskSource: async ({ sourceId }: { sourceId: string }) => {
+        assertTasksInstrumentUsable();
         const source = taskRepository.getTaskSource(sourceId);
         taskRepository.removeTaskSource(sourceId);
         if (source) {
@@ -697,6 +825,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       fetchTaskSource: async ({ sourceId }: { sourceId: string }) => {
+        assertTasksInstrumentUsable();
         const source = await taskRepository.fetchTaskSource(sourceId);
         if (source) {
           const task = taskRepository.getTaskDetail(source.taskId);
@@ -714,62 +843,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         taskId: string;
         action: TaskAction;
       }) => {
-        const prepared = taskRepository.prepareTaskRun(taskId, action);
-        notifyTasksChanged(prepared.stagePath, prepared.task.id);
-
-        let sessionId: string | null = null;
-        try {
-          if (action === "execute") {
-            await beginTurnDiff(prepared.stagePath).catch(() => {});
-          }
-
-          const tempSessionId = await sessions.spawn(
-            prepared.prompt,
-            prepared.stagePath,
-            true,
-            undefined,
-            [],
-            action === "improve"
-              ? IMPROVE_TASK_MODEL
-              : action === "plan"
-                ? PLAN_TASK_MODEL
-                : undefined,
-            action === "execute" ? undefined : []
-          );
-          sessionId = tempSessionId;
-          if (action !== "execute") {
-            addHiddenTaskSessionId(tempSessionId);
-          }
-
-          if (action === "execute") {
-            await setTurnDiffSession(prepared.stagePath, tempSessionId).catch(() => {});
-          }
-
-          taskRepository.bindRunSession(prepared.run.id, tempSessionId);
-          taskRunsBySession.set(tempSessionId, {
-            runId: prepared.run.id,
-            taskId: prepared.task.id,
-            action,
-            stagePath: prepared.stagePath,
-          });
-          sessionCwds.set(tempSessionId, prepared.stagePath);
-          approvals.registerSession(tempSessionId, true);
-          await stages.add(prepared.stagePath);
-          notifyTasksChanged(prepared.stagePath, prepared.task.id);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          taskRepository.finalizeRun(prepared.run.id, {
-            success: false,
-            error: message,
-          });
-          notifyTasksChanged(prepared.stagePath, prepared.task.id);
-          throw err;
-        }
-
-        return {
-          runId: prepared.run.id,
-          sessionId: action === "execute" ? sessionId : null,
-        };
+        return runTaskActionInternal(taskId, action);
       },
 
       getTaskRuns: async ({
@@ -779,6 +853,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         taskId: string;
         limit?: number;
       }) => {
+        assertTasksInstrumentUsable();
         return taskRepository.getTaskRuns(taskId, limit ?? 20);
       },
 
@@ -1194,6 +1269,182 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           return null;
         }
       },
+
+      listInstruments: async () => {
+        return instrumentRuntime.list();
+      },
+
+      installInstrumentFromPath: async ({ path }: { path: string }) => {
+        const normalized = String(path ?? "").trim();
+        if (!normalized) {
+          throw new Error("Instrument path is required");
+        }
+        return instrumentRuntime.installFromPath(normalized);
+      },
+
+      setInstrumentEnabled: async ({
+        instrumentId,
+        enabled,
+      }: {
+        instrumentId: string;
+        enabled: boolean;
+      }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) {
+          throw new Error("instrumentId is required");
+        }
+        return instrumentRuntime.setEnabled(id, Boolean(enabled));
+      },
+
+      removeInstrument: async ({
+        instrumentId,
+        deleteData,
+      }: {
+        instrumentId: string;
+        deleteData?: boolean;
+      }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) {
+          throw new Error("instrumentId is required");
+        }
+        return instrumentRuntime.remove(id, { deleteData: Boolean(deleteData) });
+      },
+
+      instrumentStorageGetProperty: async ({
+        instrumentId,
+        key,
+      }: {
+        instrumentId: string;
+        key: string;
+      }) => {
+        const value = await instrumentRuntime.getProperty(instrumentId, key);
+        return { value };
+      },
+
+      instrumentStorageSetProperty: async ({
+        instrumentId,
+        key,
+        value,
+      }: {
+        instrumentId: string;
+        key: string;
+        value: unknown;
+      }) => {
+        await instrumentRuntime.setProperty(instrumentId, key, value);
+      },
+
+      instrumentStorageDeleteProperty: async ({
+        instrumentId,
+        key,
+      }: {
+        instrumentId: string;
+        key: string;
+      }) => {
+        await instrumentRuntime.deleteProperty(instrumentId, key);
+      },
+
+      instrumentStorageReadFile: async ({
+        instrumentId,
+        path,
+        encoding,
+      }: {
+        instrumentId: string;
+        path: string;
+        encoding?: "utf8" | "base64";
+      }) => {
+        const normalizedEncoding = encoding === "base64" ? "base64" : "utf8";
+        const content = await instrumentRuntime.readFile(
+          instrumentId,
+          path,
+          normalizedEncoding
+        );
+        return { content, encoding: normalizedEncoding };
+      },
+
+      instrumentStorageWriteFile: async ({
+        instrumentId,
+        path,
+        content,
+        encoding,
+      }: {
+        instrumentId: string;
+        path: string;
+        content: string;
+        encoding?: "utf8" | "base64";
+      }) => {
+        await instrumentRuntime.writeFile(
+          instrumentId,
+          path,
+          content,
+          encoding === "base64" ? "base64" : "utf8"
+        );
+      },
+
+      instrumentStorageDeleteFile: async ({
+        instrumentId,
+        path,
+      }: {
+        instrumentId: string;
+        path: string;
+      }) => {
+        await instrumentRuntime.deleteFile(instrumentId, path);
+      },
+
+      instrumentStorageListFiles: async ({
+        instrumentId,
+        dir,
+      }: {
+        instrumentId: string;
+        dir?: string;
+      }) => {
+        return instrumentRuntime.listFiles(instrumentId, dir);
+      },
+
+      instrumentStorageSqlQuery: async ({
+        instrumentId,
+        db,
+        sql,
+        params,
+      }: {
+        instrumentId: string;
+        db?: string;
+        sql: string;
+        params?: unknown[];
+      }) => {
+        const rows = await instrumentRuntime.sqlQuery(instrumentId, sql, params, db);
+        return { rows };
+      },
+
+      instrumentStorageSqlExecute: async ({
+        instrumentId,
+        db,
+        sql,
+        params,
+      }: {
+        instrumentId: string;
+        db?: string;
+        sql: string;
+        params?: unknown[];
+      }) => {
+        return instrumentRuntime.sqlExecute(instrumentId, sql, params, db);
+      },
+
+      instrumentInvoke: async ({
+        instrumentId,
+        method,
+        params,
+      }: {
+        instrumentId: string;
+        method: string;
+        params?: Record<string, unknown>;
+      }) => {
+        if (instrumentId === TASKS_INSTRUMENT_ID && method === "retryMigration") {
+          const result = await retryTasksMigration();
+          return { result };
+        }
+        const result = await instrumentRuntime.invoke(instrumentId, method, params);
+        return { result };
+      },
     },
     messages: {
       "*": (messageName: string | number | symbol, payload: unknown) => {
@@ -1291,10 +1542,337 @@ function guessTranscriptPaths(cwd: string, sessionId: string): string[] {
 
 function notifyTasksChanged(stagePath: string, taskId?: string): void {
   if (!stagePath) return;
-  mainRPC?.send.tasksChanged({
-    stagePath,
-    taskId,
+  mainRPC?.send.instrumentEvent({
+    instrumentId: TASKS_INSTRUMENT_ID,
+    event: "tasks.changed",
+    payload: { stagePath, taskId: taskId ?? null },
   });
+}
+
+function assertTasksInstrumentUsable(): InstrumentRegistryEntry {
+  const entry = instrumentRuntime.get(TASKS_INSTRUMENT_ID);
+  if (!entry) {
+    throw new Error("Tasks instrument is not installed");
+  }
+  if (!entry.enabled || entry.status === "disabled") {
+    throw new Error("Tasks instrument is disabled");
+  }
+  if (entry.status === "blocked") {
+    throw new Error(
+      entry.lastError
+        ? `Tasks instrument is blocked: ${entry.lastError}`
+        : "Tasks instrument is blocked"
+    );
+  }
+  return entry;
+}
+
+async function persistTasksMigrationMarker(
+  state: TasksMigrationState
+): Promise<void> {
+  if (!state.completedAt) return;
+  const entry = instrumentRuntime.get(TASKS_INSTRUMENT_ID);
+  if (!entry?.enabled || entry.status === "blocked") return;
+  await instrumentRuntime.setProperty(
+    TASKS_INSTRUMENT_ID,
+    TASKS_MIGRATION_MARKER_KEY,
+    {
+      completedAt: state.completedAt,
+      backupPath: state.backupPath,
+      sourcePath: LEGACY_TASKS_DB_PATH,
+      targetPath: TASKS_INSTRUMENT_DB_PATH,
+    }
+  );
+}
+
+async function initializeInstrumentRuntime(): Promise<void> {
+  try {
+    await instrumentRuntime.load();
+  } catch (err) {
+    console.warn("Failed to load instruments runtime:", err);
+    return;
+  }
+
+  const tasksEntry = instrumentRuntime.get(TASKS_INSTRUMENT_ID);
+  if (!tasksEntry) return;
+
+  if (tasksMigrationState.blocked) {
+    await instrumentRuntime.markBlocked(
+      TASKS_INSTRUMENT_ID,
+      tasksMigrationState.error ?? "Tasks data migration failed"
+    ).catch((err) => {
+      console.warn("Failed to mark Tasks instrument as blocked:", err);
+    });
+    return;
+  }
+
+  await instrumentRuntime.clearError(TASKS_INSTRUMENT_ID).catch((err) => {
+    console.warn("Failed to clear Tasks instrument error state:", err);
+  });
+
+  await persistTasksMigrationMarker(tasksMigrationState).catch((err) => {
+    console.warn("Failed to persist Tasks migration marker:", err);
+  });
+}
+
+async function retryTasksMigration(): Promise<{
+  ok: boolean;
+  blocked: boolean;
+  error: string | null;
+}> {
+  tasksMigrationState = migrateLegacyTasksDbSync();
+
+  if (tasksMigrationState.blocked) {
+    await instrumentRuntime.markBlocked(
+      TASKS_INSTRUMENT_ID,
+      tasksMigrationState.error ?? "Tasks data migration failed"
+    ).catch((err) => {
+      console.warn("Failed to update Tasks blocked state:", err);
+    });
+    return {
+      ok: false,
+      blocked: true,
+      error: tasksMigrationState.error ?? "Tasks data migration failed",
+    };
+  }
+
+  await instrumentRuntime.clearError(TASKS_INSTRUMENT_ID).catch((err) => {
+    console.warn("Failed to clear Tasks blocked state:", err);
+  });
+
+  await persistTasksMigrationMarker(tasksMigrationState).catch((err) => {
+    console.warn("Failed to persist Tasks migration marker:", err);
+  });
+
+  return {
+    ok: true,
+    blocked: false,
+    error: null,
+  };
+}
+
+async function runTaskActionInternal(
+  taskId: string,
+  action: TaskAction
+): Promise<{ runId: string; sessionId: string | null }> {
+  assertTasksInstrumentUsable();
+
+  const prepared = taskRepository.prepareTaskRun(taskId, action);
+  notifyTasksChanged(prepared.stagePath, prepared.task.id);
+
+  let sessionId: string | null = null;
+  try {
+    if (action === "execute") {
+      await beginTurnDiff(prepared.stagePath).catch(() => {});
+    }
+
+    const tempSessionId = await sessions.spawn(
+      prepared.prompt,
+      prepared.stagePath,
+      true,
+      undefined,
+      [],
+      action === "improve"
+        ? IMPROVE_TASK_MODEL
+        : action === "plan"
+          ? PLAN_TASK_MODEL
+          : undefined,
+      action === "execute" ? undefined : []
+    );
+    sessionId = tempSessionId;
+    if (action !== "execute") {
+      addHiddenTaskSessionId(tempSessionId);
+    }
+
+    if (action === "execute") {
+      await setTurnDiffSession(prepared.stagePath, tempSessionId).catch(() => {});
+    }
+
+    taskRepository.bindRunSession(prepared.run.id, tempSessionId);
+    taskRunsBySession.set(tempSessionId, {
+      runId: prepared.run.id,
+      taskId: prepared.task.id,
+      action,
+      stagePath: prepared.stagePath,
+    });
+    sessionCwds.set(tempSessionId, prepared.stagePath);
+    approvals.registerSession(tempSessionId, true);
+    await stages.add(prepared.stagePath);
+    notifyTasksChanged(prepared.stagePath, prepared.task.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    taskRepository.finalizeRun(prepared.run.id, {
+      success: false,
+      error: message,
+    });
+    notifyTasksChanged(prepared.stagePath, prepared.task.id);
+    throw err;
+  }
+
+  return {
+    runId: prepared.run.id,
+    sessionId: action === "execute" ? sessionId : null,
+  };
+}
+
+async function invokeTasksInstrument(
+  _ctx: InstrumentBackendContext,
+  method: string,
+  params: Record<string, unknown> | undefined
+): Promise<unknown> {
+  const payload = params ?? {};
+
+  if (method === "retryMigration") {
+    return retryTasksMigration();
+  }
+
+  assertTasksInstrumentUsable();
+
+  switch (method) {
+    case "listStageTasks": {
+      const stagePath = String(payload.stagePath ?? "").trim();
+      if (!stagePath) return [];
+      return taskRepository.listStageTasks(stagePath);
+    }
+    case "getTaskDetail": {
+      const taskId = String(payload.taskId ?? "").trim();
+      if (!taskId) return null;
+      return taskRepository.getTaskDetail(taskId);
+    }
+    case "createTask": {
+      const stagePath = String(payload.stagePath ?? "").trim();
+      const title = payload.title == null ? undefined : String(payload.title);
+      const notes = payload.notes == null ? undefined : String(payload.notes);
+      if (!stagePath) {
+        throw new Error("stagePath is required");
+      }
+      const task = taskRepository.createTask(stagePath, title, notes);
+      notifyTasksChanged(task.stagePath, task.id);
+      return task;
+    }
+    case "updateTask": {
+      const taskId = String(payload.taskId ?? "").trim();
+      const patch = (payload.patch ?? {}) as {
+        title?: string;
+        notes?: string;
+        status?: TaskCardStatus;
+        planMarkdown?: string | null;
+      };
+      if (!taskId) return null;
+      const task = taskRepository.updateTask(taskId, patch);
+      if (task) {
+        notifyTasksChanged(task.stagePath, task.id);
+      }
+      return task;
+    }
+    case "deleteTask": {
+      const taskId = String(payload.taskId ?? "").trim();
+      if (!taskId) return null;
+      const stagePath = taskRepository.getTaskDetail(taskId)?.stagePath ?? null;
+      taskRepository.deleteTask(taskId);
+      if (stagePath) {
+        notifyTasksChanged(stagePath);
+      }
+      return { deleted: true };
+    }
+    case "addTaskSource": {
+      const taskId = String(payload.taskId ?? "").trim();
+      const kind = String(payload.kind ?? "").trim() as TaskSourceKind;
+      const url = payload.url == null ? null : String(payload.url);
+      const content = payload.content == null ? null : String(payload.content);
+      if (!taskId) throw new Error("taskId is required");
+      let source = taskRepository.addTaskSource(taskId, kind, url, content);
+
+      if (source.url) {
+        const fetched = await taskRepository.fetchTaskSource(source.id);
+        if (fetched) source = fetched;
+      }
+
+      const task = taskRepository.getTaskDetail(taskId);
+      if (task) {
+        notifyTasksChanged(task.stagePath, task.id);
+      }
+      return source;
+    }
+    case "updateTaskSource": {
+      const sourceId = String(payload.sourceId ?? "").trim();
+      const patch = (payload.patch ?? {}) as {
+        title?: string | null;
+        content?: string | null;
+        url?: string | null;
+      };
+      if (!sourceId) return null;
+      let source = taskRepository.updateTaskSource(sourceId, patch);
+      if (source && patch.url !== undefined && patch.url !== null && patch.url.trim()) {
+        const fetched = await taskRepository.fetchTaskSource(source.id);
+        if (fetched) source = fetched;
+      }
+
+      if (source) {
+        const task = taskRepository.getTaskDetail(source.taskId);
+        if (task) {
+          notifyTasksChanged(task.stagePath, task.id);
+        }
+      }
+      return source;
+    }
+    case "removeTaskSource": {
+      const sourceId = String(payload.sourceId ?? "").trim();
+      if (!sourceId) return { removed: false };
+      const source = taskRepository.getTaskSource(sourceId);
+      taskRepository.removeTaskSource(sourceId);
+      if (source) {
+        const task = taskRepository.getTaskDetail(source.taskId);
+        if (task) notifyTasksChanged(task.stagePath, task.id);
+      }
+      return { removed: true };
+    }
+    case "fetchTaskSource": {
+      const sourceId = String(payload.sourceId ?? "").trim();
+      if (!sourceId) return null;
+      const source = await taskRepository.fetchTaskSource(sourceId);
+      if (source) {
+        const task = taskRepository.getTaskDetail(source.taskId);
+        if (task) notifyTasksChanged(task.stagePath, task.id);
+      }
+      return source;
+    }
+    case "runTaskAction": {
+      const taskId = String(payload.taskId ?? "").trim();
+      const action = String(payload.action ?? "").trim() as TaskAction;
+      if (!taskId) {
+        throw new Error("taskId is required");
+      }
+      return runTaskActionInternal(taskId, action);
+    }
+    case "getTaskRuns": {
+      const taskId = String(payload.taskId ?? "").trim();
+      const limit = Number(payload.limit ?? 20);
+      return taskRepository.getTaskRuns(taskId, Number.isFinite(limit) ? limit : 20);
+    }
+    case "listStageConnectors": {
+      const stagePath = String(payload.stagePath ?? "").trim();
+      if (!stagePath) return [];
+      return connectors.listStageConnectors(stagePath);
+    }
+    case "startConnectorAuth": {
+      const stagePath = String(payload.stagePath ?? "").trim();
+      const provider = String(payload.provider ?? "").trim() as ConnectorProvider;
+      return connectors.startConnectorAuth(stagePath, provider);
+    }
+    case "getConnectorAuthStatus": {
+      const authSessionId = String(payload.authSessionId ?? "").trim();
+      return connectors.getConnectorAuthStatus(authSessionId);
+    }
+    case "disconnectStageConnector": {
+      const stagePath = String(payload.stagePath ?? "").trim();
+      const provider = String(payload.provider ?? "").trim() as ConnectorProvider;
+      await connectors.disconnectStageConnector(stagePath, provider);
+      return null;
+    }
+    default:
+      throw new Error(`Unsupported Tasks instrument method '${method}'`);
+  }
 }
 
 function addHiddenTaskSessionId(sessionId: string | null | undefined): void {
@@ -1858,6 +2436,7 @@ await prReviewStore.load();
 await prAgentReviewStore.load();
 await prAgentReviewStore.reconcileInterruptedRuns();
 await connectors.start();
+await initializeInstrumentRuntime();
 await ensureServer();
 approvals.start(4243);
 watcher.start();

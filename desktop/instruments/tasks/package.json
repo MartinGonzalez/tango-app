@@ -1,0 +1,32 @@
+{
+  "name": "@tango/instrument-tasks",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "tango": {
+    "instrument": {
+      "id": "tasks",
+      "name": "Tasks",
+      "group": "Core",
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",
+      "hostApiVersion": "1.0.0",
+      "panels": {
+        "sidebar": true,
+        "first": false,
+        "second": true,
+        "right": false
+      },
+      "permissions": [
+        "storage.files",
+        "storage.db",
+        "storage.properties",
+        "sessions",
+        "connectors.read",
+        "connectors.connect",
+        "stages.read",
+        "stages.observe"
+      ]
+    }
+  }
+}

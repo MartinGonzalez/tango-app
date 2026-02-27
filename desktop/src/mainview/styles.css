@@ -1085,6 +1085,10 @@ button {
   transition: all 100ms ease;
 }
 
+.sidebar-primary-btn[hidden] {
+  display: none !important;
+}
+
 .sidebar-primary-btn:hover {
   background: var(--bg-hover);
   color: var(--text);

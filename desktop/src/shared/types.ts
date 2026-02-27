@@ -9,4 +9,6 @@ export * from "./types/plugins.ts";
 export * from "./types/tasks.ts";
 export * from "./types/connectors.ts";
 export * from "./types/pull-requests.ts";
+export * from "./types/instruments.ts";
+export * from "./types/instrument-sdk.ts";
 export * from "./types/rpc.ts";

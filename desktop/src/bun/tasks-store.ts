@@ -15,7 +15,7 @@ import type {
 } from "../shared/types.ts";
 
 const DEFAULT_DB_PATH = join(homedir(), ".tango", "tasks.db");
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 type TaskUpdateFields = {
   title?: string;
@@ -724,6 +724,10 @@ export class TasksStore {
         `);
       }
 
+      if (current < 2) {
+        this.#migrateWorkspacePathToStagePath();
+      }
+
       this.#setUserVersion(CURRENT_SCHEMA_VERSION);
       this.#db.exec("COMMIT");
     } catch (err) {
@@ -738,6 +742,29 @@ export class TasksStore {
       throw new Error(`Task source not found: ${sourceId}`);
     }
     return source;
+  }
+
+  #migrateWorkspacePathToStagePath(): void {
+    const columns = this.#db.query("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    if (!Array.isArray(columns) || columns.length === 0) return;
+
+    let hasStagePath = columns.some((column) => column.name === "stage_path");
+    const hasWorkspacePath = columns.some((column) => column.name === "workspace_path");
+
+    if (!hasStagePath && hasWorkspacePath) {
+      this.#db.exec("ALTER TABLE tasks RENAME COLUMN workspace_path TO stage_path;");
+      hasStagePath = true;
+    }
+
+    this.#db.exec("DROP INDEX IF EXISTS idx_tasks_workspace_updated;");
+    if (hasStagePath) {
+      this.#db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_tasks_stage_updated
+          ON tasks(stage_path, updated_at DESC);
+      `);
+    } else {
+      throw new Error("Tasks schema migration failed: missing stage_path column");
+    }
   }
 }
 

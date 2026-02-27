@@ -27,6 +27,7 @@ import {
   type PullRequestSidebarSection,
 } from "./components/prs-sidebar.ts";
 import { ConnectorsSidebar } from "./components/connectors-sidebar.ts";
+import { InstrumentsSidebar } from "./components/instruments-sidebar.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ConnectorsView } from "./components/connectors-view.ts";
 import { ChatView } from "./components/chat-view.ts";
@@ -63,6 +64,7 @@ import type {
   PullRequestReviewState,
   PullRequestSummary,
   StageConnector,
+  InstrumentRegistryEntry,
   VcsInfo,
 } from "../shared/types.ts";
 
@@ -218,6 +220,17 @@ const rpc = Electroview.defineRPC<any>({
           void loadTaskDetail(state.selectedTaskId, true);
         }
       },
+      instrumentEvent: ({
+        instrumentId,
+        event,
+        payload,
+      }: {
+        instrumentId: string;
+        event: string;
+        payload?: unknown;
+      }) => {
+        void handleInstrumentEvent(instrumentId, event, payload);
+      },
       pullRequestAgentReviewChanged: ({
         repo,
         number,
@@ -233,12 +246,13 @@ const rpc = Electroview.defineRPC<any>({
 
 // @ts-ignore - electrobun is used internally by the webview runtime
 const _electrobun = new Electrobun.Electroview({ rpc });
+const TASKS_INSTRUMENT_ID = "tasks";
 
 // ── State ────────────────────────────────────────────────────────
 
 type AppState = {
   snapshot: Snapshot | null;
-  viewMode: "stages" | "plugins" | "tasks" | "prs" | "connectors";
+  viewMode: "stages" | "plugins" | "tasks" | "prs" | "connectors" | "instruments";
   filesListViewMode: FileListView;
   stages: string[];
   expandedStages: Set<string>;
@@ -255,6 +269,10 @@ type AppState = {
   plugins: InstalledPlugin[];
   pluginsLoading: boolean;
   pluginSelection: PluginSidebarSelection | null;
+  instrumentEntries: InstrumentRegistryEntry[];
+  instrumentsLoading: boolean;
+  instrumentsError: string | null;
+  activeInstrumentId: string | null;
   tasksByStage: Record<string, TaskCardSummary[]>;
   tasksLoading: boolean;
   selectedTaskId: string | null;
@@ -316,6 +334,10 @@ const appState = new Store<AppState>({
   plugins: [],
   pluginsLoading: false,
   pluginSelection: null,
+  instrumentEntries: [],
+  instrumentsLoading: false,
+  instrumentsError: null,
+  activeInstrumentId: null,
   tasksByStage: {},
   tasksLoading: false,
   selectedTaskId: null,
@@ -348,6 +370,7 @@ const appState = new Store<AppState>({
 let panelLayout: PanelLayout;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
+let instrumentsSidebar: InstrumentsSidebar;
 let tasksSidebar: TasksSidebar;
 let prsSidebar: PRsSidebar;
 let connectorsSidebar: ConnectorsSidebar;
@@ -362,6 +385,7 @@ let branchPanel: BranchPanel;
 let commitModal: CommitModal;
 let sidebarPrimaryPluginsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryTasksBtn: HTMLButtonElement | null = null;
+let sidebarPrimaryInstrumentsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryPRsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryConnectorsBtn: HTMLButtonElement | null = null;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -427,6 +451,10 @@ function init(): void {
     class: "sidebar-mode-view sidebar-mode-view-plugins",
     hidden: true,
   });
+  const instrumentsSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-instruments",
+    hidden: true,
+  });
   const tasksSidebarHost = h("div", {
     class: "sidebar-mode-view sidebar-mode-view-tasks",
     hidden: true,
@@ -441,6 +469,7 @@ function init(): void {
   });
   sidebarViews.appendChild(stagesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
+  sidebarViews.appendChild(instrumentsSidebarHost);
   sidebarViews.appendChild(tasksSidebarHost);
   sidebarViews.appendChild(prsSidebarHost);
   sidebarViews.appendChild(connectorsSidebarHost);
@@ -461,14 +490,24 @@ function init(): void {
   sidebarPrimaryTasksBtn = h("button", {
     class: "sidebar-primary-btn",
     onclick: () => {
-      appState.update((s) => ({ ...s, viewMode: "tasks" }));
-      panelLayout.showPanel("stages");
-      qs("#btn-toggle-stages")?.classList.add("active");
-      void loadAllStageTasks();
+      void openTasksInstrumentFromSidebar();
     },
   }, [
     tasksToolIcon("sidebar-primary-icon"),
     h("span", { class: "sidebar-primary-label" }, ["Tasks"]),
+  ]) as HTMLButtonElement;
+
+  sidebarPrimaryInstrumentsBtn = h("button", {
+    class: "sidebar-primary-btn",
+    onclick: () => {
+      appState.update((s) => ({ ...s, viewMode: "instruments" }));
+      panelLayout.showPanel("stages");
+      qs("#btn-toggle-stages")?.classList.add("active");
+      void loadInstruments(true);
+    },
+  }, [
+    pluginToolIcon("sidebar-primary-icon"),
+    h("span", { class: "sidebar-primary-label" }, ["Instruments"]),
   ]) as HTMLButtonElement;
 
   sidebarPrimaryPRsBtn = h("button", {
@@ -502,6 +541,7 @@ function init(): void {
     sidebarPrimaryTasksBtn,
     sidebarPrimaryPRsBtn,
     sidebarPrimaryConnectorsBtn,
+    sidebarPrimaryInstrumentsBtn,
   ]);
 
   const sidebarShell = h("div", { class: "sidebar-shell" }, [
@@ -635,6 +675,27 @@ function init(): void {
     },
     onBack: () => {
       appState.update((s) => ({ ...s, viewMode: "stages" }));
+    },
+  });
+
+  instrumentsSidebar = new InstrumentsSidebar(instrumentsSidebarHost, {
+    onActivate: (instrumentId) => {
+      void activateInstrument(instrumentId);
+    },
+    onBack: () => {
+      appState.update((s) => ({ ...s, viewMode: "stages" }));
+    },
+    onAddLocal: () => {
+      void installInstrumentFromLocalPath();
+    },
+    onToggleEnabled: (instrumentId, enabled) => {
+      void setInstrumentEnabled(instrumentId, enabled);
+    },
+    onRemoveLocal: (instrumentId) => {
+      void removeLocalInstrument(instrumentId);
+    },
+    onRetryMigration: (instrumentId) => {
+      void retryBlockedInstrumentMigration(instrumentId);
     },
   });
 
@@ -786,13 +847,13 @@ function init(): void {
       }));
     },
   });
-  tasksView = new TasksView(chatPanel, {
+  tasksView = new TasksView(diffPanel, {
     onUpdateTask: async (taskId, patch) => {
-      await (rpc as any).request.updateTask({ taskId, patch });
+      await invokeTasksInstrument("updateTask", { taskId, patch });
     },
     onDeleteTask: async (taskId) => {
       const detail = appState.get().selectedTaskDetail;
-      await (rpc as any).request.deleteTask({ taskId });
+      await invokeTasksInstrument("deleteTask", { taskId });
       if (!detail) return;
       appState.update((s) => ({
         ...s,
@@ -811,7 +872,7 @@ function init(): void {
       const state = appState.get();
       const detail = state.selectedTaskDetail?.id === taskId
         ? state.selectedTaskDetail
-        : await (rpc as any).request.getTaskDetail({ taskId });
+        : await invokeTasksInstrument<TaskCardDetail | null>("getTaskDetail", { taskId });
 
       if (!detail) {
         throw new Error("Task not found");
@@ -839,7 +900,7 @@ function init(): void {
       ensureBranchHistory(detail.stagePath);
     },
     onAddSource: async (taskId, payload) => {
-      await (rpc as any).request.addTaskSource({
+      await invokeTasksInstrument("addTaskSource", {
         taskId,
         kind: payload.kind,
         url: payload.url,
@@ -847,13 +908,13 @@ function init(): void {
       });
     },
     onUpdateSource: async (sourceId, patch) => {
-      await (rpc as any).request.updateTaskSource({ sourceId, patch });
+      await invokeTasksInstrument("updateTaskSource", { sourceId, patch });
     },
     onRemoveSource: async (sourceId) => {
-      await (rpc as any).request.removeTaskSource({ sourceId });
+      await invokeTasksInstrument("removeTaskSource", { sourceId });
     },
     onFetchSource: async (sourceId) => {
-      await (rpc as any).request.fetchTaskSource({ sourceId });
+      await invokeTasksInstrument("fetchTaskSource", { sourceId });
     },
     onOpenConnectors: () => {
       appState.update((s) => ({ ...s, viewMode: "connectors" }));
@@ -865,7 +926,7 @@ function init(): void {
     onRunAction: async (taskId, action) => {
       const detail = appState.get().selectedTaskDetail;
       const stagePath = detail?.stagePath ?? appState.get().activeStage ?? null;
-      const result: { runId: string; sessionId: string | null } = await (rpc as any).request.runTaskAction({
+      const result = await invokeTasksInstrument<{ runId: string; sessionId: string | null }>("runTaskAction", {
         taskId,
         action,
       });
@@ -1164,9 +1225,19 @@ function init(): void {
       state.pluginSelection
     );
     const isPluginsMode = state.viewMode === "plugins";
+    const isInstrumentsMode = state.viewMode === "instruments";
     const isTasksMode = state.viewMode === "tasks";
     const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
+    const tasksInstrumentEntry = state.instrumentEntries.find(
+      (entry) => entry.id === TASKS_INSTRUMENT_ID
+    ) ?? null;
+    const hasTasksInstrument = Boolean(tasksInstrumentEntry);
+    const canOpenTasks = Boolean(
+      tasksInstrumentEntry
+      && tasksInstrumentEntry.enabled
+      && tasksInstrumentEntry.status !== "blocked"
+    );
     const taskGroups = buildTaskStageGroups(state);
     const pullRequestSections = buildPullRequestSidebarSections(state);
     const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
@@ -1177,19 +1248,41 @@ function init(): void {
       ? state.connectorAuthSession
       : null;
 
-    sidebarPrimaryActions.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
-    stagesSidebarHost.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
+    sidebarPrimaryActions.hidden = isPluginsMode
+      || isInstrumentsMode
+      || isTasksMode
+      || isPRMode
+      || isConnectorsMode;
+    stagesSidebarHost.hidden = isPluginsMode
+      || isInstrumentsMode
+      || isTasksMode
+      || isPRMode
+      || isConnectorsMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
+    instrumentsSidebarHost.hidden = !isInstrumentsMode;
     tasksSidebarHost.hidden = !isTasksMode;
     prsSidebarHost.hidden = !isPRMode;
     connectorsSidebarHost.hidden = !isConnectorsMode;
     sidebarPrimaryPluginsBtn?.classList.toggle("active", isPluginsMode);
+    if (sidebarPrimaryTasksBtn) {
+      sidebarPrimaryTasksBtn.hidden = !hasTasksInstrument;
+      sidebarPrimaryTasksBtn.disabled = !canOpenTasks;
+      sidebarPrimaryTasksBtn.title = canOpenTasks
+        ? "Open Tasks"
+        : (tasksInstrumentEntry?.lastError ?? "Tasks instrument is unavailable");
+    }
     sidebarPrimaryTasksBtn?.classList.toggle("active", isTasksMode);
+    sidebarPrimaryInstrumentsBtn?.classList.toggle("active", isInstrumentsMode);
     sidebarPrimaryPRsBtn?.classList.toggle("active", isPRMode);
     sidebarPrimaryConnectorsBtn?.classList.toggle("active", isConnectorsMode);
 
     pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
     pluginsSidebar.setSelection(pluginsSelection);
+    instrumentsSidebar.render(state.instrumentEntries, {
+      loading: state.instrumentsLoading,
+      error: state.instrumentsError,
+    });
+    instrumentsSidebar.setActive(state.activeInstrumentId);
     tasksSidebar.render(taskGroups, { loading: state.tasksLoading });
     tasksSidebar.setSelection(state.selectedTaskId);
     prsSidebar.render(pullRequestSections, {
@@ -1224,11 +1317,16 @@ function init(): void {
       stagePath: state.activeStage,
     });
 
-    chatView.element.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
+    chatView.element.hidden = isPluginsMode
+      || isInstrumentsMode
+      || isTasksMode
+      || isPRMode
+      || isConnectorsMode;
     pluginsPreview.setVisible(isPluginsMode);
     tasksView.setVisible(isTasksMode);
     prView.setVisible(isPRMode);
     connectorsView.setVisible(isConnectorsMode);
+    diffView.element.hidden = isTasksMode;
 
     if (state.activeStage && state.activeStage !== prevConnectorsStage) {
       prevConnectorsStage = state.activeStage;
@@ -1239,18 +1337,32 @@ function init(): void {
 
     syncConnectorAuthPollTimer(state);
 
-    if (isPluginsMode || isTasksMode || isConnectorsMode) {
-      panelLayout.hidePanel("diff");
+    const hideChatPanel = isTasksMode;
+    const hideDiffPanel = isPluginsMode || isConnectorsMode || isInstrumentsMode;
+
+    if (hideChatPanel) panelLayout.hidePanel("chat");
+    else panelLayout.showPanel("chat");
+
+    if (hideDiffPanel) panelLayout.hidePanel("diff");
+    else panelLayout.showPanel("diff");
+
+    if (hideDiffPanel) {
       if (sidebarWidthBeforeSwitch > 0) {
         panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
       }
       prevViewMode = state.viewMode;
       return;
     }
-
-    panelLayout.showPanel("diff");
     if (sidebarWidthBeforeSwitch > 0) {
       panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
+    }
+
+    if (isTasksMode) {
+      if (commitModal.isOpen) {
+        commitModal.close();
+      }
+      prevViewMode = state.viewMode;
+      return;
     }
 
     filesPanel.setReviewMode(isPRMode);
@@ -1276,7 +1388,7 @@ function init(): void {
 
     if (
       viewModeChanged
-      && prevViewMode === "prs"
+      && (prevViewMode === "prs" || prevViewMode === "tasks")
       && state.viewMode === "stages"
       && state.activeStage
     ) {
@@ -1330,9 +1442,46 @@ function init(): void {
   loadStages();
   loadSessionNames();
   loadPlugins();
+  loadInstruments();
+
+  // Keep instrument registry fresh when app regains focus.
+  window.addEventListener("focus", () => {
+    void loadInstruments(true);
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void loadInstruments(true);
+    }
+  });
 }
 
 // ── Actions ──────────────────────────────────────────────────────
+
+async function invokeTasksInstrument<T = unknown>(
+  method: string,
+  params?: Record<string, unknown>
+): Promise<T> {
+  const response: { result: T } = await (rpc as any).request.instrumentInvoke({
+    instrumentId: TASKS_INSTRUMENT_ID,
+    method,
+    params,
+  });
+  return response.result;
+}
+
+async function openTasksInstrumentFromSidebar(): Promise<void> {
+  await loadInstruments(false);
+  const hasTasks = appState.get().instrumentEntries.some((entry) => entry.id === TASKS_INSTRUMENT_ID);
+  if (!hasTasks) {
+    appState.update((s) => ({
+      ...s,
+      viewMode: "instruments",
+      instrumentsError: "Tasks instrument is not installed",
+    }));
+    return;
+  }
+  await activateInstrument(TASKS_INSTRUMENT_ID);
+}
 
 async function loadSessionTranscript(sessionId: string): Promise<void> {
   const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
@@ -1794,7 +1943,6 @@ async function loadStages(): Promise<void> {
         ensureBranchHistory(wsPath);
       }
     }
-    void loadAllStageTasks();
   } catch {
     // First run — no stages yet
   }
@@ -1836,6 +1984,216 @@ async function loadPlugins(force = false): Promise<void> {
       ...s,
       pluginsLoading: false,
     }));
+  }
+}
+
+async function loadInstruments(force = false): Promise<void> {
+  const state = appState.get();
+  if (state.instrumentsLoading && !force) return;
+
+  appState.update((s) => ({
+    ...s,
+    instrumentsLoading: true,
+    instrumentsError: null,
+  }));
+
+  try {
+    const entries: InstrumentRegistryEntry[] = await (rpc as any).request.listInstruments({});
+    const prevActiveId = appState.get().activeInstrumentId;
+    const nextActiveId = entries.some((entry) => entry.id === prevActiveId)
+      ? prevActiveId
+      : (entries.find((entry) => entry.id === TASKS_INSTRUMENT_ID)?.id ?? null);
+
+    appState.update((s) => ({
+      ...s,
+      instrumentEntries: entries,
+      activeInstrumentId: nextActiveId,
+      instrumentsLoading: false,
+      instrumentsError: null,
+    }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to load instruments:", err);
+    appState.update((s) => ({
+      ...s,
+      instrumentsLoading: false,
+      instrumentsError: message,
+    }));
+  }
+}
+
+async function activateInstrument(instrumentId: string): Promise<void> {
+  const id = String(instrumentId ?? "").trim();
+  if (!id) return;
+
+  const entry = appState.get().instrumentEntries.find((item) => item.id === id) ?? null;
+  if (!entry) return;
+
+  appState.update((s) => ({
+    ...s,
+    activeInstrumentId: id,
+    instrumentsError: null,
+  }));
+
+  if (!entry.enabled || entry.status === "disabled") {
+    appState.update((s) => ({
+      ...s,
+      viewMode: "instruments",
+      instrumentsError: `Instrument '${entry.name}' is disabled`,
+    }));
+    return;
+  }
+
+  if (entry.status === "blocked") {
+    appState.update((s) => ({
+      ...s,
+      viewMode: "instruments",
+      instrumentsError: entry.lastError || `Instrument '${entry.name}' is blocked`,
+    }));
+    return;
+  }
+
+  panelLayout.showPanel("stages");
+  qs("#btn-toggle-stages")?.classList.add("active");
+
+  if (id === TASKS_INSTRUMENT_ID) {
+    appState.update((s) => ({ ...s, viewMode: "tasks" }));
+    await loadAllStageTasks();
+    return;
+  }
+
+  appState.update((s) => ({
+    ...s,
+    viewMode: "instruments",
+    instrumentsError: `Instrument '${entry.name}' UI is not mounted yet`,
+  }));
+}
+
+async function installInstrumentFromLocalPath(): Promise<void> {
+  try {
+    const path: string | null = await (rpc as any).request.pickDirectory({});
+    if (!path) return;
+
+    await (rpc as any).request.installInstrumentFromPath({ path });
+    await loadInstruments(true);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to install local instrument:", err);
+    appState.update((s) => ({
+      ...s,
+      instrumentsError: message,
+    }));
+  }
+}
+
+async function setInstrumentEnabled(instrumentId: string, enabled: boolean): Promise<void> {
+  try {
+    await (rpc as any).request.setInstrumentEnabled({ instrumentId, enabled });
+    await loadInstruments(true);
+
+    if (!enabled) {
+      const state = appState.get();
+      if (state.activeInstrumentId === instrumentId && state.viewMode === "tasks") {
+        appState.update((s) => ({ ...s, viewMode: "instruments" }));
+      }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to toggle instrument:", err);
+    appState.update((s) => ({
+      ...s,
+      instrumentsError: message,
+    }));
+  }
+}
+
+async function removeLocalInstrument(instrumentId: string): Promise<void> {
+  const entry = appState.get().instrumentEntries.find((item) => item.id === instrumentId) ?? null;
+  if (!entry) return;
+  if (entry.isBundled) {
+    appState.update((s) => ({
+      ...s,
+      instrumentsError: `Bundled instrument '${entry.name}' cannot be uninstalled`,
+    }));
+    return;
+  }
+
+  try {
+    await (rpc as any).request.removeInstrument({
+      instrumentId,
+      deleteData: false,
+    });
+    await loadInstruments(true);
+    appState.update((s) => ({
+      ...s,
+      activeInstrumentId: s.activeInstrumentId === instrumentId ? null : s.activeInstrumentId,
+      viewMode: (s.viewMode === "tasks" || s.viewMode === "instruments")
+        ? "stages"
+        : s.viewMode,
+      selectedTaskId: s.activeInstrumentId === instrumentId ? null : s.selectedTaskId,
+      selectedTaskDetail: s.activeInstrumentId === instrumentId ? null : s.selectedTaskDetail,
+    }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to uninstall instrument:", err);
+    appState.update((s) => ({
+      ...s,
+      instrumentsError: message,
+    }));
+  }
+}
+
+async function retryBlockedInstrumentMigration(instrumentId: string): Promise<void> {
+  try {
+    const response: { result: { ok: boolean; blocked: boolean; error: string | null } }
+      = await (rpc as any).request.instrumentInvoke({
+        instrumentId,
+        method: "retryMigration",
+        params: {},
+      });
+    await loadInstruments(true);
+
+    if (response.result.ok) {
+      await activateInstrument(instrumentId);
+      return;
+    }
+
+    appState.update((s) => ({
+      ...s,
+      instrumentsError: response.result.error ?? `Migration retry failed for '${instrumentId}'`,
+    }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to retry migration:", err);
+    appState.update((s) => ({
+      ...s,
+      instrumentsError: message,
+    }));
+  }
+}
+
+async function handleInstrumentEvent(
+  instrumentId: string,
+  event: string,
+  payload?: unknown
+): Promise<void> {
+  if (instrumentId !== TASKS_INSTRUMENT_ID || event !== "tasks.changed") {
+    return;
+  }
+
+  const body = (payload ?? {}) as {
+    stagePath?: string;
+    taskId?: string | null;
+  };
+  const stagePath = String(body.stagePath ?? "").trim();
+  if (!stagePath) return;
+  await loadStageTasks(stagePath, true);
+
+  const taskId = body.taskId ? String(body.taskId).trim() : "";
+  if (!taskId) return;
+  const state = appState.get();
+  if (state.selectedTaskId === taskId) {
+    await loadTaskDetail(taskId, true);
   }
 }
 
@@ -1895,7 +2253,7 @@ async function loadAllStageTasks(): Promise<void> {
 
   try {
     const pairs = await Promise.all(state.stages.map(async (stagePath) => {
-      const tasks: TaskCardSummary[] = await (rpc as any).request.getStageTasks({ stagePath });
+      const tasks = await invokeTasksInstrument<TaskCardSummary[]>("listStageTasks", { stagePath });
       return [stagePath, tasks] as const;
     }));
 
@@ -1923,10 +2281,13 @@ async function loadAllStageTasks(): Promise<void> {
       await loadTaskDetail(selectedTaskId, true);
     }
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.error("Failed to load tasks:", err);
     appState.update((s) => ({
       ...s,
       tasksLoading: false,
+      viewMode: s.viewMode === "tasks" ? "instruments" : s.viewMode,
+      instrumentsError: message,
     }));
   }
 }
@@ -1934,7 +2295,7 @@ async function loadAllStageTasks(): Promise<void> {
 async function loadStageTasks(stagePath: string, refreshDetail = false): Promise<void> {
   if (!stagePath) return;
   try {
-    const tasks: TaskCardSummary[] = await (rpc as any).request.getStageTasks({ stagePath });
+    const tasks = await invokeTasksInstrument<TaskCardSummary[]>("listStageTasks", { stagePath });
     appState.update((s) => ({
       ...s,
       tasksByStage: {
@@ -1971,7 +2332,7 @@ async function loadStageTasks(stagePath: string, refreshDetail = false): Promise
 async function loadTaskDetail(taskId: string, keepSelection = false): Promise<void> {
   if (!taskId) return;
   try {
-    const detail: TaskCardDetail | null = await (rpc as any).request.getTaskDetail({ taskId });
+    const detail = await invokeTasksInstrument<TaskCardDetail | null>("getTaskDetail", { taskId });
     if (!detail) {
       appState.update((s) => ({
         ...s,
@@ -2590,7 +2951,7 @@ function applyCachedSelectedPullRequestDiff(state: AppState): boolean {
 
 async function createTaskInStage(stagePath: string): Promise<void> {
   try {
-    const detail: TaskCardDetail = await (rpc as any).request.createTask({
+    const detail = await invokeTasksInstrument<TaskCardDetail>("createTask", {
       stagePath,
       title: "Untitled task",
       notes: "",
@@ -2601,6 +2962,7 @@ async function createTaskInStage(stagePath: string): Promise<void> {
       selectedTaskId: detail.id,
       selectedTaskDetail: detail,
       activeStage: stagePath,
+      activeInstrumentId: TASKS_INSTRUMENT_ID,
       viewMode: "tasks",
     }));
 
@@ -2633,7 +2995,6 @@ async function openStage(): Promise<void> {
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
     ensureBranchHistory(dir);
-    loadStageTasks(dir);
     loadStageConnectors(dir, true);
   } catch (err) {
     console.error("Failed to pick directory:", err);
@@ -2693,7 +3054,10 @@ async function removeStage(path: string): Promise<void> {
       ensureBranchHistory(nextStage);
       void loadStageConnectors(nextStage, false);
     }
-    loadAllStageTasks();
+    const state = appState.get();
+    if (state.activeInstrumentId === TASKS_INSTRUMENT_ID || state.viewMode === "tasks") {
+      void loadAllStageTasks();
+    }
   } catch (err) {
     console.error("Failed to remove stage:", err);
   }

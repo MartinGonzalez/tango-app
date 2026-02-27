@@ -35,6 +35,7 @@ import type {
   PullRequestAgentReviewDocument,
   PullRequestAgentReviewStatus,
 } from "./pull-requests.ts";
+import type { InstrumentRegistryEntry } from "./instruments.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { ClaudeStreamEvent } from "./stream.ts";
 
@@ -341,6 +342,81 @@ export type AppRPC = {
         params: {};
         response: string | null;
       };
+      listInstruments: {
+        params: {};
+        response: InstrumentRegistryEntry[];
+      };
+      installInstrumentFromPath: {
+        params: { path: string };
+        response: InstrumentRegistryEntry;
+      };
+      setInstrumentEnabled: {
+        params: { instrumentId: string; enabled: boolean };
+        response: InstrumentRegistryEntry;
+      };
+      removeInstrument: {
+        params: { instrumentId: string; deleteData?: boolean };
+        response: { removed: boolean; dataDeleted: boolean };
+      };
+      instrumentStorageGetProperty: {
+        params: { instrumentId: string; key: string };
+        response: { value: unknown | null };
+      };
+      instrumentStorageSetProperty: {
+        params: { instrumentId: string; key: string; value: unknown };
+        response: void;
+      };
+      instrumentStorageDeleteProperty: {
+        params: { instrumentId: string; key: string };
+        response: void;
+      };
+      instrumentStorageReadFile: {
+        params: { instrumentId: string; path: string; encoding?: "utf8" | "base64" };
+        response: { content: string; encoding: "utf8" | "base64" };
+      };
+      instrumentStorageWriteFile: {
+        params: {
+          instrumentId: string;
+          path: string;
+          content: string;
+          encoding?: "utf8" | "base64";
+        };
+        response: void;
+      };
+      instrumentStorageDeleteFile: {
+        params: { instrumentId: string; path: string };
+        response: void;
+      };
+      instrumentStorageListFiles: {
+        params: { instrumentId: string; dir?: string };
+        response: string[];
+      };
+      instrumentStorageSqlQuery: {
+        params: {
+          instrumentId: string;
+          db?: string;
+          sql: string;
+          params?: unknown[];
+        };
+        response: { rows: Record<string, unknown>[] };
+      };
+      instrumentStorageSqlExecute: {
+        params: {
+          instrumentId: string;
+          db?: string;
+          sql: string;
+          params?: unknown[];
+        };
+        response: { changes: number; lastInsertRowid: number | null };
+      };
+      instrumentInvoke: {
+        params: {
+          instrumentId: string;
+          method: string;
+          params?: Record<string, unknown>;
+        };
+        response: { result: unknown };
+      };
     };
     messages: {};
   }>;
@@ -370,6 +446,11 @@ export type AppRPC = {
         number: number;
         runId: string;
         status: PullRequestAgentReviewStatus;
+      };
+      instrumentEvent: {
+        instrumentId: string;
+        event: string;
+        payload?: unknown;
       };
     };
   }>;
