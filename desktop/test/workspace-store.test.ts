@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { WorkspaceStore } from "../src/bun/workspace-store.ts";
+import { StageStore } from "../src/bun/stage-store.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,7 +9,7 @@ let filePath: string;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "ws-test-"));
-  filePath = join(tempDir, "workspaces.json");
+  filePath = join(tempDir, "stages.json");
 });
 
 afterEach(async () => {
@@ -18,20 +18,20 @@ afterEach(async () => {
   } catch {}
 });
 
-describe("WorkspaceStore", () => {
+describe("StageStore", () => {
   test("getAll returns empty array before load", () => {
-    const store = new WorkspaceStore(filePath);
+    const store = new StageStore(filePath);
     expect(store.getAll()).toEqual([]);
   });
 
   test("load with missing file results in empty list", async () => {
-    const store = new WorkspaceStore(filePath);
+    const store = new StageStore(filePath);
     await store.load();
     expect(store.getAll()).toEqual([]);
   });
 
-  test("add places new workspace at front", async () => {
-    const store = new WorkspaceStore(filePath);
+  test("add places new stage at front", async () => {
+    const store = new StageStore(filePath);
     await store.load();
 
     await store.add("/project/a");
@@ -42,8 +42,8 @@ describe("WorkspaceStore", () => {
     expect(all[1]).toBe("/project/a");
   });
 
-  test("add moves existing workspace to front", async () => {
-    const store = new WorkspaceStore(filePath);
+  test("add moves existing stage to front", async () => {
+    const store = new StageStore(filePath);
     await store.load();
 
     await store.add("/project/a");
@@ -54,8 +54,8 @@ describe("WorkspaceStore", () => {
     expect(all).toEqual(["/project/a", "/project/b"]);
   });
 
-  test("remove deletes workspace", async () => {
-    const store = new WorkspaceStore(filePath);
+  test("remove deletes stage", async () => {
+    const store = new StageStore(filePath);
     await store.load();
 
     await store.add("/project/a");
@@ -67,7 +67,7 @@ describe("WorkspaceStore", () => {
   });
 
   test("getAll returns a copy, not a reference", async () => {
-    const store = new WorkspaceStore(filePath);
+    const store = new StageStore(filePath);
     await store.load();
 
     await store.add("/project/a");
@@ -78,13 +78,13 @@ describe("WorkspaceStore", () => {
   });
 
   test("persists data across instances", async () => {
-    const store1 = new WorkspaceStore(filePath);
+    const store1 = new StageStore(filePath);
     await store1.load();
     await store1.add("/project/a");
     await store1.add("/project/b");
 
     // New instance reading the same file
-    const store2 = new WorkspaceStore(filePath);
+    const store2 = new StageStore(filePath);
     await store2.load();
 
     expect(store2.getAll()).toEqual(["/project/b", "/project/a"]);

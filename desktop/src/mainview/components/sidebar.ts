@@ -1,5 +1,5 @@
 import { h, clearChildren } from "../lib/dom.ts";
-import { menuDotsIcon, workspaceBranchIcon } from "../lib/icons.ts";
+import { menuDotsIcon, vcsBranchLabel } from "../lib/icons.ts";
 import type { SessionInfo } from "../../shared/types.ts";
 
 const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
@@ -9,10 +9,14 @@ const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
   idle: { char: "\u25CB", cls: "dot-idle" },
   finished: { char: "\u25CB", cls: "dot-finished" },
 };
-const WORKSPACES_TITLE_ICON_SVG =
-  '<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.75 5.25C1.75 4.2835 2.5335 3.5 3.5 3.5H6.10225C6.49963 3.5 6.88442 3.64019 7.18875 3.89592L8.06125 4.62908C8.36558 4.88481 8.75037 5.025 9.14775 5.025H12.5C13.4665 5.025 14.25 5.8085 14.25 6.775V11.5C14.25 12.4665 13.4665 13.25 12.5 13.25H3.5C2.5335 13.25 1.75 12.4665 1.75 11.5V5.25Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>';
+function materialIcon(name: string): HTMLElement {
+  return h("span", {
+    class: "material-symbols-outlined",
+    "aria-hidden": "true",
+  }, [name]);
+}
 
-export type WorkspaceData = {
+export type StageData = {
   path: string;
   name: string;
   branch: string | null;
@@ -22,12 +26,12 @@ export type WorkspaceData = {
 };
 
 export type SidebarCallbacks = {
-  onSelectSession: (sessionId: string, workspacePath: string) => void;
-  onNewSession: (workspacePath: string) => void;
-  onAddWorkspace: () => void;
-  onRemoveWorkspace: (path: string) => void;
-  onDeleteSession: (sessionId: string, workspacePath: string) => void;
-  onToggleWorkspace: (path: string) => void;
+  onSelectSession: (sessionId: string, stagePath: string) => void;
+  onNewSession: (stagePath: string) => void;
+  onAddStage: () => void;
+  onRemoveStage: (path: string) => void;
+  onDeleteSession: (sessionId: string, stagePath: string) => void;
+  onToggleStage: (path: string) => void;
   onRenameSession: (sessionId: string, newName: string) => void;
 };
 
@@ -38,25 +42,21 @@ export class Sidebar {
   #activeSessionId: string | null = null;
   #openMenuSessionId: string | null = null;
   #renamingSessionId: string | null = null;
-  #removeWorkspaceConfirmOpen = false;
+  #removeStageConfirmOpen = false;
+  #animatingPath: string | null = null;
 
   constructor(container: HTMLElement, callbacks: SidebarCallbacks) {
     this.#callbacks = callbacks;
 
     const header = h("div", { class: "ws-header" }, [
       h("span", { class: "ws-header-title" }, [
-        h("span", {
-          class: "ws-header-title-icon",
-          "aria-hidden": "true",
-          innerHTML: WORKSPACES_TITLE_ICON_SVG,
-        }),
-        h("span", { class: "ws-header-title-text" }, ["Workspaces"]),
+        h("span", { class: "ws-header-title-text" }, ["Stages"]),
       ]),
       h("button", {
         class: "ws-add-btn",
-        onclick: () => callbacks.onAddWorkspace(),
-        title: "Add workspace",
-      }, ["+"]),
+        onclick: () => callbacks.onAddStage(),
+        title: "Add stage",
+      }, [materialIcon("add")]),
     ]);
 
     this.#listEl = h("div", { class: "ws-list" });
@@ -79,31 +79,32 @@ export class Sidebar {
     }
   }
 
-  render(workspaces: WorkspaceData[]): void {
+  render(stages: StageData[]): void {
     // Don't re-render if a rename or menu is open (preserves UI state)
     if (this.#renamingSessionId || this.#openMenuSessionId) return;
 
     clearChildren(this.#listEl);
 
-    if (workspaces.length === 0) {
+    if (stages.length === 0) {
       this.#listEl.appendChild(
         h("div", { class: "ws-empty" }, [
-          h("div", { class: "ws-empty-text" }, ["No workspaces"]),
+          h("div", { class: "ws-empty-text" }, ["No stages"]),
           h("button", {
             class: "ws-empty-btn",
-            onclick: () => this.#callbacks.onAddWorkspace(),
-          }, ["Open Workspace"]),
+            onclick: () => this.#callbacks.onAddStage(),
+          }, ["Open Stage"]),
         ])
       );
       return;
     }
 
-    for (const ws of workspaces) {
-      this.#listEl.appendChild(this.#renderWorkspace(ws));
+    for (const ws of stages) {
+      this.#listEl.appendChild(this.#renderStage(ws));
     }
+    this.#animatingPath = null;
   }
 
-  #renderWorkspace(ws: WorkspaceData): HTMLElement {
+  #renderStage(ws: StageData): HTMLElement {
     const activeCount = ws.sessions.filter(
       (s) => s.activity === "working" || s.activity === "waiting_for_input"
     ).length;
@@ -117,20 +118,21 @@ export class Sidebar {
         class: "ws-folder-header",
         role: "button",
         tabindex: "0",
-        onclick: () => this.#callbacks.onToggleWorkspace(ws.path),
+        onclick: () => {
+          this.#animatingPath = ws.path;
+          this.#callbacks.onToggleStage(ws.path);
+        },
         onkeydown: (event: KeyboardEvent) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
-          this.#callbacks.onToggleWorkspace(ws.path);
+          this.#animatingPath = ws.path;
+          this.#callbacks.onToggleStage(ws.path);
         },
       },
       [
         h("div", { class: "ws-folder-meta" }, [
           h("span", { class: "ws-folder-name" }, [ws.name]),
-          h("span", { class: "ws-folder-branch" }, [
-            workspaceBranchIcon(),
-            h("span", { class: "ws-folder-branch-text" }, [ws.branch ?? "No branch"]),
-          ]),
+          vcsBranchLabel(ws.branch ?? "No branch"),
         ]),
         ...(activeBadge ? [activeBadge] : []),
       ]
@@ -144,22 +146,22 @@ export class Sidebar {
           this.#callbacks.onNewSession(ws.path);
         },
         title: "New session",
-      }, ["+"]),
+      }, [materialIcon("add")]),
       h("button", {
         class: "ws-action-btn ws-action-remove",
         onclick: async (e: Event) => {
           e.stopPropagation();
-          const confirmed = await this.#confirmWorkspaceRemoval(ws.name);
+          const confirmed = await this.#confirmStageRemoval(ws.name);
           if (!confirmed) return;
-          this.#callbacks.onRemoveWorkspace(ws.path);
+          this.#callbacks.onRemoveStage(ws.path);
         },
-        title: "Remove workspace",
-      }, ["\u00D7"]),
+        title: "Remove stage",
+      }, [materialIcon("delete")]),
     ]);
 
     const headerRow = h("div", { class: "ws-folder-row" }, [
       folderHeader,
-      actions,
+      ...(ws.expanded ? [actions] : []),
     ]);
 
     const folder = h("div", {
@@ -167,26 +169,38 @@ export class Sidebar {
       dataset: { wsPath: ws.path },
     }, [headerRow]);
 
-    if (ws.expanded) {
-      const sessionsList = h("div", { class: "ws-sessions" });
+    const sessionsList = h("div", { class: "ws-sessions" });
 
-      if (ws.sessions.length === 0) {
-        sessionsList.appendChild(
-          h("div", { class: "ws-no-sessions" }, ["No sessions"])
-        );
-      } else {
-        for (const session of ws.sessions) {
-          sessionsList.appendChild(this.#renderSession(session, ws.path));
-        }
+    if (ws.sessions.length === 0) {
+      sessionsList.appendChild(
+        h("div", { class: "ws-no-sessions" }, ["No sessions"])
+      );
+    } else {
+      for (const session of ws.sessions) {
+        sessionsList.appendChild(this.#renderSession(session, ws.path));
       }
-
-      folder.appendChild(sessionsList);
     }
+
+    const animate = ws.path === this.#animatingPath;
+    const isCollapsed = !ws.expanded;
+    const initialCollapsed = animate ? !isCollapsed : isCollapsed;
+    const collapsible = h("div", { class: `collapsible${initialCollapsed ? " is-collapsed" : ""}` }, [
+      h("div", { class: "collapsible-inner" }, [sessionsList]),
+    ]);
+    if (animate) {
+      requestAnimationFrame(() => {
+        collapsible.offsetHeight;
+        requestAnimationFrame(() => {
+          collapsible.classList.toggle("is-collapsed", isCollapsed);
+        });
+      });
+    }
+    folder.appendChild(collapsible);
 
     return folder;
   }
 
-  #renderSession(session: SessionInfo, workspacePath: string): HTMLElement {
+  #renderSession(session: SessionInfo, stagePath: string): HTMLElement {
     const dot = ACTIVITY_DOTS[session.activity] ?? ACTIVITY_DOTS.idle;
     const label = formatSessionLabel(session.topic, session.prompt);
     const isActive = session.sessionId === this.#activeSessionId;
@@ -207,7 +221,7 @@ export class Sidebar {
           if ((e.target as HTMLElement).closest(".ws-session-menu-btn, .ws-session-menu")) {
             return;
           }
-          this.#callbacks.onSelectSession(session.sessionId, workspacePath);
+          this.#callbacks.onSelectSession(session.sessionId, stagePath);
         },
       },
       [
@@ -220,7 +234,7 @@ export class Sidebar {
           class: "ws-session-menu-btn",
           onclick: (e: Event) => {
             e.stopPropagation();
-            this.#toggleSessionMenu(session.sessionId, sessionItem, workspacePath);
+            this.#toggleSessionMenu(session.sessionId, sessionItem, stagePath);
           },
           title: "Session options",
         }, [menuDotsIcon()]),
@@ -230,7 +244,7 @@ export class Sidebar {
     return sessionItem;
   }
 
-  #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement, workspacePath: string): void {
+  #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement, stagePath: string): void {
     // Close any open menu
     const existingMenu = this.#el.querySelector(".ws-session-menu");
     if (existingMenu) {
@@ -255,7 +269,7 @@ export class Sidebar {
       h("button", {
         class: "ws-session-menu-item ws-session-menu-item-danger",
         onclick: () => {
-          this.#callbacks.onDeleteSession(sessionId, workspacePath);
+          this.#callbacks.onDeleteSession(sessionId, stagePath);
           menu.remove();
           this.#openMenuSessionId = null;
         },
@@ -327,9 +341,9 @@ export class Sidebar {
     return this.#el;
   }
 
-  async #confirmWorkspaceRemoval(workspaceName: string): Promise<boolean> {
-    if (this.#removeWorkspaceConfirmOpen) return false;
-    this.#removeWorkspaceConfirmOpen = true;
+  async #confirmStageRemoval(stageName: string): Promise<boolean> {
+    if (this.#removeStageConfirmOpen) return false;
+    this.#removeStageConfirmOpen = true;
 
     return await new Promise<boolean>((resolve) => {
       const titleId = "ws-remove-confirm-title";
@@ -349,9 +363,9 @@ export class Sidebar {
         "aria-modal": "true",
         "aria-labelledby": titleId,
       }, [
-        h("div", { class: "ws-confirm-title", id: titleId }, ["Remove workspace"]),
+        h("div", { class: "ws-confirm-title", id: titleId }, ["Remove stage"]),
         h("div", { class: "ws-confirm-text" }, [
-          `Remove "${workspaceName}" from the workspace list?`,
+          `Remove "${stageName}" from the stage list?`,
         ]),
         h("div", { class: "ws-confirm-actions" }, [cancelBtn, removeBtn]),
       ]);
@@ -362,7 +376,7 @@ export class Sidebar {
         settled = true;
         overlay.remove();
         document.removeEventListener("keydown", onKeyDown, true);
-        this.#removeWorkspaceConfirmOpen = false;
+        this.#removeStageConfirmOpen = false;
         resolve(result);
       };
 

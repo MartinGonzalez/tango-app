@@ -4,29 +4,30 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
+import { getVcsStrategy } from "./vcs/vcs-provider.ts";
 
 // ── Snapshot store ──────────────────────────────────────────────
-// Per-workspace snapshots used for:
+// Per-stage snapshots used for:
 // - allBaseline: non-git fallback for "all changes"
 // - turnBaseline: snapshot captured right before a prompt/follow-up
 // - lastTurnDiffBySession: per-session diffs computed when turns finish
 
 type FileSnapshot = { content: string; mtime: number };
-type GitWorkspaceContext = {
+type GitStageContext = {
   repoRoot: string;
-  workspacePrefix: string;
+  stagePrefix: string;
 };
-type WorkspaceSnapshotState = {
+type StageSnapshotState = {
   allBaseline: Map<string, FileSnapshot> | null;
   turnBaseline: Map<string, FileSnapshot> | null;
   turnSessionId: string | null;
   lastTurnDiffBySession: Map<string, DiffFile[]>;
   loadedPersistedLastTurn: boolean;
 };
-const snapshotState = new Map<string, WorkspaceSnapshotState>();
+const snapshotState = new Map<string, StageSnapshotState>();
 const LAST_TURN_DIFF_STORE_DIR = join(
   homedir(),
-  ".claude-sessions",
+  ".tango",
   "last-turn-diffs"
 );
 const PERSISTED_LAST_TURN_DIFF_VERSION = 2;
@@ -57,21 +58,21 @@ const IGNORE_EXTENSIONS = new Set([
 const MAX_FILE_SIZE = 512 * 1024; // 512KB — skip large files
 
 /**
- * Set/refresh the workspace baseline snapshot.
+ * Set/refresh the stage baseline snapshot.
  * Kept for compatibility with existing call sites.
  */
 export async function takeSnapshot(cwd: string): Promise<void> {
-  const state = getWorkspaceState(cwd);
-  state.allBaseline = await captureWorkspaceSnapshot(cwd);
+  const state = getStageState(cwd);
+  state.allBaseline = await captureStageSnapshot(cwd);
 }
 
 /**
- * Ensure a non-git baseline exists for this workspace.
+ * Ensure a non-git baseline exists for this stage.
  */
 export async function ensureDiffBaseline(cwd: string): Promise<void> {
-  const state = getWorkspaceState(cwd);
+  const state = getStageState(cwd);
   if (!state.allBaseline) {
-    state.allBaseline = await captureWorkspaceSnapshot(cwd);
+    state.allBaseline = await captureStageSnapshot(cwd);
   }
 }
 
@@ -84,9 +85,9 @@ export async function beginTurnDiff(
   sessionId?: string
 ): Promise<void> {
   await ensureDiffBaseline(cwd);
-  const state = getWorkspaceState(cwd);
+  const state = getStageState(cwd);
   await ensureLoadedPersistedLastTurnDiff(cwd, state);
-  state.turnBaseline = await captureWorkspaceSnapshot(cwd);
+  state.turnBaseline = await captureStageSnapshot(cwd);
   state.turnSessionId = sessionId ?? null;
   if (sessionId) {
     state.lastTurnDiffBySession.delete(sessionId);
@@ -103,7 +104,7 @@ export async function setTurnDiffSession(
   sessionId: string
 ): Promise<void> {
   if (!sessionId) return;
-  const state = getWorkspaceState(cwd);
+  const state = getStageState(cwd);
   await ensureLoadedPersistedLastTurnDiff(cwd, state);
   state.turnSessionId = sessionId;
   state.lastTurnDiffBySession.delete(sessionId);
@@ -119,7 +120,7 @@ export async function remapTurnDiffSessionId(
   toSessionId: string
 ): Promise<void> {
   if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return;
-  const state = getWorkspaceState(cwd);
+  const state = getStageState(cwd);
   await ensureLoadedPersistedLastTurnDiff(cwd, state);
 
   let changed = false;
@@ -150,7 +151,7 @@ export async function finalizeTurnDiff(
   cwd: string,
   sessionId?: string
 ): Promise<void> {
-  const state = getWorkspaceState(cwd);
+  const state = getStageState(cwd);
   await ensureLoadedPersistedLastTurnDiff(cwd, state);
   const resolvedSessionId = sessionId ?? state.turnSessionId;
   let files: DiffFile[] = [];
@@ -177,7 +178,7 @@ export async function finalizeTurnDiff(
 }
 
 /**
- * Get diff for a workspace.
+ * Get diff for a stage.
  * - scope=last_turn: returns stored per-turn diff
  * - scope=all: git diff (if git), snapshot baseline diff otherwise
  */
@@ -186,7 +187,7 @@ export async function getDiff(
   scope: DiffScope = "all",
   sessionId?: string
 ): Promise<DiffFile[]> {
-  const state = getWorkspaceState(cwd);
+  const state = getStageState(cwd);
 
   if (scope === "last_turn") {
     const selectedSessionId = sessionId ?? null;
@@ -201,9 +202,9 @@ export async function getDiff(
     return state.lastTurnDiffBySession.get(selectedSessionId) ?? [];
   }
 
-  const gitContext = await getGitWorkspaceContext(cwd);
-  if (gitContext) {
-    return getGitDiff(cwd, gitContext);
+  const strategy = await getVcsStrategy(cwd);
+  if (strategy.kind !== "none") {
+    return strategy.getWorkingTreeDiff(cwd);
   }
 
   await ensureDiffBaseline(cwd);
@@ -211,18 +212,18 @@ export async function getDiff(
 }
 
 /**
- * Remove all in-memory and persisted diff state for a workspace.
- * Use when the workspace is removed from the app.
+ * Remove all in-memory and persisted diff state for a stage.
+ * Use when the stage is removed from the app.
  */
-export async function clearLastTurnDiffForWorkspace(cwd: string): Promise<void> {
+export async function clearLastTurnDiffForStage(cwd: string): Promise<void> {
   snapshotState.delete(cwd);
   await clearPersistedLastTurnDiff(cwd);
 }
 
 /**
  * Remove persisted "last turn diff" data tied to a deleted session.
- * If `cwd` is provided, only that workspace is checked. Otherwise all persisted
- * workspace diff files are scanned.
+ * If `cwd` is provided, only that stage is checked. Otherwise all persisted
+ * stage diff files are scanned.
  */
 export async function clearLastTurnDiffForSession(
   sessionId: string,
@@ -231,7 +232,7 @@ export async function clearLastTurnDiffForSession(
   if (!sessionId) return;
 
   if (cwd) {
-    await clearLastTurnDiffForSessionInWorkspace(cwd, sessionId);
+    await clearLastTurnDiffForSessionInStage(cwd, sessionId);
     return;
   }
 
@@ -261,7 +262,7 @@ export async function clearLastTurnDiffForSession(
   }
 }
 
-async function clearLastTurnDiffForSessionInWorkspace(
+async function clearLastTurnDiffForSessionInStage(
   cwd: string,
   sessionId: string
 ): Promise<void> {
@@ -279,7 +280,7 @@ async function clearLastTurnDiffForSessionInWorkspace(
 
 async function ensureLoadedPersistedLastTurnDiff(
   cwd: string,
-  state: WorkspaceSnapshotState
+  state: StageSnapshotState
 ): Promise<void> {
   if (state.loadedPersistedLastTurn) return;
   state.loadedPersistedLastTurn = true;
@@ -413,12 +414,12 @@ function getPersistedLastTurnDiffPath(cwd: string): string {
 
 // ── Git-based diff ──────────────────────────────────────────────
 
-async function getGitDiff(
+export async function getGitDiff(
   cwd: string,
-  gitContext?: GitWorkspaceContext
+  gitContext?: GitStageContext
 ): Promise<DiffFile[]> {
   try {
-    if (!gitContext && !(await getGitWorkspaceContext(cwd))) return [];
+    if (!gitContext && !(await getGitStageContext(cwd))) return [];
     const [trackedOutput, untrackedPaths] = await Promise.all([
       runGitStdout(cwd, ["diff", "HEAD"]),
       listUntrackedFiles(cwd),
@@ -461,7 +462,7 @@ async function runGitStdout(cwd: string, args: string[]): Promise<string> {
   return stdout;
 }
 
-async function getGitWorkspaceContext(cwd: string): Promise<GitWorkspaceContext | null> {
+async function getGitStageContext(cwd: string): Promise<GitStageContext | null> {
   const repoRootRaw = (await runGitStdout(cwd, ["rev-parse", "--show-toplevel"])).trim();
   if (!repoRootRaw) return null;
 
@@ -473,13 +474,13 @@ async function getGitWorkspaceContext(cwd: string): Promise<GitWorkspaceContext 
   const rawPrefix = relative(repoRoot, resolvedCwd);
   if (rawPrefix.startsWith("..")) return null;
 
-  const workspacePrefix = rawPrefix === "" || rawPrefix === "."
+  const stagePrefix = rawPrefix === "" || rawPrefix === "."
     ? ""
     : normalizeRelativePath(rawPrefix);
 
   return {
     repoRoot,
-    workspacePrefix,
+    stagePrefix,
   };
 }
 
@@ -572,7 +573,7 @@ async function getSnapshotDiffFromBaseline(
   cwd: string,
   baseline: Map<string, FileSnapshot>
 ): Promise<DiffFile[]> {
-  const current = await captureWorkspaceSnapshot(cwd);
+  const current = await captureStageSnapshot(cwd);
 
   const diffs: DiffFile[] = [];
 
@@ -600,7 +601,7 @@ async function getSnapshotDiffFromBaseline(
   return diffs;
 }
 
-function getWorkspaceState(cwd: string): WorkspaceSnapshotState {
+function getStageState(cwd: string): StageSnapshotState {
   let state = snapshotState.get(cwd);
   if (!state) {
     state = {
@@ -615,25 +616,25 @@ function getWorkspaceState(cwd: string): WorkspaceSnapshotState {
   return state;
 }
 
-async function captureWorkspaceSnapshot(
+async function captureStageSnapshot(
   cwd: string
 ): Promise<Map<string, FileSnapshot>> {
   const files = new Map<string, FileSnapshot>();
-  const gitContext = await getGitWorkspaceContext(cwd);
+  const gitContext = await getGitStageContext(cwd);
   if (gitContext) {
-    await captureGitWorkspaceSnapshot(cwd, gitContext, files);
+    await captureGitStageSnapshot(cwd, gitContext, files);
     return files;
   }
   await walkDir(cwd, cwd, files);
   return files;
 }
 
-async function captureGitWorkspaceSnapshot(
+async function captureGitStageSnapshot(
   cwd: string,
-  gitContext: GitWorkspaceContext,
+  gitContext: GitStageContext,
   files: Map<string, FileSnapshot>
 ): Promise<void> {
-  const trackedAndUntracked = await listGitWorkspaceFiles(gitContext);
+  const trackedAndUntracked = await listGitStageFiles(gitContext);
   for (const relPath of trackedAndUntracked) {
     if (!relPath) continue;
     const fileName = relPath.split("/").pop() ?? relPath;
@@ -656,7 +657,7 @@ async function captureGitWorkspaceSnapshot(
   }
 }
 
-async function listGitWorkspaceFiles(gitContext: GitWorkspaceContext): Promise<string[]> {
+async function listGitStageFiles(gitContext: GitStageContext): Promise<string[]> {
   const proc = Bun.spawn(
     ["git", "ls-files", "-co", "--exclude-standard", "--full-name", "-z"],
     {
@@ -672,7 +673,7 @@ async function listGitWorkspaceFiles(gitContext: GitWorkspaceContext): Promise<s
     return [];
   }
 
-  const prefix = gitContext.workspacePrefix;
+  const prefix = gitContext.stagePrefix;
   const text = new TextDecoder().decode(bytes);
   const files = text
     .split("\0")

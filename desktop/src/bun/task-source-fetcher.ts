@@ -35,7 +35,7 @@ export async function fetchTaskSourceFromUrl(
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        "User-Agent": "Claudex-TaskFetcher/1.0",
+        "User-Agent": "Tango-TaskFetcher/1.0",
         Accept: "text/html, text/plain, application/json;q=0.9, */*;q=0.7",
       },
     });

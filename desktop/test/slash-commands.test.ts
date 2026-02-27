@@ -23,7 +23,7 @@ afterEach(async () => {
 
 describe("slash command discovery", () => {
   test("merges project and user commands with project precedence", async () => {
-    const cwd = join(tempRoot, "workspace");
+    const cwd = join(tempRoot, "stage");
     await mkdir(join(cwd, ".claude", "commands", "release"), { recursive: true });
 
     await writeFile(join(cwd, ".claude", "commands", "commit.md"), "project");
@@ -41,8 +41,8 @@ describe("slash command discovery", () => {
     expect(byName.has("README")).toBe(false);
   });
 
-  test("cache can be invalidated for a workspace", async () => {
-    const cwd = join(tempRoot, "workspace");
+  test("cache can be invalidated for a stage", async () => {
+    const cwd = join(tempRoot, "stage");
     const projectCommandsDir = join(cwd, ".claude", "commands");
     await mkdir(projectCommandsDir, { recursive: true });
     await writeFile(join(projectCommandsDir, "commit.md"), "project");

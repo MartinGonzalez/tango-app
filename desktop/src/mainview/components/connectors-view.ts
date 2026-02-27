@@ -2,7 +2,7 @@ import { clearChildren, h } from "../lib/dom.ts";
 import type {
   ConnectorAuthSession,
   ConnectorProvider,
-  WorkspaceConnector,
+  StageConnector,
 } from "../../shared/types.ts";
 
 export type ConnectorsViewCallbacks = {
@@ -32,10 +32,10 @@ export class ConnectorsView {
   #el: HTMLElement;
   #bodyEl: HTMLElement;
   #callbacks: ConnectorsViewCallbacks;
-  #connectors: WorkspaceConnector[] = [];
+  #connectors: StageConnector[] = [];
   #loading = false;
   #authSession: ConnectorAuthSession | null = null;
-  #workspacePath: string | null = null;
+  #stagePath: string | null = null;
   #actionInFlight: string | null = null;
 
   constructor(container: HTMLElement, callbacks: ConnectorsViewCallbacks) {
@@ -48,17 +48,17 @@ export class ConnectorsView {
   }
 
   render(
-    connectors: WorkspaceConnector[],
+    connectors: StageConnector[],
     opts?: {
       loading?: boolean;
       authSession?: ConnectorAuthSession | null;
-      workspacePath?: string | null;
+      stagePath?: string | null;
     }
   ): void {
     this.#connectors = connectors;
     this.#loading = Boolean(opts?.loading);
     this.#authSession = opts?.authSession ?? null;
-    this.#workspacePath = opts?.workspacePath ?? null;
+    this.#stagePath = opts?.stagePath ?? null;
     this.#renderContent();
   }
 
@@ -69,9 +69,9 @@ export class ConnectorsView {
   #renderContent(): void {
     clearChildren(this.#bodyEl);
 
-    if (!this.#workspacePath) {
+    if (!this.#stagePath) {
       this.#bodyEl.appendChild(
-        h("div", { class: "connectors-view-empty" }, ["Select a workspace to manage connectors"])
+        h("div", { class: "connectors-view-empty" }, ["Select a stage to manage connectors"])
       );
       return;
     }
@@ -85,14 +85,14 @@ export class ConnectorsView {
 
     const providers = CONNECTOR_PROVIDERS.map((provider) =>
       this.#connectors.find((entry) => entry.provider === provider)
-      ?? defaultConnector(this.#workspacePath!, provider)
+      ?? defaultConnector(this.#stagePath!, provider)
     );
 
     const connected = providers.filter((entry) => entry.status === "connected");
     const available = providers.filter((entry) => entry.status !== "connected");
 
     const card = h("div", { class: "connectors-card" }, [
-      h("div", { class: "connectors-workspace-label" }, [workspaceName(this.#workspacePath)]),
+      h("div", { class: "connectors-stage-label" }, [stageName(this.#stagePath)]),
       h("section", { class: "connectors-section" }, [
         h("h3", { class: "connectors-section-title" }, ["Connected providers"]),
         connected.length > 0
@@ -117,7 +117,7 @@ export class ConnectorsView {
     this.#bodyEl.appendChild(card);
   }
 
-  #renderProviderRow(connector: WorkspaceConnector): HTMLElement {
+  #renderProviderRow(connector: StageConnector): HTMLElement {
     const meta = CONNECTOR_PROVIDER_META[connector.provider];
     const isConnected = connector.status === "connected";
     const action = isConnected ? "disconnect" : "connect";
@@ -125,8 +125,8 @@ export class ConnectorsView {
     const inFlight = this.#actionInFlight === actionKey;
 
     const description = isConnected
-      ? (connector.externalWorkspaceName
-        ? `Connected to ${connector.externalWorkspaceName}`
+      ? (connector.externalStageName
+        ? `Connected to ${connector.externalStageName}`
         : "Connected")
       : meta.description;
 
@@ -212,15 +212,15 @@ export class ConnectorsView {
 }
 
 function defaultConnector(
-  workspacePath: string,
+  stagePath: string,
   provider: ConnectorProvider
-): WorkspaceConnector {
+): StageConnector {
   return {
-    workspacePath,
+    stagePath,
     provider,
     status: "disconnected",
-    externalWorkspaceId: null,
-    externalWorkspaceName: null,
+    externalStageId: null,
+    externalStageName: null,
     externalUserId: null,
     scopes: [],
     tokenExpiresAt: null,
@@ -229,6 +229,6 @@ function defaultConnector(
   };
 }
 
-function workspaceName(workspacePath: string): string {
-  return workspacePath.split("/").filter(Boolean).at(-1) ?? workspacePath;
+function stageName(stagePath: string): string {
+  return stagePath.split("/").filter(Boolean).at(-1) ?? stagePath;
 }

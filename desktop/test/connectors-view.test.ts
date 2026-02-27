@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ConnectorsView } from "../src/mainview/components/connectors-view.ts";
 import type {
   ConnectorAuthSession,
-  WorkspaceConnector,
+  StageConnector,
 } from "../src/shared/types.ts";
 
 describe("connectors-view", () => {
@@ -19,13 +19,13 @@ describe("connectors-view", () => {
       onOpenAuthLink: async () => {},
     });
 
-    const connectors: WorkspaceConnector[] = [
+    const connectors: StageConnector[] = [
       {
-        workspacePath: "/repo/a",
+        stagePath: "/repo/a",
         provider: "slack",
         status: "disconnected",
-        externalWorkspaceId: null,
-        externalWorkspaceName: null,
+        externalStageId: null,
+        externalStageName: null,
         externalUserId: null,
         scopes: [],
         tokenExpiresAt: null,
@@ -36,7 +36,7 @@ describe("connectors-view", () => {
 
     const authSession: ConnectorAuthSession = {
       id: "auth-1",
-      workspacePath: "/repo/a",
+      stagePath: "/repo/a",
       provider: "slack",
       status: "pending",
       authorizeUrl: "https://slack.com/oauth/v2/authorize?state=test",
@@ -46,7 +46,7 @@ describe("connectors-view", () => {
     };
 
     view.render(connectors, {
-      workspacePath: "/repo/a",
+      stagePath: "/repo/a",
       authSession,
     });
 
@@ -69,13 +69,13 @@ describe("connectors-view", () => {
       onOpenAuthLink: async () => {},
     });
 
-    const connectors: WorkspaceConnector[] = [
+    const connectors: StageConnector[] = [
       {
-        workspacePath: "/repo/a",
+        stagePath: "/repo/a",
         provider: "slack",
         status: "connected",
-        externalWorkspaceId: "T123",
-        externalWorkspaceName: "Acme",
+        externalStageId: "T123",
+        externalStageName: "Acme",
         externalUserId: "U123",
         scopes: ["channels:history"],
         tokenExpiresAt: null,
@@ -85,7 +85,7 @@ describe("connectors-view", () => {
     ];
 
     view.render(connectors, {
-      workspacePath: "/repo/a",
+      stagePath: "/repo/a",
       authSession: null,
     });
 

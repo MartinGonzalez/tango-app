@@ -34,8 +34,8 @@ describe("pr-agent-review-provider", () => {
       number: 22,
       headSha: "abc123",
       outputFilePath: "/tmp/review.json",
-      cwdSource: "workspace",
-      workspacePath: "/work/acme-repo",
+      cwdSource: "stage",
+      stagePath: "/work/acme-repo",
     });
 
     expect(prompt).toContain("STRICT JSON");
@@ -56,7 +56,7 @@ describe("pr-agent-review-provider", () => {
     const provider = new PRAgentReviewProvider({
       baseDir: tempDir,
       homeDir: tempDir,
-      getWorkspacePaths: () => [],
+      getStagePaths: () => [],
     });
 
     await provider.writePlaceholder(run);
@@ -75,7 +75,7 @@ describe("pr-agent-review-provider", () => {
     const provider = new PRAgentReviewProvider({
       baseDir: tempDir,
       homeDir: tempDir,
-      getWorkspacePaths: () => [],
+      getStagePaths: () => [],
     });
 
     await writeFile(run.filePath, JSON.stringify({
@@ -118,7 +118,7 @@ describe("pr-agent-review-provider", () => {
     const provider = new PRAgentReviewProvider({
       baseDir: tempDir,
       homeDir: tempDir,
-      getWorkspacePaths: () => [],
+      getStagePaths: () => [],
     });
 
     await writeFile(run.filePath, JSON.stringify({
@@ -161,7 +161,7 @@ describe("pr-agent-review-provider", () => {
     const provider = new PRAgentReviewProvider({
       baseDir: tempDir,
       homeDir: tempDir,
-      getWorkspacePaths: () => [],
+      getStagePaths: () => [],
     });
 
     await writeFile(run.filePath, JSON.stringify({
@@ -205,10 +205,10 @@ describe("pr-agent-review-provider", () => {
     expect(document?.review?.final_veredic).toContain("- Merge after adding tests");
   });
 
-  test("resolves cwd from matching workspace remote", async () => {
+  test("resolves cwd from matching stage remote", async () => {
     const provider = new PRAgentReviewProvider({
       homeDir: "/home/dev",
-      getWorkspacePaths: () => ["/work/nope", "/work/repo"],
+      getStagePaths: () => ["/work/nope", "/work/repo"],
       runCommand: async (_command, _args, cwd) => {
         if (cwd === "/work/repo") {
           return {
@@ -227,13 +227,13 @@ describe("pr-agent-review-provider", () => {
 
     const resolved = await provider.resolveCwd("acme/repo");
     expect(resolved.cwd).toBe("/work/repo");
-    expect(resolved.source).toBe("workspace");
+    expect(resolved.source).toBe("stage");
   });
 
-  test("falls back to home cwd when no workspace matches", async () => {
+  test("falls back to home cwd when no stage matches", async () => {
     const provider = new PRAgentReviewProvider({
       homeDir: "/home/dev",
-      getWorkspacePaths: () => ["/work/one"],
+      getStagePaths: () => ["/work/one"],
       runCommand: async () => ({
         stdout: "git@github.com:acme/other.git",
         stderr: "",

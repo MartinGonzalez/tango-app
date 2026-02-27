@@ -5,7 +5,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const STORE_PATH = join(homedir(), ".claude-sessions", "session-names.json");
+const STORE_PATH = join(homedir(), ".tango", "session-names.json");
 
 export class SessionNamesStore {
   #names: Record<string, string> = {};
@@ -39,7 +39,7 @@ export class SessionNamesStore {
   }
 
   async #save(): Promise<void> {
-    await mkdir(join(homedir(), ".claude-sessions"), { recursive: true });
+    await mkdir(join(homedir(), ".tango"), { recursive: true });
     await writeFile(STORE_PATH, JSON.stringify(this.#names, null, 2));
   }
 }

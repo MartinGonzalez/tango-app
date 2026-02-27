@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { WorkspaceFileContent } from "../shared/types.ts";
+import type { StageFileContent } from "../shared/types.ts";
 
 const CACHE_TTL_MS = 30_000;
 const MAX_FILES = 12_000;
@@ -23,7 +23,7 @@ type CacheEntry = {
 
 const cache = new Map<string, CacheEntry>();
 
-export async function getWorkspaceFiles(cwd: string): Promise<string[]> {
+export async function getStageFiles(cwd: string): Promise<string[]> {
   const now = Date.now();
   const cached = cache.get(cwd);
   if (cached && now - cached.scannedAt < CACHE_TTL_MS) {
@@ -42,13 +42,13 @@ export async function getWorkspaceFiles(cwd: string): Promise<string[]> {
   return files;
 }
 
-export async function getWorkspaceFileContent(
+export async function getStageFileContent(
   cwd: string,
   path: string,
   maxBytes = DEFAULT_MAX_FILE_BYTES
-): Promise<WorkspaceFileContent> {
+): Promise<StageFileContent> {
   if (!cwd) {
-    throw new Error("Missing workspace path");
+    throw new Error("Missing stage path");
   }
   if (!path) {
     throw new Error("Missing file path");
@@ -84,7 +84,7 @@ export async function getWorkspaceFileContent(
   };
 }
 
-export function invalidateWorkspaceFilesCache(cwd?: string): void {
+export function invalidateStageFilesCache(cwd?: string): void {
   if (cwd) {
     cache.delete(cwd);
     return;

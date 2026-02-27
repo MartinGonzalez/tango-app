@@ -41,7 +41,7 @@ describe("TasksStore", () => {
     expect(names.has("task_sources")).toBe(true);
     expect(names.has("task_runs")).toBe(true);
     expect(names.has("task_artifacts")).toBe(true);
-    expect(names.has("idx_tasks_workspace_updated")).toBe(true);
+    expect(names.has("idx_tasks_stage_updated")).toBe(true);
     expect(names.has("idx_task_sources_task_updated")).toBe(true);
     expect(names.has("idx_task_runs_task_started")).toBe(true);
     expect(names.has("idx_task_runs_session")).toBe(true);

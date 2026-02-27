@@ -12,14 +12,14 @@ import {
   countSeenFiles,
 } from "./lib/pr-file-review.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
-import { Sidebar, type WorkspaceData } from "./components/sidebar.ts";
+import { Sidebar, type StageData } from "./components/sidebar.ts";
 import {
   PluginsSidebar,
   type PluginSidebarSelection,
 } from "./components/plugins-sidebar.ts";
 import {
   TasksSidebar,
-  type TaskWorkspaceGroup,
+  type TaskStageGroup,
 } from "./components/tasks-sidebar.ts";
 import {
   PRsSidebar,
@@ -62,7 +62,8 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewState,
   PullRequestSummary,
-  WorkspaceConnector,
+  StageConnector,
+  VcsInfo,
 } from "../shared/types.ts";
 
 // ── RPC ──────────────────────────────────────────────────────────
@@ -89,45 +90,45 @@ const rpc = Electroview.defineRPC<any>({
         const isStopHook = isStopHookEvent(event);
         const isDiffMutation = isDiffMutationEvent(event);
         const hasPinnedCommitDiff = activeCommitDiff
-          ? activeCommitDiff.cwd === state.activeWorkspace
+          ? activeCommitDiff.cwd === state.activeStage
           : false;
         if (isActiveSessionEvent && chatView) {
           chatView.appendStreamEvent(event);
         }
         if (
           isActiveSessionEvent
-          && state.activeWorkspace
-          && state.viewMode === "workspaces"
+          && state.activeStage
+          && state.viewMode === "stages"
           && !hasPinnedCommitDiff
           && (isResultEvent || isDiffMutation)
         ) {
-          workspaceFileCache.delete(state.activeWorkspace);
+          stageFileCache.delete(state.activeStage);
           scheduleDiffRefresh(
-            state.activeWorkspace,
+            state.activeStage,
             state.diffScope,
             isResultEvent ? 0 : 120
           );
         }
         if (
           isActiveSessionEvent
-          && state.activeWorkspace
-          && state.viewMode === "workspaces"
+          && state.activeStage
+          && state.viewMode === "stages"
           && diffView?.isBranchPanelVisible
           && (isResultEvent || isStopHook)
         ) {
           scheduleBranchHistoryRefresh(
-            state.activeWorkspace,
+            state.activeStage,
             isResultEvent ? 0 : 120
           );
         }
         if (
           isActiveSessionEvent
-          && state.activeWorkspace
-          && state.viewMode === "workspaces"
+          && state.activeStage
+          && state.viewMode === "stages"
           && (isResultEvent || isStopHook || isDiffMutation)
         ) {
           scheduleCommitContextRefresh(
-            state.activeWorkspace,
+            state.activeStage,
             isResultEvent ? 0 : 120
           );
         }
@@ -186,31 +187,31 @@ const rpc = Electroview.defineRPC<any>({
         removeAppSpawnedSession(sessionId);
         const state = appState.get();
         const hasPinnedCommitDiff = activeCommitDiff
-          ? activeCommitDiff.cwd === state.activeWorkspace
+          ? activeCommitDiff.cwd === state.activeStage
           : false;
         clearSessionAliasesFor(sessionId);
         const live = remapLiveSessionIds(state.liveSessions);
         live.delete(sessionId);
         appState.update((s) => ({ ...s, liveSessions: live }));
         // Refresh diff when a session ends (changes may have been made)
-        if (state.activeWorkspace && state.viewMode === "workspaces") {
+        if (state.activeStage && state.viewMode === "stages") {
           if (!hasPinnedCommitDiff) {
-            loadDiff(state.activeWorkspace);
+            loadDiff(state.activeStage);
           }
           if (diffView.isBranchPanelVisible) {
-            scheduleBranchHistoryRefresh(state.activeWorkspace, 0);
+            scheduleBranchHistoryRefresh(state.activeStage, 0);
           }
-          scheduleCommitContextRefresh(state.activeWorkspace, 0);
+          scheduleCommitContextRefresh(state.activeStage, 0);
         }
       },
       tasksChanged: ({
-        workspacePath,
+        stagePath,
         taskId,
       }: {
-        workspacePath: string;
+        stagePath: string;
         taskId?: string;
       }) => {
-        void loadWorkspaceTasks(workspacePath, true);
+        void loadStageTasks(stagePath, true);
         const state = appState.get();
         if (!state.selectedTaskId) return;
         if (!taskId || taskId === state.selectedTaskId) {
@@ -237,27 +238,28 @@ const _electrobun = new Electrobun.Electroview({ rpc });
 
 type AppState = {
   snapshot: Snapshot | null;
-  viewMode: "workspaces" | "plugins" | "tasks" | "prs" | "connectors";
+  viewMode: "stages" | "plugins" | "tasks" | "prs" | "connectors";
   filesListViewMode: FileListView;
-  workspaces: string[];
-  expandedWorkspaces: Set<string>;
-  activeWorkspace: string | null;
+  stages: string[];
+  expandedStages: Set<string>;
+  activeStage: string | null;
   activeSessionId: string | null;
   diffScope: DiffScope;
-  branchHistory: Record<string, BranchCommit[]>; // workspace path → commit history
-  loadedBranchHistory: Set<string>; // workspace paths that have fetched branch history
-  commitContextByWorkspace: Record<string, CommitContext>; // workspace path → commit context
-  historySessions: Record<string, HistorySession[]>; // workspace path → history
+  branchHistory: Record<string, BranchCommit[]>; // stage path → commit history
+  vcsInfoByStage: Record<string, VcsInfo>; // stage path → VCS kind + branch
+  loadedBranchHistory: Set<string>; // stage paths that have fetched branch history
+  commitContextByStage: Record<string, CommitContext>; // stage path → commit context
+  historySessions: Record<string, HistorySession[]>; // stage path → history
   liveSessions: Set<string>; // session IDs with running processes
   customSessionNames: Record<string, string>; // sessionId → custom name
   plugins: InstalledPlugin[];
   pluginsLoading: boolean;
   pluginSelection: PluginSidebarSelection | null;
-  tasksByWorkspace: Record<string, TaskCardSummary[]>;
+  tasksByStage: Record<string, TaskCardSummary[]>;
   tasksLoading: boolean;
   selectedTaskId: string | null;
   selectedTaskDetail: TaskCardDetail | null;
-  connectorsByWorkspace: Record<string, WorkspaceConnector[]>;
+  connectorsByStage: Record<string, StageConnector[]>;
   connectorsLoading: boolean;
   connectorAuthSession: ConnectorAuthSession | null;
   assignedPullRequests: PullRequestSummary[];
@@ -297,27 +299,28 @@ const INITIAL_FILES_LIST_VIEW_MODE = loadPersistedFilesListViewMode();
 
 const appState = new Store<AppState>({
   snapshot: null,
-  viewMode: "workspaces",
+  viewMode: "stages",
   filesListViewMode: INITIAL_FILES_LIST_VIEW_MODE,
-  workspaces: [],
-  expandedWorkspaces: new Set(),
-  activeWorkspace: null,
+  stages: [],
+  expandedStages: new Set(),
+  activeStage: null,
   activeSessionId: null,
   diffScope: "last_turn",
   branchHistory: {},
+  vcsInfoByStage: {},
   loadedBranchHistory: new Set(),
-  commitContextByWorkspace: {},
+  commitContextByStage: {},
   historySessions: {},
   liveSessions: new Set(),
   customSessionNames: {},
   plugins: [],
   pluginsLoading: false,
   pluginSelection: null,
-  tasksByWorkspace: {},
+  tasksByStage: {},
   tasksLoading: false,
   selectedTaskId: null,
   selectedTaskDetail: null,
-  connectorsByWorkspace: {},
+  connectorsByStage: {},
   connectorsLoading: false,
   connectorAuthSession: null,
   assignedPullRequests: [],
@@ -365,9 +368,9 @@ let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let commitContextRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let connectorAuthPollTimer: ReturnType<typeof setTimeout> | null = null;
-const WORKSPACE_FILE_CACHE_MS = 30_000;
+const STAGE_FILE_CACHE_MS = 30_000;
 const PULL_REQUEST_CACHE_TTL_MS = 5 * 60_000;
-const workspaceFileCache = new Map<string, {
+const stageFileCache = new Map<string, {
   files: string[];
   loadedAt: number;
 }>();
@@ -380,9 +383,9 @@ const sessionUsageEstimates = new Map<string, SessionUsageEstimate>();
 const appSpawnedSessions = new Map<string, AppSpawnedSessionMeta>();
 const sessionIdAliases = new Map<string, string>();
 const EMPTY_BRANCH_COMMITS: BranchCommit[] = [];
-let prevBranchWorkspace: string | null = null;
+let prevBranchStage: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
-let prevConnectorsWorkspace: string | null = null;
+let prevConnectorsStage: string | null = null;
 let activeCommitDiff: { cwd: string; hash: string } | null = null;
 let cachedPullRequestDiff: {
   repo: string;
@@ -401,7 +404,7 @@ function init(): void {
   // Create 3-column panel layout
   panelLayout = new PanelLayout(panelsContainer, [
     {
-      id: "workspaces",
+      id: "stages",
       minWidth: 0,
       defaultWidth: 15,
       fixedPercent: 15,
@@ -412,13 +415,13 @@ function init(): void {
     { id: "diff", minWidth: 320, defaultWidth: 65 },
   ]);
 
-  const wsPanel = panelLayout.getPanel("workspaces")!;
+  const wsPanel = panelLayout.getPanel("stages")!;
   const chatPanel = panelLayout.getPanel("chat")!;
   const diffPanel = panelLayout.getPanel("diff")!;
 
   const sidebarViews = h("div", { class: "sidebar-mode-views" });
-  const workspacesSidebarHost = h("div", {
-    class: "sidebar-mode-view sidebar-mode-view-workspaces",
+  const stagesSidebarHost = h("div", {
+    class: "sidebar-mode-view sidebar-mode-view-stages",
   });
   const pluginsSidebarHost = h("div", {
     class: "sidebar-mode-view sidebar-mode-view-plugins",
@@ -436,7 +439,7 @@ function init(): void {
     class: "sidebar-mode-view sidebar-mode-view-connectors",
     hidden: true,
   });
-  sidebarViews.appendChild(workspacesSidebarHost);
+  sidebarViews.appendChild(stagesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
   sidebarViews.appendChild(tasksSidebarHost);
   sidebarViews.appendChild(prsSidebarHost);
@@ -446,8 +449,8 @@ function init(): void {
     class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "plugins" }));
-      panelLayout.showPanel("workspaces");
-      qs("#btn-toggle-workspaces")?.classList.add("active");
+      panelLayout.showPanel("stages");
+      qs("#btn-toggle-stages")?.classList.add("active");
       void loadPlugins(true);
     },
   }, [
@@ -459,9 +462,9 @@ function init(): void {
     class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "tasks" }));
-      panelLayout.showPanel("workspaces");
-      qs("#btn-toggle-workspaces")?.classList.add("active");
-      void loadAllWorkspaceTasks();
+      panelLayout.showPanel("stages");
+      qs("#btn-toggle-stages")?.classList.add("active");
+      void loadAllStageTasks();
     },
   }, [
     tasksToolIcon("sidebar-primary-icon"),
@@ -482,11 +485,11 @@ function init(): void {
     class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "connectors" }));
-      panelLayout.showPanel("workspaces");
-      qs("#btn-toggle-workspaces")?.classList.add("active");
-      const workspacePath = appState.get().activeWorkspace;
-      if (workspacePath) {
-        void loadWorkspaceConnectors(workspacePath, true);
+      panelLayout.showPanel("stages");
+      qs("#btn-toggle-stages")?.classList.add("active");
+      const stagePath = appState.get().activeStage;
+      if (stagePath) {
+        void loadStageConnectors(stagePath, true);
       }
     },
   }, [
@@ -507,38 +510,38 @@ function init(): void {
   ]);
   wsPanel.appendChild(sidebarShell);
 
-  // Workspaces sidebar
-  sidebar = new Sidebar(workspacesSidebarHost, {
-    onSelectSession: (sessionId, workspacePath) => {
+  // Stages sidebar
+  sidebar = new Sidebar(stagesSidebarHost, {
+    onSelectSession: (sessionId, stagePath) => {
       const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
       appState.update((s) => ({
         ...s,
         activeSessionId: canonicalSessionId,
-        activeWorkspace: workspacePath,
+        activeStage: stagePath,
       }));
       loadSessionTranscript(canonicalSessionId);
-      loadDiff(workspacePath);
-      ensureBranchHistory(workspacePath);
+      loadDiff(stagePath);
+      ensureBranchHistory(stagePath);
     },
-    onNewSession: (workspacePath) => {
+    onNewSession: (stagePath) => {
       appState.update((s) => ({
         ...s,
         activeSessionId: null,
-        activeWorkspace: workspacePath,
+        activeStage: stagePath,
       }));
       chatView.clear();
       chatView.focus();
-      loadDiff(workspacePath);
-      ensureBranchHistory(workspacePath);
+      loadDiff(stagePath);
+      ensureBranchHistory(stagePath);
     },
-    onAddWorkspace: () => openWorkspace(),
-    onRemoveWorkspace: (path) => removeWorkspace(path),
-    onDeleteSession: async (sessionId, workspacePath) => {
+    onAddStage: () => openStage(),
+    onRemoveStage: (path) => removeStage(path),
+    onDeleteSession: async (sessionId, stagePath) => {
       const state = appState.get();
       const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
       const isLiveSession = state.liveSessions.has(sessionId)
         || state.liveSessions.has(canonicalSessionId);
-      const transcriptPath = (state.historySessions[workspacePath] ?? [])
+      const transcriptPath = (state.historySessions[stagePath] ?? [])
         .find((h) => h.sessionId === sessionId || h.sessionId === canonicalSessionId)?.transcriptPath;
 
       if (isLiveSession) {
@@ -552,7 +555,7 @@ function init(): void {
       try {
         await (rpc as any).request.deleteSession({
           sessionId: canonicalSessionId,
-          cwd: workspacePath,
+          cwd: stagePath,
           transcriptPath,
         });
       } catch (err) {
@@ -568,7 +571,7 @@ function init(): void {
         delete names[sessionId];
         delete names[canonicalSessionId];
 
-        const wsHistory = s.historySessions[workspacePath] ?? [];
+        const wsHistory = s.historySessions[stagePath] ?? [];
         const nextHistory = wsHistory.filter((h) =>
           h.sessionId !== sessionId && h.sessionId !== canonicalSessionId
         );
@@ -578,7 +581,7 @@ function init(): void {
           liveSessions: live,
           historySessions: {
             ...s.historySessions,
-            [workspacePath]: nextHistory,
+            [stagePath]: nextHistory,
           },
           customSessionNames: names,
           activeSessionId: sessionIdsMatch(s.activeSessionId, canonicalSessionId)
@@ -591,17 +594,17 @@ function init(): void {
       if (!next.activeSessionId) {
         chatView.clear();
       }
-      loadDiff(workspacePath);
-      loadSessionHistory(workspacePath);
+      loadDiff(stagePath);
+      loadSessionHistory(stagePath);
     },
-    onToggleWorkspace: (path) => {
+    onToggleStage: (path) => {
       const state = appState.get();
-      const wasExpanded = state.expandedWorkspaces.has(path);
+      const wasExpanded = state.expandedStages.has(path);
       appState.update((s) => {
-        const expanded = new Set(s.expandedWorkspaces);
+        const expanded = new Set(s.expandedStages);
         if (expanded.has(path)) expanded.delete(path);
         else expanded.add(path);
-        return { ...s, expandedWorkspaces: expanded };
+        return { ...s, expandedStages: expanded };
       });
       // Load history when expanding (if not already loaded)
       if (!wasExpanded && !state.historySessions[path]) {
@@ -631,24 +634,24 @@ function init(): void {
       }));
     },
     onBack: () => {
-      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+      appState.update((s) => ({ ...s, viewMode: "stages" }));
     },
   });
 
   tasksSidebar = new TasksSidebar(tasksSidebarHost, {
-    onSelectTask: (taskId, workspacePath) => {
+    onSelectTask: (taskId, stagePath) => {
       appState.update((s) => ({
         ...s,
         selectedTaskId: taskId,
-        activeWorkspace: workspacePath,
+        activeStage: stagePath,
       }));
       void loadTaskDetail(taskId, true);
     },
-    onCreateTask: (workspacePath) => {
-      void createTaskInWorkspace(workspacePath);
+    onCreateTask: (stagePath) => {
+      void createTaskInStage(stagePath);
     },
     onBack: () => {
-      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+      appState.update((s) => ({ ...s, viewMode: "stages" }));
     },
   });
 
@@ -670,7 +673,7 @@ function init(): void {
       void loadPullRequestDetail(repo, number, true);
     },
     onBack: () => {
-      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+      appState.update((s) => ({ ...s, viewMode: "stages" }));
     },
     onRefresh: () => {
       void refreshPullRequests();
@@ -679,7 +682,7 @@ function init(): void {
 
   connectorsSidebar = new ConnectorsSidebar(connectorsSidebarHost, {
     onBack: () => {
-      appState.update((s) => ({ ...s, viewMode: "workspaces" }));
+      appState.update((s) => ({ ...s, viewMode: "stages" }));
     },
   });
 
@@ -699,9 +702,9 @@ function init(): void {
     },
     onSendPrompt: async (prompt, fullAccess, selectedFiles) => {
       const state = appState.get();
-      const cwd = state.activeWorkspace;
+      const cwd = state.activeStage;
       if (!cwd) {
-        openWorkspace();
+        openStage();
         return;
       }
 
@@ -737,14 +740,14 @@ function init(): void {
           appState.update((s) => {
             const live = remapLiveSessionIds(s.liveSessions);
             live.add(canonicalSessionId);
-            const expanded = new Set(s.expandedWorkspaces);
+            const expanded = new Set(s.expandedStages);
             expanded.add(cwd);
             return {
               ...s,
               activeSessionId: canonicalSessionId,
-              activeWorkspace: cwd,
+              activeStage: cwd,
               liveSessions: live,
-              expandedWorkspaces: expanded,
+              expandedStages: expanded,
             };
           });
         }
@@ -765,12 +768,12 @@ function init(): void {
       }
     },
     onSearchFiles: async (query) => {
-      const cwd = appState.get().activeWorkspace;
+      const cwd = appState.get().activeStage;
       if (!cwd) return [];
-      return searchWorkspaceFiles(cwd, query, 30);
+      return searchStageFiles(cwd, query, 30);
     },
     onSearchCommands: async (query) => {
-      const cwd = appState.get().activeWorkspace;
+      const cwd = appState.get().activeStage;
       if (!cwd) return [];
       return searchSlashCommands(cwd, query, 30);
     },
@@ -796,8 +799,8 @@ function init(): void {
         selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
         selectedTaskDetail: s.selectedTaskId === taskId ? null : s.selectedTaskDetail,
       }));
-      await loadWorkspaceTasks(detail.workspacePath, true);
-      const remaining = appState.get().tasksByWorkspace[detail.workspacePath] ?? [];
+      await loadStageTasks(detail.stagePath, true);
+      const remaining = appState.get().tasksByStage[detail.stagePath] ?? [];
       const next = remaining[0] ?? null;
       if (next) {
         appState.update((s) => ({ ...s, selectedTaskId: next.id }));
@@ -820,20 +823,20 @@ function init(): void {
       }
       const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
 
-      const expanded = new Set(appState.get().expandedWorkspaces);
-      expanded.add(detail.workspacePath);
+      const expanded = new Set(appState.get().expandedStages);
+      expanded.add(detail.stagePath);
       appState.update((s) => ({
         ...s,
-        viewMode: "workspaces",
-        activeWorkspace: detail.workspacePath,
+        viewMode: "stages",
+        activeStage: detail.stagePath,
         activeSessionId: canonicalSessionId,
-        expandedWorkspaces: expanded,
+        expandedStages: expanded,
       }));
 
       await loadSessionTranscript(canonicalSessionId);
-      void loadSessionHistory(detail.workspacePath);
-      await loadDiff(detail.workspacePath);
-      ensureBranchHistory(detail.workspacePath);
+      void loadSessionHistory(detail.stagePath);
+      await loadDiff(detail.stagePath);
+      ensureBranchHistory(detail.stagePath);
     },
     onAddSource: async (taskId, payload) => {
       await (rpc as any).request.addTaskSource({
@@ -854,59 +857,59 @@ function init(): void {
     },
     onOpenConnectors: () => {
       appState.update((s) => ({ ...s, viewMode: "connectors" }));
-      const workspacePath = appState.get().activeWorkspace;
-      if (workspacePath) {
-        void loadWorkspaceConnectors(workspacePath, true);
+      const stagePath = appState.get().activeStage;
+      if (stagePath) {
+        void loadStageConnectors(stagePath, true);
       }
     },
     onRunAction: async (taskId, action) => {
       const detail = appState.get().selectedTaskDetail;
-      const workspacePath = detail?.workspacePath ?? appState.get().activeWorkspace ?? null;
+      const stagePath = detail?.stagePath ?? appState.get().activeStage ?? null;
       const result: { runId: string; sessionId: string | null } = await (rpc as any).request.runTaskAction({
         taskId,
         action,
       });
 
       if (action !== "execute" || !result.sessionId) {
-        if (workspacePath) {
-          await loadWorkspaceTasks(workspacePath, true);
+        if (stagePath) {
+          await loadStageTasks(stagePath, true);
         }
         await loadTaskDetail(taskId, true);
         return;
       }
 
-      if (workspacePath) {
+      if (stagePath) {
         const executionTitle = detail?.title
           ? `Task: ${detail.title}`
           : "Task execution";
-        registerAppSpawnedSession(result.sessionId, workspacePath, executionTitle);
+        registerAppSpawnedSession(result.sessionId, stagePath, executionTitle);
       }
 
       appState.update((s) => {
         const canonicalSessionId = resolveCanonicalSessionId(result.sessionId!) ?? result.sessionId!;
         const live = remapLiveSessionIds(s.liveSessions);
         live.add(canonicalSessionId);
-        const expanded = new Set(s.expandedWorkspaces);
-        if (workspacePath) {
-          expanded.add(workspacePath);
+        const expanded = new Set(s.expandedStages);
+        if (stagePath) {
+          expanded.add(stagePath);
         }
         return {
           ...s,
-          viewMode: "workspaces",
-          activeWorkspace: workspacePath ?? s.activeWorkspace,
+          viewMode: "stages",
+          activeStage: stagePath ?? s.activeStage,
           activeSessionId: canonicalSessionId,
           liveSessions: live,
-          expandedWorkspaces: expanded,
+          expandedStages: expanded,
         };
       });
 
       const canonicalSessionId = resolveCanonicalSessionId(result.sessionId) ?? result.sessionId;
       await loadSessionTranscript(canonicalSessionId);
-      if (workspacePath) {
-        void loadWorkspaceTasks(workspacePath, true);
-        void loadSessionHistory(workspacePath);
-        await loadDiff(workspacePath);
-        ensureBranchHistory(workspacePath);
+      if (stagePath) {
+        void loadStageTasks(stagePath, true);
+        void loadSessionHistory(stagePath);
+        await loadDiff(stagePath);
+        ensureBranchHistory(stagePath);
       }
     },
   });
@@ -949,13 +952,13 @@ function init(): void {
   });
   connectorsView = new ConnectorsView(chatPanel, {
     onConnect: async (provider) => {
-      const workspacePath = appState.get().activeWorkspace;
-      if (!workspacePath) {
-        throw new Error("No active workspace");
+      const stagePath = appState.get().activeStage;
+      if (!stagePath) {
+        throw new Error("No active stage");
       }
 
       const authSession: ConnectorAuthSession = await (rpc as any).request.startConnectorAuth({
-        workspacePath,
+        stagePath,
         provider,
       });
       appState.update((s) => ({
@@ -968,23 +971,23 @@ function init(): void {
       }
       syncConnectorAuthPollTimer(appState.get());
       if (authSession.status !== "pending") {
-        await loadWorkspaceConnectors(workspacePath, true);
+        await loadStageConnectors(stagePath, true);
       }
     },
     onDisconnect: async (provider) => {
-      const workspacePath = appState.get().activeWorkspace;
-      if (!workspacePath) {
-        throw new Error("No active workspace");
+      const stagePath = appState.get().activeStage;
+      if (!stagePath) {
+        throw new Error("No active stage");
       }
-      await (rpc as any).request.disconnectWorkspaceConnector({
-        workspacePath,
+      await (rpc as any).request.disconnectStageConnector({
+        stagePath,
         provider,
       });
       appState.update((s) => ({
         ...s,
         connectorAuthSession: null,
       }));
-      await loadWorkspaceConnectors(workspacePath, true);
+      await loadStageConnectors(stagePath, true);
     },
     onOpenAuthLink: async (provider) => {
       const authSession = appState.get().connectorAuthSession;
@@ -1000,20 +1003,20 @@ function init(): void {
   commitModal = new CommitModal();
   diffView = new DiffView(diffPanel, {
     onBranchPanelToggle: (visible) => {
-      const activeWorkspace = appState.get().activeWorkspace;
-      if (!visible || !activeWorkspace) return;
-      void loadBranchHistory(activeWorkspace, true);
+      const activeStage = appState.get().activeStage;
+      if (!visible || !activeStage) return;
+      void loadBranchHistory(activeStage, true);
     },
     onCommitClick: () => {
-      void openCommitDialogForWorkspace();
+      void openCommitDialogForStage();
     },
     onRequestFullFile: async (path) => {
-      if (appState.get().viewMode !== "workspaces") {
-        throw new Error("Full file view is only available in workspace mode");
+      if (appState.get().viewMode !== "stages") {
+        throw new Error("Full file view is only available in stage mode");
       }
-      const cwd = appState.get().activeWorkspace;
+      const cwd = appState.get().activeStage;
       if (!cwd) {
-        throw new Error("No active workspace");
+        throw new Error("No active stage");
       }
       return (rpc as any).request.getFileContent({ cwd, path });
     },
@@ -1036,8 +1039,8 @@ function init(): void {
     onScopeChange: (scope) => {
       appState.update((s) => ({ ...s, diffScope: scope }));
       const state = appState.get();
-      if (state.viewMode === "workspaces" && state.activeWorkspace) {
-        loadDiff(state.activeWorkspace, scope);
+      if (state.viewMode === "stages" && state.activeStage) {
+        loadDiff(state.activeStage, scope);
       }
     },
     onToggleFileSeen: (path, seen) => {
@@ -1051,7 +1054,7 @@ function init(): void {
   // Branch panel (embedded inside diff panel)
   branchPanel = new BranchPanel(diffView.branchPanelHost, {
     onSelectCommit: (commit) => {
-      const cwd = appState.get().activeWorkspace;
+      const cwd = appState.get().activeStage;
       if (!cwd) return;
 
       const isSameSelection = activeCommitDiff
@@ -1071,12 +1074,12 @@ function init(): void {
     },
   });
 
-  // Toggle workspaces button
-  qs("#btn-toggle-workspaces")?.addEventListener("click", () => {
-    panelLayout.togglePanel("workspaces");
-    qs("#btn-toggle-workspaces")?.classList.toggle(
+  // Toggle stages button
+  qs("#btn-toggle-stages")?.addEventListener("click", () => {
+    panelLayout.togglePanel("stages");
+    qs("#btn-toggle-stages")?.classList.toggle(
       "active",
-      panelLayout.isPanelVisible("workspaces")
+      panelLayout.isPanelVisible("stages")
     );
   });
 
@@ -1087,10 +1090,10 @@ function init(): void {
 
     if (e.key === "1") {
       e.preventDefault();
-      panelLayout.togglePanel("workspaces");
-      qs("#btn-toggle-workspaces")?.classList.toggle(
+      panelLayout.togglePanel("stages");
+      qs("#btn-toggle-stages")?.classList.toggle(
         "active",
-        panelLayout.isPanelVisible("workspaces")
+        panelLayout.isPanelVisible("stages")
       );
       return;
     }
@@ -1103,7 +1106,7 @@ function init(): void {
 
     if (e.key === "4") {
       e.preventDefault();
-      if (appState.get().viewMode === "workspaces") {
+      if (appState.get().viewMode === "stages") {
         diffView.toggleFilesPanel();
       }
       return;
@@ -1111,7 +1114,7 @@ function init(): void {
 
     if (e.key === "5") {
       e.preventDefault();
-      if (appState.get().viewMode === "workspaces") {
+      if (appState.get().viewMode === "stages") {
         diffView.toggleBranchPanel();
       }
       return;
@@ -1120,25 +1123,25 @@ function init(): void {
     if (e.key === "n") {
       e.preventDefault();
       const state = appState.get();
-      if (state.activeWorkspace) {
+      if (state.activeStage) {
         appState.update((s) => ({ ...s, activeSessionId: null }));
         chatView.clear();
         chatView.focus();
       } else {
-        openWorkspace();
+        openStage();
       }
       return;
     }
 
     if (e.key === "o") {
       e.preventDefault();
-      openWorkspace();
+      openStage();
     }
   });
 
-  // State subscription — rebuild sidebar on every snapshot or workspace change
+  // State subscription — rebuild sidebar on every snapshot or stage change
   appState.subscribe((state) => {
-    const shouldFixChatPanel = state.viewMode === "workspaces" || state.viewMode === "prs";
+    const shouldFixChatPanel = state.viewMode === "stages" || state.viewMode === "prs";
     if (shouldFixChatPanel !== prevChatPanelFixed) {
       panelLayout.setPanelSizing(
         "chat",
@@ -1152,7 +1155,7 @@ function init(): void {
     const viewModeChanged = prevViewMode !== null && prevViewMode !== state.viewMode;
     const sidebarWidthBeforeSwitch = viewModeChanged ? wsPanel.offsetWidth : 0;
 
-    const wsData = buildWorkspaceData(state);
+    const wsData = buildStageData(state);
     sidebar.render(wsData);
     sidebar.setActiveSession(resolveCanonicalSessionId(state.activeSessionId));
 
@@ -1164,18 +1167,18 @@ function init(): void {
     const isTasksMode = state.viewMode === "tasks";
     const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
-    const taskGroups = buildTaskWorkspaceGroups(state);
+    const taskGroups = buildTaskStageGroups(state);
     const pullRequestSections = buildPullRequestSidebarSections(state);
     const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
     const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
     const pullRequestTotalFiles = state.selectedPullRequestDetail?.files.length ?? 0;
-    const activeWorkspaceConnectors = resolveActiveWorkspaceConnectors(state);
-    const activeWorkspaceAuthSession = state.connectorAuthSession?.workspacePath === state.activeWorkspace
+    const activeStageConnectors = resolveActiveStageConnectors(state);
+    const activeStageAuthSession = state.connectorAuthSession?.stagePath === state.activeStage
       ? state.connectorAuthSession
       : null;
 
     sidebarPrimaryActions.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
-    workspacesSidebarHost.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
+    stagesSidebarHost.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
     tasksSidebarHost.hidden = !isTasksMode;
     prsSidebarHost.hidden = !isPRMode;
@@ -1215,10 +1218,10 @@ function init(): void {
       selectedAgentReviewDocument: state.selectedPullRequestAgentReviewDocument,
       agentReviewStarting: state.pullRequestAgentReviewStarting,
     });
-    connectorsView.render(activeWorkspaceConnectors, {
+    connectorsView.render(activeStageConnectors, {
       loading: state.connectorsLoading,
-      authSession: activeWorkspaceAuthSession,
-      workspacePath: state.activeWorkspace,
+      authSession: activeStageAuthSession,
+      stagePath: state.activeStage,
     });
 
     chatView.element.hidden = isPluginsMode || isTasksMode || isPRMode || isConnectorsMode;
@@ -1227,11 +1230,11 @@ function init(): void {
     prView.setVisible(isPRMode);
     connectorsView.setVisible(isConnectorsMode);
 
-    if (state.activeWorkspace && state.activeWorkspace !== prevConnectorsWorkspace) {
-      prevConnectorsWorkspace = state.activeWorkspace;
-      void loadWorkspaceConnectors(state.activeWorkspace, false);
-    } else if (!state.activeWorkspace) {
-      prevConnectorsWorkspace = null;
+    if (state.activeStage && state.activeStage !== prevConnectorsStage) {
+      prevConnectorsStage = state.activeStage;
+      void loadStageConnectors(state.activeStage, false);
+    } else if (!state.activeStage) {
+      prevConnectorsStage = null;
     }
 
     syncConnectorAuthPollTimer(state);
@@ -1239,7 +1242,7 @@ function init(): void {
     if (isPluginsMode || isTasksMode || isConnectorsMode) {
       panelLayout.hidePanel("diff");
       if (sidebarWidthBeforeSwitch > 0) {
-        panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
+        panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
       }
       prevViewMode = state.viewMode;
       return;
@@ -1247,7 +1250,7 @@ function init(): void {
 
     panelLayout.showPanel("diff");
     if (sidebarWidthBeforeSwitch > 0) {
-      panelLayout.preservePanelPixelWidth("workspaces", sidebarWidthBeforeSwitch);
+      panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
     }
 
     filesPanel.setReviewMode(isPRMode);
@@ -1260,7 +1263,7 @@ function init(): void {
       isPRMode ? pullRequestReviewMap : new Map()
     );
     syncCommitButtonVisibility(state);
-    if (state.viewMode !== "workspaces" && commitModal.isOpen) {
+    if (state.viewMode !== "stages" && commitModal.isOpen) {
       commitModal.close();
     }
     if (isPRMode && !state.selectedPullRequestDetail) {
@@ -1274,12 +1277,12 @@ function init(): void {
     if (
       viewModeChanged
       && prevViewMode === "prs"
-      && state.viewMode === "workspaces"
-      && state.activeWorkspace
+      && state.viewMode === "stages"
+      && state.activeStage
     ) {
-      clearCommitDiffSelection(state.activeWorkspace);
-      void loadDiff(state.activeWorkspace, state.diffScope);
-      ensureBranchHistory(state.activeWorkspace);
+      clearCommitDiffSelection(state.activeStage);
+      void loadDiff(state.activeStage, state.diffScope);
+      ensureBranchHistory(state.activeStage);
     }
 
     prevViewMode = state.viewMode;
@@ -1291,7 +1294,7 @@ function init(): void {
 
     chatView.setHeader(
       resolveActiveSessionTitle(state),
-      state.activeWorkspace
+      state.activeStage
     );
     const contextInfo = resolveActiveContextUsage(state);
     chatView.setContextUsage(
@@ -1301,30 +1304,30 @@ function init(): void {
       contextInfo?.promptTokens ?? null
     );
 
-    const activeWorkspace = state.activeWorkspace;
-    const branchCommits = activeWorkspace
-      ? (state.branchHistory[activeWorkspace] ?? EMPTY_BRANCH_COMMITS)
+    const activeStage = state.activeStage;
+    const branchCommits = activeStage
+      ? (state.branchHistory[activeStage] ?? EMPTY_BRANCH_COMMITS)
       : EMPTY_BRANCH_COMMITS;
     if (
-      activeWorkspace !== prevBranchWorkspace
+      activeStage !== prevBranchStage
       || branchCommits !== prevBranchCommits
     ) {
-      if (activeWorkspace) {
+      if (activeStage) {
         branchPanel.render(branchCommits);
-        const activeCommitHash = activeCommitDiff?.cwd === activeWorkspace
+        const activeCommitHash = activeCommitDiff?.cwd === activeStage
           ? activeCommitDiff.hash
           : null;
         branchPanel.setActiveCommit(activeCommitHash);
       } else {
         branchPanel.clear();
       }
-      prevBranchWorkspace = activeWorkspace;
+      prevBranchStage = activeStage;
       prevBranchCommits = branchCommits;
     }
   });
 
   // Load initial data
-  loadWorkspaces();
+  loadStages();
   loadSessionNames();
   loadPlugins();
 }
@@ -1387,10 +1390,10 @@ async function loadBranchHistory(cwd: string, force = false): Promise<void> {
   if (!force && alreadyLoaded) return;
 
   try {
-    const commits: BranchCommit[] = await (rpc as any).request.getBranchHistory({
-      cwd,
-      limit: 120,
-    });
+    const [commits, vcsInfo]: [BranchCommit[], VcsInfo] = await Promise.all([
+      (rpc as any).request.getBranchHistory({ cwd, limit: 120 }),
+      (rpc as any).request.getVcsInfo({ cwd }),
+    ]);
     appState.update((s) => {
       const loaded = new Set(s.loadedBranchHistory);
       loaded.add(cwd);
@@ -1399,6 +1402,10 @@ async function loadBranchHistory(cwd: string, force = false): Promise<void> {
         branchHistory: {
           ...s.branchHistory,
           [cwd]: commits,
+        },
+        vcsInfoByStage: {
+          ...s.vcsInfoByStage,
+          [cwd]: vcsInfo,
         },
         loadedBranchHistory: loaded,
       };
@@ -1430,8 +1437,8 @@ async function loadCommitContext(cwd: string): Promise<void> {
     const context: CommitContext = await (rpc as any).request.getCommitContext({ cwd });
     appState.update((s) => ({
       ...s,
-      commitContextByWorkspace: {
-        ...s.commitContextByWorkspace,
+      commitContextByStage: {
+        ...s.commitContextByStage,
         [cwd]: context,
       },
     }));
@@ -1439,8 +1446,8 @@ async function loadCommitContext(cwd: string): Promise<void> {
     console.error("Failed to load commit context:", err);
     appState.update((s) => ({
       ...s,
-      commitContextByWorkspace: {
-        ...s.commitContextByWorkspace,
+      commitContextByStage: {
+        ...s.commitContextByStage,
         [cwd]: emptyCommitContext(),
       },
     }));
@@ -1458,23 +1465,23 @@ function scheduleCommitContextRefresh(cwd: string, delayMs: number): void {
 }
 
 function syncCommitButtonVisibility(state: AppState): void {
-  const activeWorkspace = state.activeWorkspace;
-  const commitContext = activeWorkspace
-    ? state.commitContextByWorkspace[activeWorkspace]
+  const activeStage = state.activeStage;
+  const commitContext = activeStage
+    ? state.commitContextByStage[activeStage]
     : null;
-  const visible = state.viewMode === "workspaces"
-    && Boolean(activeWorkspace)
+  const visible = state.viewMode === "stages"
+    && Boolean(activeStage)
     && Boolean(commitContext?.hasChanges);
   diffView.setCommitButtonVisible(visible);
 }
 
-async function openCommitDialogForWorkspace(): Promise<void> {
+async function openCommitDialogForStage(): Promise<void> {
   const state = appState.get();
-  const cwd = state.activeWorkspace;
-  if (!cwd || state.viewMode !== "workspaces") return;
+  const cwd = state.activeStage;
+  if (!cwd || state.viewMode !== "stages") return;
 
   await loadCommitContext(cwd);
-  const commitContext = appState.get().commitContextByWorkspace[cwd];
+  const commitContext = appState.get().commitContextByStage[cwd];
   if (!commitContext?.hasChanges) {
     syncCommitButtonVisibility(appState.get());
     return;
@@ -1497,12 +1504,12 @@ async function openCommitDialogForWorkspace(): Promise<void> {
           includeUnstaged,
           mode,
         });
-        await refreshWorkspaceAfterCommit(cwd);
+        await refreshStageAfterCommit(cwd);
         return result;
       } catch (err) {
         const text = err instanceof Error ? err.message : String(err);
         if (/^Commit [0-9a-f]{4,}/i.test(text)) {
-          await refreshWorkspaceAfterCommit(cwd);
+          await refreshStageAfterCommit(cwd);
         }
         throw err;
       }
@@ -1510,12 +1517,12 @@ async function openCommitDialogForWorkspace(): Promise<void> {
   });
 }
 
-async function refreshWorkspaceAfterCommit(cwd: string): Promise<void> {
+async function refreshStageAfterCommit(cwd: string): Promise<void> {
   const state = appState.get();
-  const activeWorkspace = state.activeWorkspace;
-  const isWorkspaceVisible = state.viewMode === "workspaces" && activeWorkspace === cwd;
+  const activeStage = state.activeStage;
+  const isStageVisible = state.viewMode === "stages" && activeStage === cwd;
 
-  if (isWorkspaceVisible) {
+  if (isStageVisible) {
     await loadDiff(cwd, state.diffScope);
   } else {
     await loadCommitContext(cwd);
@@ -1527,8 +1534,8 @@ function clearCommitDiffSelection(cwd: string): void {
   if (!activeCommitDiff || activeCommitDiff.cwd !== cwd) return;
   activeCommitDiff = null;
 
-  const activeWorkspace = appState.get().activeWorkspace;
-  if (activeWorkspace === cwd) {
+  const activeStage = appState.get().activeStage;
+  if (activeStage === cwd) {
     branchPanel.setActiveCommit(null);
   }
 }
@@ -1567,7 +1574,7 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
     const selectedScope = scope ?? state.diffScope;
     const activeSessionId = resolveCanonicalSessionId(state.activeSessionId);
     const sessionId = selectedScope === "last_turn"
-      && state.activeWorkspace === cwd
+      && state.activeStage === cwd
       ? (activeSessionId ?? undefined)
       : undefined;
     filesPanel.setScope(selectedScope);
@@ -1656,7 +1663,7 @@ async function pollConnectorAuthStatus(): Promise<void> {
       connectorAuthSession: next,
     }));
     if (next.status !== "pending") {
-      await loadWorkspaceConnectors(next.workspacePath, true);
+      await loadStageConnectors(next.stagePath, true);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1761,35 +1768,35 @@ function emptyCommitContext(): CommitContext {
   };
 }
 
-async function loadWorkspaces(): Promise<void> {
+async function loadStages(): Promise<void> {
   try {
-    const workspaces: string[] = await (rpc as any).request.getWorkspaces({});
+    const stages: string[] = await (rpc as any).request.getStages({});
     const expanded = new Set<string>();
-    // Auto-expand first workspace
-    if (workspaces.length > 0) {
-      expanded.add(workspaces[0]);
+    // Auto-expand first stage
+    if (stages.length > 0) {
+      expanded.add(stages[0]);
     }
     appState.update((s) => ({
       ...s,
-      workspaces,
-      expandedWorkspaces: expanded,
-      activeWorkspace: workspaces[0] ?? null,
+      stages,
+      expandedStages: expanded,
+      activeStage: stages[0] ?? null,
     }));
-    // Auto-show workspaces panel if we have workspaces
-    if (workspaces.length > 0) {
-      panelLayout.showPanel("workspaces");
-      qs("#btn-toggle-workspaces")?.classList.add("active");
-      // Load diff and history for first workspace
-      loadDiff(workspaces[0], appState.get().diffScope);
-      loadSessionHistory(workspaces[0]);
-      loadWorkspaceConnectors(workspaces[0], false);
-      for (const wsPath of workspaces) {
+    // Auto-show stages panel if we have stages
+    if (stages.length > 0) {
+      panelLayout.showPanel("stages");
+      qs("#btn-toggle-stages")?.classList.add("active");
+      // Load diff and history for first stage
+      loadDiff(stages[0], appState.get().diffScope);
+      loadSessionHistory(stages[0]);
+      loadStageConnectors(stages[0], false);
+      for (const wsPath of stages) {
         ensureBranchHistory(wsPath);
       }
     }
-    void loadAllWorkspaceTasks();
+    void loadAllStageTasks();
   } catch {
-    // First run — no workspaces yet
+    // First run — no stages yet
   }
 }
 
@@ -1832,13 +1839,13 @@ async function loadPlugins(force = false): Promise<void> {
   }
 }
 
-async function loadWorkspaceConnectors(
-  workspacePath: string,
+async function loadStageConnectors(
+  stagePath: string,
   force = false
 ): Promise<void> {
-  if (!workspacePath) return;
+  if (!stagePath) return;
   const state = appState.get();
-  const alreadyLoaded = Array.isArray(state.connectorsByWorkspace[workspacePath]);
+  const alreadyLoaded = Array.isArray(state.connectorsByStage[stagePath]);
   if (state.connectorsLoading && !force) return;
   if (alreadyLoaded && !force) return;
 
@@ -1848,19 +1855,19 @@ async function loadWorkspaceConnectors(
   }));
 
   try {
-    const connectors: WorkspaceConnector[] = await (rpc as any).request.getWorkspaceConnectors({
-      workspacePath,
+    const connectors: StageConnector[] = await (rpc as any).request.getStageConnectors({
+      stagePath,
     });
     appState.update((s) => ({
       ...s,
       connectorsLoading: false,
-      connectorsByWorkspace: {
-        ...s.connectorsByWorkspace,
-        [workspacePath]: connectors,
+      connectorsByStage: {
+        ...s.connectorsByStage,
+        [stagePath]: connectors,
       },
     }));
   } catch (err) {
-    console.error("Failed to load workspace connectors:", err);
+    console.error("Failed to load stage connectors:", err);
     appState.update((s) => ({
       ...s,
       connectorsLoading: false,
@@ -1868,12 +1875,12 @@ async function loadWorkspaceConnectors(
   }
 }
 
-async function loadAllWorkspaceTasks(): Promise<void> {
+async function loadAllStageTasks(): Promise<void> {
   const state = appState.get();
-  if (state.workspaces.length === 0) {
+  if (state.stages.length === 0) {
     appState.update((s) => ({
       ...s,
-      tasksByWorkspace: {},
+      tasksByStage: {},
       tasksLoading: false,
       selectedTaskId: null,
       selectedTaskDetail: null,
@@ -1887,26 +1894,26 @@ async function loadAllWorkspaceTasks(): Promise<void> {
   }));
 
   try {
-    const pairs = await Promise.all(state.workspaces.map(async (workspacePath) => {
-      const tasks: TaskCardSummary[] = await (rpc as any).request.getWorkspaceTasks({ workspacePath });
-      return [workspacePath, tasks] as const;
+    const pairs = await Promise.all(state.stages.map(async (stagePath) => {
+      const tasks: TaskCardSummary[] = await (rpc as any).request.getStageTasks({ stagePath });
+      return [stagePath, tasks] as const;
     }));
 
-    const byWorkspace: Record<string, TaskCardSummary[]> = {};
-    for (const [workspacePath, tasks] of pairs) {
-      byWorkspace[workspacePath] = tasks;
+    const byStage: Record<string, TaskCardSummary[]> = {};
+    for (const [stagePath, tasks] of pairs) {
+      byStage[stagePath] = tasks;
     }
 
     let selectedTaskId = appState.get().selectedTaskId;
-    if (!selectedTaskId || !findTaskSummaryById(byWorkspace, selectedTaskId)) {
-      const activeWorkspace = appState.get().activeWorkspace;
-      const preferred = activeWorkspace ? byWorkspace[activeWorkspace] : null;
+    if (!selectedTaskId || !findTaskSummaryById(byStage, selectedTaskId)) {
+      const activeStage = appState.get().activeStage;
+      const preferred = activeStage ? byStage[activeStage] : null;
       selectedTaskId = preferred?.[0]?.id ?? pairs[0]?.[1]?.[0]?.id ?? null;
     }
 
     appState.update((s) => ({
       ...s,
-      tasksByWorkspace: byWorkspace,
+      tasksByStage: byStage,
       tasksLoading: false,
       selectedTaskId,
       selectedTaskDetail: selectedTaskId === s.selectedTaskDetail?.id ? s.selectedTaskDetail : null,
@@ -1924,15 +1931,15 @@ async function loadAllWorkspaceTasks(): Promise<void> {
   }
 }
 
-async function loadWorkspaceTasks(workspacePath: string, refreshDetail = false): Promise<void> {
-  if (!workspacePath) return;
+async function loadStageTasks(stagePath: string, refreshDetail = false): Promise<void> {
+  if (!stagePath) return;
   try {
-    const tasks: TaskCardSummary[] = await (rpc as any).request.getWorkspaceTasks({ workspacePath });
+    const tasks: TaskCardSummary[] = await (rpc as any).request.getStageTasks({ stagePath });
     appState.update((s) => ({
       ...s,
-      tasksByWorkspace: {
-        ...s.tasksByWorkspace,
-        [workspacePath]: tasks,
+      tasksByStage: {
+        ...s.tasksByStage,
+        [stagePath]: tasks,
       },
     }));
 
@@ -1943,7 +1950,7 @@ async function loadWorkspaceTasks(workspacePath: string, refreshDetail = false):
       await loadTaskDetail(selectedTaskId, true);
       return;
     }
-    if (!selectedStillExists && appState.get().selectedTaskDetail?.workspacePath === workspacePath) {
+    if (!selectedStillExists && appState.get().selectedTaskDetail?.stagePath === stagePath) {
       const next = tasks[0] ?? null;
       appState.update((s) => ({
         ...s,
@@ -1957,7 +1964,7 @@ async function loadWorkspaceTasks(workspacePath: string, refreshDetail = false):
       }
     }
   } catch (err) {
-    console.error("Failed to load workspace tasks:", err);
+    console.error("Failed to load stage tasks:", err);
   }
 }
 
@@ -1978,7 +1985,7 @@ async function loadTaskDetail(taskId: string, keepSelection = false): Promise<vo
       ...s,
       selectedTaskId: keepSelection ? (s.selectedTaskId ?? detail.id) : detail.id,
       selectedTaskDetail: detail,
-      activeWorkspace: detail.workspacePath,
+      activeStage: detail.stagePath,
     }));
   } catch (err) {
     console.error("Failed to load task detail:", err);
@@ -2533,8 +2540,8 @@ async function refreshPullRequests(): Promise<void> {
 
 async function enterPullRequestsMode(): Promise<void> {
   appState.update((s) => ({ ...s, viewMode: "prs" }));
-  panelLayout.showPanel("workspaces");
-  qs("#btn-toggle-workspaces")?.classList.add("active");
+  panelLayout.showPanel("stages");
+  qs("#btn-toggle-stages")?.classList.add("active");
 
   const state = appState.get();
   if (state.pullRequestsLoading || state.pullRequestDetailLoading) return;
@@ -2581,10 +2588,10 @@ function applyCachedSelectedPullRequestDiff(state: AppState): boolean {
   return true;
 }
 
-async function createTaskInWorkspace(workspacePath: string): Promise<void> {
+async function createTaskInStage(stagePath: string): Promise<void> {
   try {
     const detail: TaskCardDetail = await (rpc as any).request.createTask({
-      workspacePath,
+      stagePath,
       title: "Untitled task",
       notes: "",
     });
@@ -2593,114 +2600,117 @@ async function createTaskInWorkspace(workspacePath: string): Promise<void> {
       ...s,
       selectedTaskId: detail.id,
       selectedTaskDetail: detail,
-      activeWorkspace: workspacePath,
+      activeStage: stagePath,
       viewMode: "tasks",
     }));
 
-    await loadWorkspaceTasks(workspacePath, false);
+    await loadStageTasks(stagePath, false);
     await loadTaskDetail(detail.id, true);
   } catch (err) {
     console.error("Failed to create task:", err);
   }
 }
 
-async function openWorkspace(): Promise<void> {
+async function openStage(): Promise<void> {
   try {
     const dir: string | null = await (rpc as any).request.pickDirectory({});
     if (!dir) return;
 
-    await (rpc as any).request.addWorkspace({ path: dir });
+    await (rpc as any).request.addStage({ path: dir });
     const state = appState.get();
-    const expanded = new Set(state.expandedWorkspaces);
+    const expanded = new Set(state.expandedStages);
     expanded.add(dir);
 
     appState.update((s) => ({
       ...s,
-      workspaces: [dir, ...s.workspaces.filter((w) => w !== dir)],
-      expandedWorkspaces: expanded,
-      activeWorkspace: dir,
+      stages: [dir, ...s.stages.filter((w) => w !== dir)],
+      expandedStages: expanded,
+      activeStage: dir,
     }));
 
-    panelLayout.showPanel("workspaces");
-    qs("#btn-toggle-workspaces")?.classList.add("active");
+    panelLayout.showPanel("stages");
+    qs("#btn-toggle-stages")?.classList.add("active");
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
     ensureBranchHistory(dir);
-    loadWorkspaceTasks(dir);
-    loadWorkspaceConnectors(dir, true);
+    loadStageTasks(dir);
+    loadStageConnectors(dir, true);
   } catch (err) {
     console.error("Failed to pick directory:", err);
   }
 }
 
-async function removeWorkspace(path: string): Promise<void> {
+async function removeStage(path: string): Promise<void> {
   try {
-    await (rpc as any).request.removeWorkspace({ path });
-    workspaceFileCache.delete(path);
+    await (rpc as any).request.removeStage({ path });
+    stageFileCache.delete(path);
     slashCommandCache.delete(path);
-    if (commitModal.isOpen && appState.get().activeWorkspace === path) {
+    if (commitModal.isOpen && appState.get().activeStage === path) {
       commitModal.close();
     }
     if (activeCommitDiff?.cwd === path) {
       activeCommitDiff = null;
     }
     appState.update((s) => {
-      const workspaces = s.workspaces.filter((w) => w !== path);
-      const expanded = new Set(s.expandedWorkspaces);
+      const stages = s.stages.filter((w) => w !== path);
+      const expanded = new Set(s.expandedStages);
       const loadedBranchHistory = new Set(s.loadedBranchHistory);
       expanded.delete(path);
       loadedBranchHistory.delete(path);
       const branchHistory = { ...s.branchHistory };
-      const commitContextByWorkspace = { ...s.commitContextByWorkspace };
-      const tasksByWorkspace = { ...s.tasksByWorkspace };
-      const connectorsByWorkspace = { ...s.connectorsByWorkspace };
+      const vcsInfoByStage = { ...s.vcsInfoByStage };
+      const commitContextByStage = { ...s.commitContextByStage };
+      const tasksByStage = { ...s.tasksByStage };
+      const connectorsByStage = { ...s.connectorsByStage };
       delete branchHistory[path];
-      delete commitContextByWorkspace[path];
-      delete tasksByWorkspace[path];
-      delete connectorsByWorkspace[path];
-      const selectedTaskRemoved = s.selectedTaskDetail?.workspacePath === path;
-      const authSessionRemoved = s.connectorAuthSession?.workspacePath === path;
+      delete vcsInfoByStage[path];
+      delete commitContextByStage[path];
+      delete tasksByStage[path];
+      delete connectorsByStage[path];
+      const selectedTaskRemoved = s.selectedTaskDetail?.stagePath === path;
+      const authSessionRemoved = s.connectorAuthSession?.stagePath === path;
       return {
         ...s,
-        workspaces,
-        expandedWorkspaces: expanded,
+        stages,
+        expandedStages: expanded,
         branchHistory,
-        commitContextByWorkspace,
-        tasksByWorkspace,
-        connectorsByWorkspace,
+        vcsInfoByStage,
+        commitContextByStage,
+        tasksByStage,
+        connectorsByStage,
         loadedBranchHistory,
         selectedTaskId: selectedTaskRemoved ? null : s.selectedTaskId,
         selectedTaskDetail: selectedTaskRemoved ? null : s.selectedTaskDetail,
         connectorAuthSession: authSessionRemoved ? null : s.connectorAuthSession,
-        activeWorkspace: s.activeWorkspace === path
-          ? (workspaces[0] ?? null)
-          : s.activeWorkspace,
+        activeStage: s.activeStage === path
+          ? (stages[0] ?? null)
+          : s.activeStage,
       };
     });
 
-    const nextWorkspace = appState.get().activeWorkspace;
-    if (nextWorkspace) {
-      ensureBranchHistory(nextWorkspace);
-      void loadWorkspaceConnectors(nextWorkspace, false);
+    const nextStage = appState.get().activeStage;
+    if (nextStage) {
+      ensureBranchHistory(nextStage);
+      void loadStageConnectors(nextStage, false);
     }
-    loadAllWorkspaceTasks();
+    loadAllStageTasks();
   } catch (err) {
-    console.error("Failed to remove workspace:", err);
+    console.error("Failed to remove stage:", err);
   }
 }
 
-async function searchWorkspaceFiles(
+async function searchStageFiles(
   cwd: string,
   query: string,
   limit: number
 ): Promise<string[]> {
-  const cached = workspaceFileCache.get(cwd);
+  const cached = stageFileCache.get(cwd);
   let files = cached?.files;
   const cacheAgeMs = cached ? Date.now() - cached.loadedAt : Number.POSITIVE_INFINITY;
-  if (!files || cacheAgeMs > WORKSPACE_FILE_CACHE_MS) {
-    const loaded = await (rpc as any).request.getWorkspaceFiles({ cwd });
+  if (!files || cacheAgeMs > STAGE_FILE_CACHE_MS) {
+    const loaded = await (rpc as any).request.getStageFiles({ cwd });
     files = Array.isArray(loaded) ? loaded : [];
-    workspaceFileCache.set(cwd, { files, loadedAt: Date.now() });
+    stageFileCache.set(cwd, { files, loadedAt: Date.now() });
   }
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -2709,7 +2719,7 @@ async function searchWorkspaceFiles(
   }
 
   return files
-    .map((path) => ({ path, score: scoreWorkspaceFile(path, normalizedQuery) }))
+    .map((path) => ({ path, score: scoreStageFile(path, normalizedQuery) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => {
       if (a.score !== b.score) return b.score - a.score;
@@ -2758,7 +2768,7 @@ async function searchSlashCommands(
     .map((entry) => entry.command);
 }
 
-function scoreWorkspaceFile(path: string, query: string): number {
+function scoreStageFile(path: string, query: string): number {
   const normalizedPath = path.toLowerCase();
   const fileName = path.split("/").pop()?.toLowerCase() ?? normalizedPath;
 
@@ -2801,34 +2811,34 @@ function compareSlashCommandEntries(a: SlashCommandEntry, b: SlashCommandEntry):
   return a.name.localeCompare(b.name);
 }
 
-function resolveActiveWorkspaceConnectors(state: AppState): WorkspaceConnector[] {
-  if (!state.activeWorkspace) return [];
-  const loaded = state.connectorsByWorkspace[state.activeWorkspace];
+function resolveActiveStageConnectors(state: AppState): StageConnector[] {
+  if (!state.activeStage) return [];
+  const loaded = state.connectorsByStage[state.activeStage];
   if (Array.isArray(loaded) && loaded.length > 0) {
     const withDefaults = [
       loaded.find((entry) => entry.provider === "slack")
-        ?? defaultWorkspaceConnector(state.activeWorkspace, "slack"),
+        ?? defaultStageConnector(state.activeStage, "slack"),
       loaded.find((entry) => entry.provider === "jira")
-        ?? defaultWorkspaceConnector(state.activeWorkspace, "jira"),
+        ?? defaultStageConnector(state.activeStage, "jira"),
     ];
     return withDefaults;
   }
   return [
-    defaultWorkspaceConnector(state.activeWorkspace, "slack"),
-    defaultWorkspaceConnector(state.activeWorkspace, "jira"),
+    defaultStageConnector(state.activeStage, "slack"),
+    defaultStageConnector(state.activeStage, "jira"),
   ];
 }
 
-function defaultWorkspaceConnector(
-  workspacePath: string,
+function defaultStageConnector(
+  stagePath: string,
   provider: ConnectorProvider
-): WorkspaceConnector {
+): StageConnector {
   return {
-    workspacePath,
+    stagePath,
     provider,
     status: "disconnected",
-    externalWorkspaceId: null,
-    externalWorkspaceName: null,
+    externalStageId: null,
+    externalStageName: null,
     externalUserId: null,
     scopes: [],
     tokenExpiresAt: null,
@@ -2878,19 +2888,25 @@ function resolvePluginSelection(
   };
 }
 
-function buildTaskWorkspaceGroups(state: AppState): TaskWorkspaceGroup[] {
-  return state.workspaces.map((workspacePath) => ({
-    workspacePath,
-    workspaceName: workspacePath.split("/").pop() ?? workspacePath,
-    tasks: state.tasksByWorkspace[workspacePath] ?? [],
-  }));
+function buildTaskStageGroups(state: AppState): TaskStageGroup[] {
+  return state.stages.map((stagePath) => {
+    const vcsInfo = state.vcsInfoByStage[stagePath];
+    const branch = vcsInfo?.branch
+      ?? resolveStageBranchName(state.branchHistory[stagePath] ?? EMPTY_BRANCH_COMMITS);
+    return {
+      stagePath,
+      stageName: stagePath.split("/").pop() ?? stagePath,
+      branch,
+      tasks: state.tasksByStage[stagePath] ?? [],
+    };
+  });
 }
 
 function findTaskSummaryById(
-  byWorkspace: Record<string, TaskCardSummary[]>,
+  byStage: Record<string, TaskCardSummary[]>,
   taskId: string
 ): TaskCardSummary | null {
-  for (const tasks of Object.values(byWorkspace)) {
+  for (const tasks of Object.values(byStage)) {
     const found = tasks.find((task) => task.id === taskId);
     if (found) return found;
   }
@@ -3060,18 +3076,18 @@ function persistFilesListViewMode(mode: FileListView): void {
   }
 }
 
-function buildWorkspaceData(state: AppState): WorkspaceData[] {
+function buildStageData(state: AppState): StageData[] {
   const liveSessions = state.snapshot
     ? buildSessionList(state.snapshot)
     : [];
   const normalizedLiveSessionIds = remapLiveSessionIds(state.liveSessions);
 
-  return state.workspaces.map((wsPath) => {
+  return state.stages.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
-    const branch = resolveWorkspaceBranchName(
-      state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS
-    );
-    // Live sessions for this workspace
+    const vcsInfo = state.vcsInfoByStage[wsPath];
+    const branch = vcsInfo?.branch
+      ?? resolveStageBranchName(state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS);
+    // Live sessions for this stage
     const wsLive = liveSessions.filter((s) => s.cwd === wsPath);
     const liveIds = new Set(wsLive.map((s) => s.sessionId));
 
@@ -3097,14 +3113,14 @@ function buildWorkspaceData(state: AppState): WorkspaceData[] {
       path: wsPath,
       name,
       branch,
-      active: state.activeWorkspace === wsPath,
+      active: state.activeStage === wsPath,
       sessions: allSessions,
-      expanded: state.expandedWorkspaces.has(wsPath),
+      expanded: state.expandedStages.has(wsPath),
     };
   });
 }
 
-function resolveWorkspaceBranchName(commits: BranchCommit[]): string | null {
+function resolveStageBranchName(commits: BranchCommit[]): string | null {
   for (const commit of commits) {
     const headRef = commit.refs.find((ref) => ref.kind === "head");
     if (headRef?.name) return headRef.name;
@@ -3144,7 +3160,7 @@ function historyToSessionInfo(h: HistorySession): SessionInfo {
 }
 
 function buildAppSpawnedSessionList(
-  workspacePath: string,
+  stagePath: string,
   liveIds: Set<string>,
   historyIds: Set<string>,
   stateLiveIds: Set<string>
@@ -3153,7 +3169,7 @@ function buildAppSpawnedSessionList(
   const seen = new Set<string>();
   for (const [sessionId, meta] of appSpawnedSessions) {
     const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
-    if (meta.cwd !== workspacePath) continue;
+    if (meta.cwd !== stagePath) continue;
     if (!stateLiveIds.has(sessionId) && !stateLiveIds.has(canonicalSessionId)) continue;
     if (
       liveIds.has(sessionId)

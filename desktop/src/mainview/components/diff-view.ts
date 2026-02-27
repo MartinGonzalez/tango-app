@@ -1,11 +1,11 @@
 import { h, clearChildren } from "../lib/dom.ts";
-import { menuDotsIcon, workspaceBranchIcon } from "../lib/icons.ts";
+import { stageBranchIcon } from "../lib/icons.ts";
 import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type {
   DiffFile,
   DiffLine,
   PullRequestReviewThread,
-  WorkspaceFileContent,
+  StageFileContent,
 } from "../../shared/types.ts";
 import { renderMarkdown } from "./chat-view.ts";
 import Prism from "prismjs";
@@ -35,7 +35,7 @@ import "prismjs/components/prism-php";
 export type DiffViewCallbacks = {
   onBranchPanelToggle?: (visible: boolean) => void;
   onCommitClick?: () => void;
-  onRequestFullFile?: (path: string) => Promise<WorkspaceFileContent>;
+  onRequestFullFile?: (path: string) => Promise<StageFileContent>;
   onToggleFileSeen?: (path: string, seen: boolean) => void;
   onReplyReviewThread?: (
     thread: PullRequestReviewThread,
@@ -146,16 +146,15 @@ export class DiffView {
       class: "dv-icon-btn",
       title: "Toggle files changed",
       onclick: () => this.toggleFilesPanel(),
-      innerHTML: `<svg class="dv-icon-folder" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path d="M1.5 4.25C1.5 3.55964 2.05964 3 2.75 3h3.02c.31 0 .61.115.84.322l.89.807c.23.208.53.321.84.321h4.91c.69 0 1.25.56 1.25 1.25V11.5c0 .69-.56 1.25-1.25 1.25H2.75c-.69 0-1.25-.56-1.25-1.25V4.25Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
-      </svg>`,
-    }) as HTMLButtonElement;
+    }, [
+      h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, ["folder_open"]),
+    ]) as HTMLButtonElement;
 
     this.#branchToggleBtn = h("button", {
       class: "dv-icon-btn",
       title: "Toggle branch history",
       onclick: () => this.toggleBranchPanel(),
-    }, [workspaceBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
+    }, [stageBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
 
     this.#commitBtn = h("button", {
       class: "dv-commit-btn",
@@ -167,16 +166,18 @@ export class DiffView {
     this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
       h("span", { class: "dv-file-label" }, [""]),
       h("span", { class: "dv-toolbar-spacer" }),
-      h("button", {
-        class: "dv-toggle active",
-        dataset: { view: "unified" },
-        onclick: () => this.#setViewMode("unified"),
-      }, ["Unified"]),
-      h("button", {
-        class: "dv-toggle",
-        dataset: { view: "split" },
-        onclick: () => this.#setViewMode("split"),
-      }, ["Split"]),
+      h("div", { class: "dv-toggle-group" }, [
+        h("button", {
+          class: "dv-toggle active",
+          dataset: { view: "unified" },
+          onclick: () => this.#setViewMode("unified"),
+        }, ["Unified"]),
+        h("button", {
+          class: "dv-toggle",
+          dataset: { view: "split" },
+          onclick: () => this.#setViewMode("split"),
+        }, ["Split"]),
+      ]),
       this.#filesToggleBtn,
       this.#branchToggleBtn,
       this.#commitBtn,
@@ -544,7 +545,11 @@ export class DiffView {
           event.stopPropagation();
           this.#toggleFileActionsMenu(file.path);
         },
-      }, [menuDotsIcon()]) as HTMLButtonElement;
+      }, [
+        h("span", { class: "menu-dots-icon", "aria-hidden": "true" }, [
+          h("span", { class: "material-symbols-outlined" }, ["more_vert"]),
+        ]),
+      ]) as HTMLButtonElement;
 
       const actionButton = h("button", {
         class: "dv-file-actions-item",

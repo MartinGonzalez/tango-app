@@ -23,7 +23,9 @@ export class PluginsSidebar {
   #callbacks: PluginsSidebarCallbacks;
   #plugins: InstalledPlugin[] = [];
   #selection: PluginSidebarSelection | null = null;
+  #expandedPlugins = new Set<string>();
   #loading = false;
+  #animatingId: string | null = null;
 
   constructor(container: HTMLElement, callbacks: PluginsSidebarCallbacks) {
     this.#callbacks = callbacks;
@@ -31,7 +33,7 @@ export class PluginsSidebar {
     const header = h("div", { class: "plugins-sidebar-header" }, [
       h("button", {
         class: "plugins-sidebar-back-btn",
-        title: "Back to workspaces",
+        title: "Back to stages",
         onclick: () => this.#callbacks.onBack(),
       }, ["\u2190"]),
       h("span", { class: "plugins-sidebar-title" }, ["Plugins"]),
@@ -55,6 +57,9 @@ export class PluginsSidebar {
 
   setSelection(selection: PluginSidebarSelection | null): void {
     this.#selection = selection;
+    if (selection && selection.kind !== "plugin") {
+      this.#expandedPlugins.add(selection.pluginId);
+    }
     this.#renderContent();
   }
 
@@ -81,16 +86,23 @@ export class PluginsSidebar {
   }
 
   #renderPlugin(plugin: InstalledPlugin): HTMLElement {
-    const selectedPluginId = this.#selection?.pluginId;
-    const isExpanded = selectedPluginId === plugin.id;
-    const isPluginSelected = this.#selection?.kind === "plugin"
-      && selectedPluginId === plugin.id;
+    const isExpanded = this.#expandedPlugins.has(plugin.id);
+    const toggleExpanded = () => {
+      if (this.#expandedPlugins.has(plugin.id)) {
+        this.#expandedPlugins.delete(plugin.id);
+      } else {
+        this.#expandedPlugins.add(plugin.id);
+      }
+      this.#animatingId = plugin.id;
+      this.#renderContent();
+    };
 
     const pluginRow = h(
       "button",
       {
-        class: `plugin-row${isPluginSelected ? " active" : ""}`,
+        class: "plugin-row",
         onclick: () => {
+          toggleExpanded();
           this.#callbacks.onSelect({
             kind: "plugin",
             pluginId: plugin.id,
@@ -105,11 +117,9 @@ export class PluginsSidebar {
       ]
     );
 
-    const group = h("div", { class: "plugin-group" }, [pluginRow]);
+    const groupHasSelection = this.#selection?.pluginId === plugin.id;
 
-    if (!isExpanded) {
-      return group;
-    }
+    const group = h("div", { class: `plugin-group${isExpanded ? " expanded" : ""}${groupHasSelection ? " active" : ""}` }, [pluginRow]);
 
     const itemsWrap = h("div", { class: "plugin-items" });
     const rows = [
@@ -128,7 +138,22 @@ export class PluginsSidebar {
       }
     }
 
-    group.appendChild(itemsWrap);
+    const animate = plugin.id === this.#animatingId;
+    const isCollapsed = !isExpanded;
+    const initialCollapsed = animate ? !isCollapsed : isCollapsed;
+    const collapsible = h("div", { class: `collapsible${initialCollapsed ? " is-collapsed" : ""}` }, [
+      h("div", { class: "collapsible-inner" }, [itemsWrap]),
+    ]);
+    if (animate) {
+      requestAnimationFrame(() => {
+        collapsible.offsetHeight;
+        requestAnimationFrame(() => {
+          collapsible.classList.toggle("is-collapsed", isCollapsed);
+          this.#animatingId = null;
+        });
+      });
+    }
+    group.appendChild(collapsible);
     return group;
   }
 

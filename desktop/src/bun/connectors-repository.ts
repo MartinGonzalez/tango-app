@@ -5,13 +5,13 @@ import {
   type OAuthCallbackPayload,
   type OAuthCallbackResult,
 } from "./connector-oauth-server.ts";
-import { ConnectorsStore, type WorkspaceConnectorRecord } from "./connectors-store.ts";
+import { ConnectorsStore, type StageConnectorRecord } from "./connectors-store.ts";
 import { KeychainStore } from "./keychain-store.ts";
 import type {
   ConnectorAuthSession,
   ConnectorAuthSessionStatus,
   ConnectorProvider,
-  WorkspaceConnector,
+  StageConnector,
 } from "../shared/types.ts";
 
 const CONNECTOR_PROVIDERS: ConnectorProvider[] = ["slack", "jira"];
@@ -30,7 +30,7 @@ const DEFAULT_SLACK_CLIENT_ID = "14806268916.10567553911219";
 const SLACK_CLIENT_ID = process.env.CLAUDEX_SLACK_CLIENT_ID?.trim()
   || DEFAULT_SLACK_CLIENT_ID;
 const SLACK_CLIENT_SECRET = process.env.CLAUDEX_SLACK_CLIENT_SECRET?.trim() || "";
-const SLACK_KEYCHAIN_SERVICE = "dev.claude-sessions.app.connectors.slack";
+const SLACK_KEYCHAIN_SERVICE = "dev.tango.app.connectors.slack";
 
 const JIRA_PROVIDER: ConnectorProvider = "jira";
 const JIRA_AUTHORIZE_URL = "https://auth.atlassian.com/authorize";
@@ -44,7 +44,7 @@ const JIRA_SCOPES = [
 ];
 const JIRA_CLIENT_ID = process.env.CLAUDEX_JIRA_CLIENT_ID?.trim() || "";
 const JIRA_CLIENT_SECRET = process.env.CLAUDEX_JIRA_CLIENT_SECRET?.trim() || "";
-const JIRA_KEYCHAIN_SERVICE = "dev.claude-sessions.app.connectors.jira";
+const JIRA_KEYCHAIN_SERVICE = "dev.tango.app.connectors.jira";
 
 const AUTH_SESSION_TTL_MS = 10 * 60_000;
 const TOKEN_REFRESH_SKEW_MS = 60_000;
@@ -113,10 +113,10 @@ type FetchLike = typeof fetch;
 type ConnectorsStoreLike = Pick<
   ConnectorsStore,
   | "close"
-  | "listWorkspaceConnectors"
-  | "getWorkspaceConnectorRecord"
-  | "upsertWorkspaceConnector"
-  | "deleteWorkspaceConnector"
+  | "listStageConnectors"
+  | "getStageConnectorRecord"
+  | "upsertStageConnector"
+  | "deleteStageConnector"
 >;
 type KeychainStoreLike = Pick<
   KeychainStore,
@@ -183,36 +183,36 @@ export class ConnectorsRepository {
     this.#store.close();
   }
 
-  async listWorkspaceConnectors(workspacePath: string): Promise<WorkspaceConnector[]> {
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
-    const records = this.#store.listWorkspaceConnectors(normalizedWorkspacePath);
+  async listStageConnectors(stagePath: string): Promise<StageConnector[]> {
+    const normalizedStagePath = normalizeStagePath(stagePath);
+    const records = this.#store.listStageConnectors(normalizedStagePath);
 
-    const byProvider = new Map<ConnectorProvider, WorkspaceConnector>();
+    const byProvider = new Map<ConnectorProvider, StageConnector>();
     for (const record of records) {
       byProvider.set(record.provider, record);
     }
 
     return CONNECTOR_PROVIDERS.map((provider) =>
-      byProvider.get(provider) ?? buildDefaultConnector(normalizedWorkspacePath, provider)
+      byProvider.get(provider) ?? buildDefaultConnector(normalizedStagePath, provider)
     );
   }
 
   async startConnectorAuth(
-    workspacePath: string,
+    stagePath: string,
     provider: ConnectorProvider
   ): Promise<ConnectorAuthSession> {
     if (!isConnectorProvider(provider)) {
       throw new Error(`Unsupported connector provider: ${provider}`);
     }
 
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
+    const normalizedStagePath = normalizeStagePath(stagePath);
     await this.start();
 
     const providerLabel = connectorProviderLabel(provider);
     const configError = this.#getProviderConfigError(provider);
     if (configError) {
       return this.#createFailedAuthSession(
-        normalizedWorkspacePath,
+        normalizedStagePath,
         provider,
         configError
       );
@@ -221,7 +221,7 @@ export class ConnectorsRepository {
     const status = this.#oauthServer.status;
     if (!status.ready) {
       return this.#createFailedAuthSession(
-        normalizedWorkspacePath,
+        normalizedStagePath,
         provider,
         status.message ?? `${providerLabel} OAuth callback server is not ready.`
       );
@@ -229,14 +229,14 @@ export class ConnectorsRepository {
 
     if (!status.trusted) {
       return this.#createFailedAuthSession(
-        normalizedWorkspacePath,
+        normalizedStagePath,
         provider,
         status.message
           ?? "Local HTTPS certificate is not trusted. Retry after trusting the certificate."
       );
     }
 
-    this.#expirePendingAuthSessions(normalizedWorkspacePath, provider);
+    this.#expirePendingAuthSessions(normalizedStagePath, provider);
 
     const authId = crypto.randomUUID();
     const state = randomBase64Url(18);
@@ -250,7 +250,7 @@ export class ConnectorsRepository {
 
     const auth: RuntimeAuthSession = {
       id: authId,
-      workspacePath: normalizedWorkspacePath,
+      stagePath: normalizedStagePath,
       provider,
       status: "pending",
       authorizeUrl,
@@ -288,13 +288,13 @@ export class ConnectorsRepository {
     return toPublicAuthSession(refreshed);
   }
 
-  async disconnectWorkspaceConnector(
-    workspacePath: string,
+  async disconnectStageConnector(
+    stagePath: string,
     provider: ConnectorProvider
   ): Promise<void> {
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
-    const record = this.#store.getWorkspaceConnectorRecord(
-      normalizedWorkspacePath,
+    const normalizedStagePath = normalizeStagePath(stagePath);
+    const record = this.#store.getStageConnectorRecord(
+      normalizedStagePath,
       provider
     );
     if (record?.keychainAccount) {
@@ -303,13 +303,13 @@ export class ConnectorsRepository {
         record.keychainAccount
       );
     }
-    this.#store.deleteWorkspaceConnector(normalizedWorkspacePath, provider);
+    this.#store.deleteStageConnector(normalizedStagePath, provider);
   }
 
-  async getSlackAccessToken(workspacePath: string): Promise<string> {
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
-    const record = this.#store.getWorkspaceConnectorRecord(
-      normalizedWorkspacePath,
+  async getSlackAccessToken(stagePath: string): Promise<string> {
+    const normalizedStagePath = normalizeStagePath(stagePath);
+    const record = this.#store.getStageConnectorRecord(
+      normalizedStagePath,
       SLACK_PROVIDER
     );
     if (!record || record.status !== "connected") {
@@ -317,7 +317,7 @@ export class ConnectorsRepository {
     }
 
     const keychainAccount = record.keychainAccount
-      ?? buildKeychainAccount(normalizedWorkspacePath);
+      ?? buildKeychainAccount(normalizedStagePath);
     const secretRaw = await this.#keychain.getSecret(SLACK_KEYCHAIN_SERVICE, keychainAccount);
     if (!secretRaw) {
       await this.#setConnectorError(record, "Slack token not found. Reconnect Slack.");
@@ -331,7 +331,7 @@ export class ConnectorsRepository {
     }
 
     const maybeRefreshed = await this.#refreshSlackTokenIfNeeded(
-      normalizedWorkspacePath,
+      normalizedStagePath,
       record,
       keychainAccount,
       parsed
@@ -345,10 +345,10 @@ export class ConnectorsRepository {
     return maybeRefreshed.accessToken;
   }
 
-  async getJiraAuthContext(workspacePath: string): Promise<JiraAuthContext> {
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
-    const record = this.#store.getWorkspaceConnectorRecord(
-      normalizedWorkspacePath,
+  async getJiraAuthContext(stagePath: string): Promise<JiraAuthContext> {
+    const normalizedStagePath = normalizeStagePath(stagePath);
+    const record = this.#store.getStageConnectorRecord(
+      normalizedStagePath,
       JIRA_PROVIDER
     );
     if (!record || record.status !== "connected") {
@@ -356,7 +356,7 @@ export class ConnectorsRepository {
     }
 
     const keychainAccount = record.keychainAccount
-      ?? buildKeychainAccount(normalizedWorkspacePath);
+      ?? buildKeychainAccount(normalizedStagePath);
     const secretRaw = await this.#keychain.getSecret(JIRA_KEYCHAIN_SERVICE, keychainAccount);
     if (!secretRaw) {
       await this.#setConnectorError(record, "Jira token not found. Reconnect Jira.");
@@ -370,7 +370,7 @@ export class ConnectorsRepository {
     }
 
     const maybeRefreshed = await this.#refreshJiraTokenIfNeeded(
-      normalizedWorkspacePath,
+      normalizedStagePath,
       record,
       keychainAccount,
       parsed
@@ -382,7 +382,7 @@ export class ConnectorsRepository {
     }
 
     const cloudId = normalizeNullableString(maybeRefreshed.cloudId)
-      ?? normalizeNullableString(record.externalWorkspaceId);
+      ?? normalizeNullableString(record.externalStageId);
     if (!cloudId) {
       await this.#setConnectorError(record, "Jira cloud id is missing. Reconnect Jira.");
       throw new Error("Connect Jira in Connectors to fetch this source");
@@ -394,8 +394,8 @@ export class ConnectorsRepository {
     };
   }
 
-  async getJiraAccessToken(workspacePath: string): Promise<string> {
-    const auth = await this.getJiraAuthContext(workspacePath);
+  async getJiraAccessToken(stagePath: string): Promise<string> {
+    const auth = await this.getJiraAuthContext(stagePath);
     return auth.accessToken;
   }
 
@@ -435,7 +435,7 @@ export class ConnectorsRepository {
       return {
         ok: false,
         title: `${providerLabel} authorization expired`,
-        message: `The OAuth session expired. Return to Claudex and reconnect ${providerLabel}.`,
+        message: `The OAuth session expired. Return to Tango and reconnect ${providerLabel}.`,
       };
     }
 
@@ -447,7 +447,7 @@ export class ConnectorsRepository {
       return {
         ok: false,
         title: `${providerLabel} authorization was canceled`,
-        message: `Return to Claudex and retry ${providerLabel} Connect.`,
+        message: `Return to Tango and retry ${providerLabel} Connect.`,
       };
     }
 
@@ -481,7 +481,7 @@ export class ConnectorsRepository {
       return {
         ok: true,
         title: `${providerLabel} connected`,
-        message: `${providerLabel} connected successfully. You can return to Claudex.`,
+        message: `${providerLabel} connected successfully. You can return to Tango.`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -498,19 +498,19 @@ export class ConnectorsRepository {
     auth: RuntimeAuthSession,
     envelope: SlackTokenEnvelope
   ): Promise<void> {
-    const keychainAccount = buildKeychainAccount(auth.workspacePath);
+    const keychainAccount = buildKeychainAccount(auth.stagePath);
     await this.#keychain.setSecret(
       SLACK_KEYCHAIN_SERVICE,
       keychainAccount,
       JSON.stringify(envelope.secret)
     );
 
-    this.#store.upsertWorkspaceConnector({
-      workspacePath: auth.workspacePath,
+    this.#store.upsertStageConnector({
+      stagePath: auth.stagePath,
       provider: SLACK_PROVIDER,
       status: "connected",
-      externalWorkspaceId: envelope.secret.teamId,
-      externalWorkspaceName: envelope.secret.teamName,
+      externalStageId: envelope.secret.teamId,
+      externalStageName: envelope.secret.teamName,
       externalUserId: envelope.secret.userId,
       scopes: envelope.scopes,
       tokenExpiresAt: envelope.secret.expiresAt,
@@ -523,19 +523,19 @@ export class ConnectorsRepository {
     auth: RuntimeAuthSession,
     envelope: JiraTokenEnvelope
   ): Promise<void> {
-    const keychainAccount = buildKeychainAccount(auth.workspacePath);
+    const keychainAccount = buildKeychainAccount(auth.stagePath);
     await this.#keychain.setSecret(
       JIRA_KEYCHAIN_SERVICE,
       keychainAccount,
       JSON.stringify(envelope.secret)
     );
 
-    this.#store.upsertWorkspaceConnector({
-      workspacePath: auth.workspacePath,
+    this.#store.upsertStageConnector({
+      stagePath: auth.stagePath,
       provider: JIRA_PROVIDER,
       status: "connected",
-      externalWorkspaceId: envelope.secret.cloudId,
-      externalWorkspaceName: envelope.secret.cloudName,
+      externalStageId: envelope.secret.cloudId,
+      externalStageName: envelope.secret.cloudName,
       externalUserId: envelope.secret.userAccountId,
       scopes: envelope.scopes,
       tokenExpiresAt: envelope.secret.expiresAt,
@@ -545,8 +545,8 @@ export class ConnectorsRepository {
   }
 
   async #refreshSlackTokenIfNeeded(
-    workspacePath: string,
-    record: WorkspaceConnectorRecord,
+    stagePath: string,
+    record: StageConnectorRecord,
     keychainAccount: string,
     secret: SlackTokenSecret
   ): Promise<SlackTokenSecret> {
@@ -590,12 +590,12 @@ export class ConnectorsRepository {
       keychainAccount,
       JSON.stringify(nextSecret)
     );
-    this.#store.upsertWorkspaceConnector({
-      workspacePath,
+    this.#store.upsertStageConnector({
+      stagePath,
       provider: SLACK_PROVIDER,
       status: "connected",
-      externalWorkspaceId: nextSecret.teamId,
-      externalWorkspaceName: nextSecret.teamName,
+      externalStageId: nextSecret.teamId,
+      externalStageName: nextSecret.teamName,
       externalUserId: nextSecret.userId,
       scopes: envelope.scopes.length > 0
         ? envelope.scopes
@@ -609,8 +609,8 @@ export class ConnectorsRepository {
   }
 
   async #refreshJiraTokenIfNeeded(
-    workspacePath: string,
-    record: WorkspaceConnectorRecord,
+    stagePath: string,
+    record: StageConnectorRecord,
     keychainAccount: string,
     secret: JiraTokenSecret
   ): Promise<JiraTokenSecret> {
@@ -655,12 +655,12 @@ export class ConnectorsRepository {
       keychainAccount,
       JSON.stringify(nextSecret)
     );
-    this.#store.upsertWorkspaceConnector({
-      workspacePath,
+    this.#store.upsertStageConnector({
+      stagePath,
       provider: JIRA_PROVIDER,
       status: "connected",
-      externalWorkspaceId: nextSecret.cloudId,
-      externalWorkspaceName: nextSecret.cloudName,
+      externalStageId: nextSecret.cloudId,
+      externalStageName: nextSecret.cloudName,
       externalUserId: nextSecret.userAccountId,
       scopes: envelope.scopes.length > 0
         ? envelope.scopes
@@ -829,13 +829,13 @@ export class ConnectorsRepository {
       ?? resources[0];
   }
 
-  async #setConnectorError(record: WorkspaceConnectorRecord, message: string): Promise<void> {
-    this.#store.upsertWorkspaceConnector({
-      workspacePath: record.workspacePath,
+  async #setConnectorError(record: StageConnectorRecord, message: string): Promise<void> {
+    this.#store.upsertStageConnector({
+      stagePath: record.stagePath,
       provider: record.provider,
       status: "error",
-      externalWorkspaceId: record.externalWorkspaceId,
-      externalWorkspaceName: record.externalWorkspaceName,
+      externalStageId: record.externalStageId,
+      externalStageName: record.externalStageName,
       externalUserId: record.externalUserId,
       scopes: record.scopes,
       tokenExpiresAt: record.tokenExpiresAt,
@@ -845,13 +845,13 @@ export class ConnectorsRepository {
   }
 
   #createFailedAuthSession(
-    workspacePath: string,
+    stagePath: string,
     provider: ConnectorProvider,
     message: string
   ): ConnectorAuthSession {
     const auth: RuntimeAuthSession = {
       id: crypto.randomUUID(),
-      workspacePath,
+      stagePath,
       provider,
       status: "failed",
       authorizeUrl: null,
@@ -866,9 +866,9 @@ export class ConnectorsRepository {
     return toPublicAuthSession(auth);
   }
 
-  #expirePendingAuthSessions(workspacePath: string, provider: ConnectorProvider): void {
+  #expirePendingAuthSessions(stagePath: string, provider: ConnectorProvider): void {
     for (const auth of this.#authById.values()) {
-      if (auth.workspacePath !== workspacePath) continue;
+      if (auth.stagePath !== stagePath) continue;
       if (auth.provider !== provider) continue;
       if (auth.status !== "pending") continue;
       this.#settleAuthSession(auth.id, "expired", "Superseded by a new authorization request.");
@@ -1120,15 +1120,15 @@ function parseJiraAccessResources(input: unknown): JiraAccessResource[] {
 }
 
 function buildDefaultConnector(
-  workspacePath: string,
+  stagePath: string,
   provider: ConnectorProvider
-): WorkspaceConnector {
+): StageConnector {
   return {
-    workspacePath,
+    stagePath,
     provider,
     status: "disconnected",
-    externalWorkspaceId: null,
-    externalWorkspaceName: null,
+    externalStageId: null,
+    externalStageName: null,
     externalUserId: null,
     scopes: [],
     tokenExpiresAt: null,
@@ -1190,15 +1190,15 @@ function isConnectorProvider(value: string): value is ConnectorProvider {
   return CONNECTOR_PROVIDERS.includes(value as ConnectorProvider);
 }
 
-function buildKeychainAccount(workspacePath: string): string {
-  const digest = createHash("sha256").update(workspacePath).digest("hex");
-  return `workspace:${digest}`;
+function buildKeychainAccount(stagePath: string): string {
+  const digest = createHash("sha256").update(stagePath).digest("hex");
+  return `stage:${digest}`;
 }
 
-function normalizeWorkspacePath(workspacePath: string): string {
-  const normalized = String(workspacePath ?? "").trim();
+function normalizeStagePath(stagePath: string): string {
+  const normalized = String(stagePath ?? "").trim();
   if (!normalized) {
-    throw new Error("workspacePath is required");
+    throw new Error("stagePath is required");
   }
   return normalized;
 }
@@ -1221,7 +1221,7 @@ function splitScopes(scope: string | null): string[] {
 function toPublicAuthSession(session: RuntimeAuthSession): ConnectorAuthSession {
   return {
     id: session.id,
-    workspacePath: session.workspacePath,
+    stagePath: session.stagePath,
     provider: session.provider,
     status: session.status,
     authorizeUrl: session.authorizeUrl,

@@ -50,7 +50,7 @@ export class ConnectorOAuthServer {
     this.#handler = handler;
     this.#port = opts?.port ?? 4344;
     this.#certDir = opts?.certDir
-      ?? join(homedir(), ".claude-sessions", "connectors", "certs");
+      ?? join(homedir(), ".tango", "connectors", "certs");
     this.#keyPath = join(this.#certDir, "localhost.key.pem");
     this.#certPath = join(this.#certDir, "localhost.cert.pem");
     this.#status = {

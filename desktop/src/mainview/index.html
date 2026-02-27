@@ -3,21 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claudex</title>
+  <title>Tango</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="views://mainview/styles.css">
   <script src="views://mainview/index.js" defer></script>
 </head>
 <body>
   <div id="app">
-    <!-- Title bar drag region -->
+    <!-- Title bar drag region for macOS traffic lights -->
     <div id="titlebar" style="app-region: drag">
       <div class="titlebar-left" style="app-region: no-drag">
-        <button id="btn-toggle-workspaces" class="titlebar-btn" title="Toggle sidebar (Cmd+1)">
-          <span class="tb-icon">&#9776;</span>
+        <button id="btn-toggle-stages" class="titlebar-btn" title="Toggle sidebar (Cmd+1)">
+          <span class="material-symbols-outlined">menu</span>
         </button>
       </div>
       <div class="titlebar-drag" style="app-region: drag"></div>
-      <div class="titlebar-right" style="app-region: no-drag"></div>
     </div>
 
     <!-- Panel container — filled by JS -->

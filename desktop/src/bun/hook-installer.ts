@@ -1,18 +1,18 @@
 /**
  * Auto-installs the PreToolUse approval hook into the user's Claude settings.
- * Writes the hook script to ~/.claude-sessions/hooks/ and adds a reference
+ * Writes the hook script to ~/.tango/hooks/ and adds a reference
  * in ~/.claude/settings.json (alongside any existing hooks).
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const HOOKS_DIR = join(homedir(), ".claude-sessions", "hooks");
+const HOOKS_DIR = join(homedir(), ".tango", "hooks");
 const HOOK_SCRIPT_NAME = "pre-tool-use.sh";
 const CLAUDE_SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 
 const HOOK_SCRIPT = `#!/bin/bash
-# PreToolUse hook for Claudex app.
+# PreToolUse hook for Tango app.
 # Blocks until the user approves/denies the tool in the app UI.
 # Falls back to allowing if the app is not running or session is not app-managed.
 
@@ -54,7 +54,7 @@ if [ "$ALLOW" = "true" ]; then
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "allow",
-    "permissionDecisionReason": "User approved in Claudex app"
+    "permissionDecisionReason": "User approved in Tango app"
   }
 }
 EOF
@@ -66,7 +66,7 @@ else
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "deny",
-    "permissionDecisionReason": "User denied this tool in Claudex app"
+    "permissionDecisionReason": "User denied this tool in Tango app"
   }
 }
 EOF

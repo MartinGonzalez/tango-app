@@ -1,4 +1,4 @@
-# Claude Watcher
+# Tango
 
 Local-first dashboard that monitors all running Claude instances on your machine. Displays process ID, parent app, activity state, and task context (what Claude is doing) by combining OS process scanning with hook-driven event ingestion.
 
@@ -22,9 +22,9 @@ Native desktop application that provides a full-featured UI for managing Claude 
   - Tool approval dialogs (Allow/Deny for Write, Bash, etc.)
   - Session history (reads from `~/.claude/projects/`)
   - Custom session naming (rename sessions in sidebar)
-  - Workspace management (multiple project folders)
+  - Stage management (multiple project folders)
   - Git diff viewer (unified/split modes)
-  - Snapshot-based diff for non-git workspaces
+  - Snapshot-based diff for non-git stages
   - Full Access toggle (bypass permissions per session)
   - Stop button to terminate running sessions
 
@@ -62,7 +62,7 @@ npx electrobun dev
 
 ### Creating a Session
 
-1. Open a workspace (Cmd+O or "Open Workspace" button)
+1. Open a stage (Cmd+O or "Open Stage" button)
 2. Type a prompt in the chat input
 3. Toggle "Full Access" if you want to bypass permission dialogs
 4. Click Send or press Enter
@@ -72,30 +72,30 @@ npx electrobun dev
 - **Rename**: Click the 3-dot menu (⋮) next to a session, select "Rename"
 - **Resume**: Click any historical session in the sidebar to load its transcript, then send a new prompt
 - **Stop**: Click the red "Stop" button while Claude is working
-- **View History**: Expand a workspace to see all sessions for that project
+- **View History**: Expand a stage to see all sessions for that project
 
 ### Viewing Changes
 
 The diff panel shows:
-- Git diff (if workspace has .git)
-- Snapshot-based diff (for non-git workspaces)
+- Git diff (if stage has .git)
+- Snapshot-based diff (for non-git stages)
 - File tree (tree/flat toggle)
 - Unified/split view modes
 
 ### Keyboard Shortcuts
 
 - `Cmd+N` — New session
-- `Cmd+O` — Open workspace
+- `Cmd+O` — Open stage
 - `Cmd+1` — Toggle sidebar
 - `Cmd+2` — Toggle second panel
-- `Cmd+4` — Toggle files changed (workspace mode)
-- `Cmd+5` — Toggle git history (workspace mode)
+- `Cmd+4` — Toggle files changed (stage mode)
+- `Cmd+5` — Toggle git history (stage mode)
 - `Enter` — Send prompt (Shift+Enter for newline)
 
 ## Configuration
 
 ### Session Names
-Stored in `~/.claude-sessions/session-names.json`
+Stored in `~/.tango/session-names.json`
 
 Format:
 ```json
@@ -104,8 +104,8 @@ Format:
 }
 ```
 
-### Workspaces
-Stored in `~/.claude-sessions/workspaces.json`
+### Stages
+Stored in `~/.tango/stages.json`
 
 Format:
 ```json
@@ -117,7 +117,7 @@ Format:
 
 ### Hook Installation
 The PreToolUse hook is auto-installed on first run:
-- Script: `~/.claude-sessions/hooks/pre-tool-use.sh`
+- Script: `~/.tango/hooks/pre-tool-use.sh`
 - Registered in: `~/.claude/settings.json` under `hooks.PreToolUse`
 
 You can customize the approval server port with:
@@ -212,7 +212,7 @@ cd desktop
 npx electrobun build
 ```
 
-Output: `desktop/build/dev-macos-arm64/Claude Sessions-dev.app`
+Output: `desktop/build/dev-macos-arm64/Tango-dev.app`
 
 For production builds, see `electrobun.config.ts` for code signing and notarization settings.
 
@@ -228,11 +228,11 @@ For production builds, see `electrobun.config.ts` for code signing and notarizat
 
 ## Data Persistence
 
-The desktop app persists data in `~/.claude-sessions/`:
-- `workspaces.json` — Recent workspaces
+The desktop app persists data in `~/.tango/`:
+- `stages.json` — Recent stages
 - `session-names.json` — Custom session names
 - `hooks/pre-tool-use.sh` — Tool approval hook
-- `snapshots/<hash>/` — Non-git workspace snapshots
+- `snapshots/<hash>/` — Non-git stage snapshots
 
 The app also reads from Claude Code's data directory:
 - `~/.claude/projects/<encoded-path>/<session-id>.jsonl` — Session transcripts
@@ -248,11 +248,11 @@ To bypass the hook entirely for terminal sessions, use:
 claude -p --dangerously-skip-permissions "your prompt"
 ```
 
-### Diff not showing for non-git workspace
-The app takes a snapshot of the workspace when you create a session. If you modify files before creating a session, those changes won't appear in the diff. Create a new session to capture a fresh snapshot.
+### Diff not showing for non-git stage
+The app takes a snapshot of the stage when you create a session. If you modify files before creating a session, those changes won't appear in the diff. Create a new session to capture a fresh snapshot.
 
 ### Session names not persisting
-Session names are stored locally in `~/.claude-sessions/session-names.json`. Make sure this file is writable and not being cleared by system cleanup tools.
+Session names are stored locally in `~/.tango/session-names.json`. Make sure this file is writable and not being cleared by system cleanup tools.
 
 ### App won't start watcher server
 The app tries to auto-start the watcher server if it's not running. If this fails, start it manually:

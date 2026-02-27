@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
-  getWorkspacePathVariants,
+  getStagePathVariants,
 } from "./project-path.ts";
 
 export type HistorySession = {
@@ -19,15 +19,15 @@ export type HistorySession = {
 };
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
-const MAX_WORKSPACE_HISTORY_FILES = 200;
+const MAX_STAGE_HISTORY_FILES = 200;
 
 /**
- * List all sessions for a given workspace by scanning Claude's transcript files.
+ * List all sessions for a given stage by scanning Claude's transcript files.
  */
-export async function listSessionsForWorkspace(
+export async function listSessionsForStage(
   cwd: string
 ): Promise<HistorySession[]> {
-  const projectDirs = await resolveWorkspaceProjectDirs(cwd);
+  const projectDirs = await resolveStageProjectDirs(cwd);
   const candidates = await collectTranscriptCandidates(projectDirs);
   if (candidates.length === 0) {
     return [];
@@ -36,7 +36,7 @@ export async function listSessionsForWorkspace(
   const sessions: HistorySession[] = [];
 
   // Parse the newest transcript files first to avoid dropping recent sessions.
-  const promises = candidates.slice(0, MAX_WORKSPACE_HISTORY_FILES).map(async (entry) => {
+  const promises = candidates.slice(0, MAX_STAGE_HISTORY_FILES).map(async (entry) => {
     try {
       return await parseTranscriptMeta(entry.sessionId, entry.filePath);
     } catch {
@@ -250,8 +250,8 @@ type TranscriptCandidate = {
   mtimeMs: number;
 };
 
-async function resolveWorkspaceProjectDirs(cwd: string): Promise<string[]> {
-  const variants = await getWorkspacePathVariants(cwd);
+async function resolveStageProjectDirs(cwd: string): Promise<string[]> {
+  const variants = await getStagePathVariants(cwd);
   const dirs = new Set<string>();
 
   for (const variant of variants) {
