@@ -4,6 +4,10 @@ import type {
   StageConnector,
 } from "./connectors.ts";
 import type { SessionInfo } from "./sessions.ts";
+import type { Snapshot } from "./snapshot.ts";
+import type { ClaudeStreamEvent } from "./stream.ts";
+import type { ToolApprovalRequest } from "./tools.ts";
+import type { PullRequestAgentReviewStatus } from "./pull-requests.ts";
 import type { InstrumentEvent, InstrumentPermission } from "./instruments.ts";
 
 export type InstrumentPanelSlot = "sidebar" | "first" | "second" | "right";
@@ -35,12 +39,26 @@ export type StorageAPI = {
 };
 
 export type SessionsAPI = {
+  start: (params: {
+    prompt: string;
+    cwd: string;
+    fullAccess?: boolean;
+    sessionId?: string;
+    selectedFiles?: string[];
+    model?: string;
+    tools?: string[];
+  }) => Promise<{ sessionId: string }>;
+  /**
+   * @deprecated Use sessions.start().
+   */
   spawn: (params: {
     prompt: string;
     cwd: string;
     fullAccess?: boolean;
     sessionId?: string;
     selectedFiles?: string[];
+    model?: string;
+    tools?: string[];
   }) => Promise<{ sessionId: string }>;
   sendFollowUp: (params: {
     sessionId: string;
@@ -50,6 +68,10 @@ export type SessionsAPI = {
   }) => Promise<void>;
   kill: (sessionId: string) => Promise<void>;
   list: () => Promise<SessionInfo[]>;
+  focus: (params: {
+    sessionId: string;
+    cwd?: string | null;
+  }) => Promise<void>;
 };
 
 export type ConnectorsAPI = {
@@ -62,6 +84,48 @@ export type ConnectorsAPI = {
 export type StageAPI = {
   list: () => Promise<string[]>;
   active: () => Promise<string | null>;
+};
+
+export type HostEventMap = {
+  "snapshot.update": Snapshot;
+  "session.stream": {
+    sessionId: string;
+    event: ClaudeStreamEvent;
+  };
+  "session.idResolved": {
+    tempId: string;
+    realId: string;
+  };
+  "session.ended": {
+    sessionId: string;
+    exitCode: number;
+  };
+  "tool.approval": ToolApprovalRequest;
+  "pullRequest.agentReviewChanged": {
+    repo: string;
+    number: number;
+    runId: string;
+    status: PullRequestAgentReviewStatus;
+  };
+  "instrument.event": {
+    instrumentId: string;
+    event: string;
+    payload?: unknown;
+  };
+  "stage.added": {
+    path: string;
+  };
+  "stage.removed": {
+    path: string;
+  };
+  "connector.auth.changed": ConnectorAuthSession;
+};
+
+export type HostEventsAPI = {
+  subscribe<E extends keyof HostEventMap>(
+    event: E,
+    handler: (payload: HostEventMap[E]) => void | Promise<void>
+  ): () => void;
 };
 
 export type ShortcutRegistration = {
@@ -78,6 +142,7 @@ export type InstrumentContext = {
   sessions: SessionsAPI;
   connectors: ConnectorsAPI;
   stages: StageAPI;
+  events: HostEventsAPI;
   invoke: <T = unknown>(
     method: string,
     params?: Record<string, unknown>
@@ -95,10 +160,19 @@ export type InstrumentBackendContext = {
   instrumentId: string;
   permissions: InstrumentPermission[];
   emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
+  host: {
+    storage: StorageAPI;
+    sessions: SessionsAPI;
+    connectors: ConnectorsAPI;
+    stages: StageAPI;
+    events: HostEventsAPI;
+  };
 };
 
 export type InstrumentBackendModule = {
-  invoke: (
+  activate?: (ctx: InstrumentBackendContext) => Promise<void> | void;
+  deactivate?: () => Promise<void> | void;
+  invoke?: (
     ctx: InstrumentBackendContext,
     method: string,
     params: Record<string, unknown> | undefined

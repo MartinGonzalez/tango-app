@@ -7,7 +7,6 @@ export type InstrumentsSidebarCallbacks = {
   onAddLocal: () => void;
   onToggleEnabled: (instrumentId: string, enabled: boolean) => void;
   onRemoveLocal: (instrumentId: string) => void;
-  onRetryMigration: (instrumentId: string) => void;
 };
 
 export class InstrumentsSidebar {
@@ -122,13 +121,6 @@ export class InstrumentsSidebar {
                 onclick: () => this.#callbacks.onRemoveLocal(entry.id),
               }, ["Uninstall"])
             : h("span", { class: "task-group-empty" }, ["Bundled"]),
-          entry.status === "blocked"
-            ? h("button", {
-                class: "plugins-content-btn",
-                type: "button",
-                onclick: () => this.#callbacks.onRetryMigration(entry.id),
-              }, ["Retry migration"])
-            : h("span", { hidden: true }),
         ]),
         entry.lastError
           ? h("div", { class: "tasks-banner tasks-banner-error" }, [entry.lastError])

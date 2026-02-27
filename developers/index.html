@@ -43,6 +43,7 @@
           <a href="#frontend-lifecycle">Frontend Lifecycle</a>
           <a href="#backend-lifecycle">Backend Lifecycle</a>
           <a href="#sdk">SDK Surface</a>
+          <a href="#instrument-ui">Instrument UI</a>
           <a href="#permissions">Permissions</a>
           <a href="#install-local">Install Local Instrument</a>
           <a href="#tasks-pilot">Tasks Pilot Notes</a>
@@ -103,6 +104,7 @@
           <ol>
             <li>Create a standalone JS project (outside this repo is fine).</li>
             <li>Add <code>package.json</code> with <code>tango.instrument</code>.</li>
+            <li>Add UI primitives package: <code>@tango/instrument-ui</code>.</li>
             <li>Create JS entrypoints (<code>dist/index.js</code> and optional <code>dist/backend.js</code>).</li>
             <li>Install from Tango UI via local path.</li>
             <li>Enable instrument and activate it from the Instruments launcher (hot-mount, no restart).</li>
@@ -112,10 +114,13 @@
         <section id="minimal-example" data-title="Minimal Example">
           <h2>Minimal Example (Hello Instrument)</h2>
           <p>
-            There is a real, tiny instrument in this repo at
-            <code>developers/examples/hello-instrument</code>.
+            There are two real instrument examples in this repo:
           </p>
-          <p>Use it as a base to start fast.</p>
+          <ul>
+            <li><code>developers/examples/hello-instrument</code> (runtime minimum)</li>
+            <li><code>developers/examples/hello-ui-instrument</code> (<code>@tango/instrument-ui</code> primitives)</li>
+          </ul>
+          <p>Use them as a base to start fast.</p>
           <h3>package.json</h3>
           <pre><code>{
   "name": "@example/tango-instrument-hello",
@@ -129,8 +134,15 @@
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
       "hostApiVersion": "1.0.0",
+      "launcher": {
+        "sidebarShortcut": {
+          "enabled": true,
+          "label": "Hello",
+          "order": 40
+        }
+      },
       "panels": { "sidebar": true, "first": false, "second": true, "right": false },
-      "permissions": []
+      "permissions": ["sessions", "stages.read", "stages.observe"]
     }
   }
 }</code></pre>
@@ -150,6 +162,17 @@ export function activate(ctx) {
   pingBtn.addEventListener("click", async () => {
     const result = await ctx.invoke("ping", { source: "hello-ui" });
     outputEl.textContent = JSON.stringify(result, null, 2);
+  });
+
+  ctx.events.subscribe("session.ended", ({ sessionId, exitCode }) => {
+    outputEl.textContent = `Session ended: ${sessionId} (${exitCode})`;
+  });
+
+  // Canonical API
+  await ctx.sessions.start({
+    cwd: await ctx.stages.active(),
+    prompt: "hello from instrument",
+    fullAccess: true,
   });
 
   panel.append("Hello from Tango Instrument");
@@ -278,12 +301,60 @@ export async function deactivate() {
           <ul>
             <li><code>panels</code>: mount/unmount and visibility per panel slot.</li>
             <li><code>storage</code>: properties, files, and SQL scoped under <code>~/.tango/instruments/&lt;id&gt;/</code>.</li>
-            <li><code>sessions</code>: spawn/send/kill/list Claude sessions.</li>
+            <li><code>sessions</code>: <code>start</code> / <code>spawn</code> (alias), send/kill/list/focus Claude sessions.</li>
             <li><code>connectors</code>: list/connect/disconnect provider auth by stage.</li>
             <li><code>stages</code>: list stages and get active stage.</li>
+            <li><code>events</code>: subscribe to host hooks (<code>session.*</code>, <code>snapshot.update</code>, <code>stage.*</code>, etc.).</li>
             <li><code>invoke</code>: call backend handlers through <code>instrumentInvoke</code>.</li>
             <li><code>emit</code>: publish <code>instrumentEvent</code> to frontend host.</li>
           </ul>
+        </section>
+
+        <section id="instrument-ui" data-title="Instrument UI">
+          <h2>Instrument UI (<code>@tango/instrument-ui</code>)</h2>
+          <p>
+            <code>@tango/instrument-ui</code> provides vanilla DOM helpers with scoped classes
+            (<code>.tui-*</code>) and Tango token fallbacks.
+          </p>
+          <h3>Dependency</h3>
+          <pre><code>{
+  "dependencies": {
+    "@tango/instrument-ui": "file:/path/to/tango/desktop/instruments/ui"
+  }
+}</code></pre>
+          <h3>Frontend usage</h3>
+          <pre><code>import {
+  ensureInstrumentUI,
+  createRoot,
+  panelHeader,
+  card,
+  button,
+  list,
+  listItem,
+} from "@tango/instrument-ui";
+
+export function activate(ctx) {
+  ensureInstrumentUI();
+
+  const sidebar = createRoot();
+  sidebar.append(
+    panelHeader({ title: "My Instrument" }),
+    list({
+      items: [listItem({ title: "Action", onClick: () => {} })],
+    })
+  );
+
+  const second = createRoot();
+  second.append(card({ content: button({ label: "Run", variant: "primary" }) }));
+
+  ctx.panels.mount("sidebar", sidebar);
+  ctx.panels.mount("second", second);
+  ctx.panels.setVisible("sidebar", true);
+  ctx.panels.setVisible("second", true);
+}</code></pre>
+          <p class="muted">
+            Build frontend entrypoints as a bundled single-file module for runtime loading.
+          </p>
         </section>
 
         <section id="permissions" data-title="Permissions">
@@ -320,6 +391,7 @@ stages.observe</code></pre>
             <li>Select <strong>Hello</strong> in the instrument list.</li>
             <li>Confirm sidebar switches to instrument sidebar and second panel renders content.</li>
             <li>Click <strong>Ping backend</strong> and verify JSON response.</li>
+            <li>Install <code>developers/examples/hello-ui-instrument</code> and validate scoped Tango-styled widgets.</li>
           </ol>
           <p>
             Registry is stored in <code>~/.tango/instruments/registry.json</code>.
@@ -329,10 +401,10 @@ stages.observe</code></pre>
         <section id="tasks-pilot" data-title="Tasks Pilot Notes">
           <h2>Tasks Pilot Notes</h2>
           <ul>
-            <li>Tasks is migrated as a first instrument with parity goals.</li>
-            <li>Data migration moves <code>~/.tango/tasks.db</code> to instrument namespace.</li>
-            <li>If migration fails, only Tasks is blocked; Tango core continues running.</li>
-            <li>Retry is available through instrument actions.</li>
+            <li>Tasks now runs as a runtime instrument without host hardcoded view mode.</li>
+            <li>Core host is instrument-agnostic (no Tasks-specific RPC surface required).</li>
+            <li>Tasks stores data under <code>~/.tango/instruments/tasks/</code> (clean cut from legacy DB).</li>
+            <li>Sidebar shortcut is declared via manifest launcher metadata.</li>
           </ul>
         </section>
 

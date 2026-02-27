@@ -18,10 +18,6 @@ import {
   type PluginSidebarSelection,
 } from "./components/plugins-sidebar.ts";
 import {
-  TasksSidebar,
-  type TaskStageGroup,
-} from "./components/tasks-sidebar.ts";
-import {
   PRsSidebar,
   type PullRequestRepoGroup,
   type PullRequestSidebarSection,
@@ -35,7 +31,6 @@ import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel, type FileListView } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
 import { CommitModal } from "./components/commit-modal.ts";
-import { TasksView } from "./components/tasks-view.ts";
 import { PRView } from "./components/pr-view.ts";
 import type {
   SessionInfo,
@@ -51,10 +46,6 @@ import type {
   ToolApprovalRequest,
   SlashCommandEntry,
   InstalledPlugin,
-  TaskAction,
-  TaskCardDetail,
-  TaskCardSummary,
-  TaskCardStatus,
   ConnectorAuthSession,
   ConnectorProvider,
   PullRequestDetail,
@@ -67,6 +58,7 @@ import type {
   InstrumentRegistryEntry,
   InstrumentContext,
   InstrumentFrontendModule,
+  HostEventMap,
   VcsInfo,
 } from "../shared/types.ts";
 import { loadInstrumentFrontend } from "./instruments/instrument-loader.ts";
@@ -80,6 +72,7 @@ const rpc = Electroview.defineRPC<any>({
     messages: {
       snapshotUpdate: (snapshot: Snapshot) => {
         appState.update((s) => ({ ...s, snapshot }));
+        publishFrontendHostEvent("snapshot.update", snapshot);
       },
       sessionStream: ({
         sessionId,
@@ -137,6 +130,7 @@ const rpc = Electroview.defineRPC<any>({
             isResultEvent ? 0 : 120
           );
         }
+        publishFrontendHostEvent("session.stream", { sessionId, event });
       },
       sessionIdResolved: ({
         tempId,
@@ -162,6 +156,7 @@ const rpc = Electroview.defineRPC<any>({
         if (updates.activeSessionId) {
           void loadSessionTranscript(updates.activeSessionId);
         }
+        publishFrontendHostEvent("session.idResolved", { tempId, realId });
       },
       toolApproval: (req: ToolApprovalRequest) => {
         console.log("[webview] Tool approval request:", req.toolName, req.toolUseId, req.sessionId);
@@ -179,6 +174,7 @@ const rpc = Electroview.defineRPC<any>({
             }
           });
         }
+        publishFrontendHostEvent("tool.approval", req);
       },
       sessionEnded: ({
         sessionId,
@@ -208,20 +204,7 @@ const rpc = Electroview.defineRPC<any>({
           }
           scheduleCommitContextRefresh(state.activeStage, 0);
         }
-      },
-      tasksChanged: ({
-        stagePath,
-        taskId,
-      }: {
-        stagePath: string;
-        taskId?: string;
-      }) => {
-        void loadStageTasks(stagePath, true);
-        const state = appState.get();
-        if (!state.selectedTaskId) return;
-        if (!taskId || taskId === state.selectedTaskId) {
-          void loadTaskDetail(state.selectedTaskId, true);
-        }
+        publishFrontendHostEvent("session.ended", { sessionId, exitCode });
       },
       instrumentEvent: ({
         instrumentId,
@@ -232,16 +215,26 @@ const rpc = Electroview.defineRPC<any>({
         event: string;
         payload?: unknown;
       }) => {
-        void handleInstrumentEvent(instrumentId, event, payload);
+        publishFrontendHostEvent("instrument.event", { instrumentId, event, payload });
       },
       pullRequestAgentReviewChanged: ({
         repo,
         number,
+        runId,
+        status,
       }: {
         repo: string;
         number: number;
+        runId: string;
+        status: "queued" | "running" | "completed" | "failed" | "stale";
       }) => {
         void handlePullRequestAgentReviewChangedMessage(repo, number);
+        publishFrontendHostEvent("pullRequest.agentReviewChanged", {
+          repo,
+          number,
+          runId,
+          status,
+        });
       },
     },
   },
@@ -249,7 +242,6 @@ const rpc = Electroview.defineRPC<any>({
 
 // @ts-ignore - electrobun is used internally by the webview runtime
 const _electrobun = new Electrobun.Electroview({ rpc });
-const TASKS_INSTRUMENT_ID = "tasks";
 type ClientLogLevel = "debug" | "info" | "warn" | "error";
 const bootTraceLines: string[] = [];
 let fatalScreenVisible = false;
@@ -364,7 +356,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 type AppState = {
   snapshot: Snapshot | null;
-  viewMode: "stages" | "plugins" | "tasks" | "prs" | "connectors" | "instruments";
+  viewMode: "stages" | "plugins" | "prs" | "connectors" | "instruments";
   filesListViewMode: FileListView;
   stages: string[];
   expandedStages: Set<string>;
@@ -385,10 +377,6 @@ type AppState = {
   instrumentsLoading: boolean;
   instrumentsError: string | null;
   activeInstrumentId: string | null;
-  tasksByStage: Record<string, TaskCardSummary[]>;
-  tasksLoading: boolean;
-  selectedTaskId: string | null;
-  selectedTaskDetail: TaskCardDetail | null;
   connectorsByStage: Record<string, StageConnector[]>;
   connectorsLoading: boolean;
   connectorAuthSession: ConnectorAuthSession | null;
@@ -450,10 +438,6 @@ const appState = new Store<AppState>({
   instrumentsLoading: false,
   instrumentsError: null,
   activeInstrumentId: null,
-  tasksByStage: {},
-  tasksLoading: false,
-  selectedTaskId: null,
-  selectedTaskDetail: null,
   connectorsByStage: {},
   connectorsLoading: false,
   connectorAuthSession: null,
@@ -483,11 +467,9 @@ let panelLayout: PanelLayout;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
 let instrumentsSidebar: InstrumentsSidebar;
-let tasksSidebar: TasksSidebar;
 let prsSidebar: PRsSidebar;
 let connectorsSidebar: ConnectorsSidebar;
 let pluginsPreview: PluginsPreview;
-let tasksView: TasksView;
 let prView: PRView;
 let connectorsView: ConnectorsView;
 let chatView: ChatView;
@@ -496,7 +478,6 @@ let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
 let commitModal: CommitModal;
 let sidebarPrimaryPluginsBtn: HTMLButtonElement | null = null;
-let sidebarPrimaryTasksBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryInstrumentsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryPRsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryConnectorsBtn: HTMLButtonElement | null = null;
@@ -547,6 +528,79 @@ let cachedPullRequestDiff: {
 let prevViewMode: AppState["viewMode"] | null = null;
 let prevChatPanelFixed: boolean | null = null;
 let transcriptLoadSeq = 0;
+const frontendHostEventSubscribers = new Map<
+  keyof HostEventMap,
+  Set<(payload: any) => void | Promise<void>>
+>();
+const FRONTEND_EVENT_PERMISSION_MAP: Record<
+  keyof HostEventMap,
+  "sessions" | "stages.observe" | "connectors.read"
+> = {
+  "snapshot.update": "stages.observe",
+  "session.stream": "sessions",
+  "session.idResolved": "sessions",
+  "session.ended": "sessions",
+  "tool.approval": "sessions",
+  "pullRequest.agentReviewChanged": "stages.observe",
+  "instrument.event": "stages.observe",
+  "stage.added": "stages.observe",
+  "stage.removed": "stages.observe",
+  "connector.auth.changed": "connectors.read",
+};
+
+function publishFrontendHostEvent<E extends keyof HostEventMap>(
+  event: E,
+  payload: HostEventMap[E]
+): void {
+  const handlers = frontendHostEventSubscribers.get(event);
+  if (!handlers || handlers.size === 0) return;
+  for (const handler of handlers) {
+    Promise.resolve()
+      .then(() => handler(payload))
+      .catch((err) => {
+        console.warn(`Instrument frontend host event handler failed (${String(event)}):`, err);
+      });
+  }
+}
+
+function subscribeFrontendHostEvent<E extends keyof HostEventMap>(
+  entry: InstrumentRegistryEntry,
+  event: E,
+  handler: (payload: HostEventMap[E]) => void | Promise<void>
+): () => void {
+  const requiredPermission = FRONTEND_EVENT_PERMISSION_MAP[event];
+  if (!entry.permissions.includes(requiredPermission)) {
+    throw new Error(
+      `Instrument '${entry.id}' does not declare required permission: ${requiredPermission}`
+    );
+  }
+  const handlers = frontendHostEventSubscribers.get(event) ?? new Set();
+  const wrapped = handler as (payload: any) => void | Promise<void>;
+  handlers.add(wrapped);
+  frontendHostEventSubscribers.set(event, handlers);
+  return () => {
+    const current = frontendHostEventSubscribers.get(event);
+    if (!current) return;
+    current.delete(wrapped);
+    if (current.size === 0) {
+      frontendHostEventSubscribers.delete(event);
+    }
+  };
+}
+
+function renderLauncherIcon(icon: string | null | undefined, className: string): HTMLElement {
+  const normalized = String(icon ?? "").trim().toLowerCase();
+  if (normalized === "task" || normalized === "tasks") {
+    return tasksToolIcon(className);
+  }
+  if (normalized === "pull-request" || normalized === "pull-requests" || normalized === "prs") {
+    return pullRequestsToolIcon(className);
+  }
+  if (normalized === "connector" || normalized === "connectors") {
+    return connectorsToolIcon(className);
+  }
+  return pluginToolIcon(className);
+}
 
 function init(): void {
   pushBootTrace("init:start");
@@ -589,10 +643,6 @@ function init(): void {
     class: "sidebar-mode-view sidebar-mode-view-instruments",
     hidden: true,
   });
-  const tasksSidebarHost = h("div", {
-    class: "sidebar-mode-view sidebar-mode-view-tasks",
-    hidden: true,
-  });
   const prsSidebarHost = h("div", {
     class: "sidebar-mode-view sidebar-mode-view-prs",
     hidden: true,
@@ -604,7 +654,6 @@ function init(): void {
   sidebarViews.appendChild(stagesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
   sidebarViews.appendChild(instrumentsSidebarHost);
-  sidebarViews.appendChild(tasksSidebarHost);
   sidebarViews.appendChild(prsSidebarHost);
   sidebarViews.appendChild(connectorsSidebarHost);
 
@@ -619,16 +668,6 @@ function init(): void {
   }, [
     pluginToolIcon("sidebar-primary-icon"),
     h("span", { class: "sidebar-primary-label" }, ["Plugins"]),
-  ]) as HTMLButtonElement;
-
-  sidebarPrimaryTasksBtn = h("button", {
-    class: "sidebar-primary-btn",
-    onclick: () => {
-      void openTasksInstrumentFromSidebar();
-    },
-  }, [
-    tasksToolIcon("sidebar-primary-icon"),
-    h("span", { class: "sidebar-primary-label" }, ["Tasks"]),
   ]) as HTMLButtonElement;
 
   sidebarPrimaryInstrumentsBtn = h("button", {
@@ -677,7 +716,6 @@ function init(): void {
 
   const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
     sidebarPrimaryPluginsBtn,
-    sidebarPrimaryTasksBtn,
     sidebarPrimaryPRsBtn,
     sidebarPrimaryConnectorsBtn,
     sidebarPrimaryInstrumentsBtn,
@@ -834,9 +872,6 @@ function init(): void {
     onRemoveLocal: (instrumentId) => {
       void removeLocalInstrument(instrumentId);
     },
-    onRetryMigration: (instrumentId) => {
-      void retryBlockedInstrumentMigration(instrumentId);
-    },
   });
   instrumentRuntimeSidebarTitleEl = h("span", {
     class: "tasks-sidebar-title instrument-runtime-sidebar-title",
@@ -868,23 +903,6 @@ function init(): void {
     instrumentRuntimeSidebarHost,
   ]);
   instrumentsSidebarHost.appendChild(instrumentRuntimeSidebarShell);
-
-  tasksSidebar = new TasksSidebar(tasksSidebarHost, {
-    onSelectTask: (taskId, stagePath) => {
-      appState.update((s) => ({
-        ...s,
-        selectedTaskId: taskId,
-        activeStage: stagePath,
-      }));
-      void loadTaskDetail(taskId, true);
-    },
-    onCreateTask: (stagePath) => {
-      void createTaskInStage(stagePath);
-    },
-    onBack: () => {
-      appState.update((s) => ({ ...s, viewMode: "stages" }));
-    },
-  });
 
   prsSidebar = new PRsSidebar(prsSidebarHost, {
     onSelectPullRequest: (repo, number) => {
@@ -1022,133 +1040,6 @@ function init(): void {
     hidden: true,
   });
   chatPanel.appendChild(instrumentFirstPanelHost);
-  tasksView = new TasksView(diffPanel, {
-    onUpdateTask: async (taskId, patch) => {
-      await invokeTasksInstrument("updateTask", { taskId, patch });
-    },
-    onDeleteTask: async (taskId) => {
-      const detail = appState.get().selectedTaskDetail;
-      await invokeTasksInstrument("deleteTask", { taskId });
-      if (!detail) return;
-      appState.update((s) => ({
-        ...s,
-        selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
-        selectedTaskDetail: s.selectedTaskId === taskId ? null : s.selectedTaskDetail,
-      }));
-      await loadStageTasks(detail.stagePath, true);
-      const remaining = appState.get().tasksByStage[detail.stagePath] ?? [];
-      const next = remaining[0] ?? null;
-      if (next) {
-        appState.update((s) => ({ ...s, selectedTaskId: next.id }));
-        await loadTaskDetail(next.id, true);
-      }
-    },
-    onOpenSession: async (taskId) => {
-      const state = appState.get();
-      const detail = state.selectedTaskDetail?.id === taskId
-        ? state.selectedTaskDetail
-        : await invokeTasksInstrument<TaskCardDetail | null>("getTaskDetail", { taskId });
-
-      if (!detail) {
-        throw new Error("Task not found");
-      }
-
-      const sessionId = String(detail.lastRun?.sessionId ?? "").trim();
-      if (!sessionId) {
-        throw new Error("No session found for this task");
-      }
-      const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
-
-      const expanded = new Set(appState.get().expandedStages);
-      expanded.add(detail.stagePath);
-      appState.update((s) => ({
-        ...s,
-        viewMode: "stages",
-        activeStage: detail.stagePath,
-        activeSessionId: canonicalSessionId,
-        expandedStages: expanded,
-      }));
-
-      await loadSessionTranscript(canonicalSessionId);
-      void loadSessionHistory(detail.stagePath);
-      await loadDiff(detail.stagePath);
-      ensureBranchHistory(detail.stagePath);
-    },
-    onAddSource: async (taskId, payload) => {
-      await invokeTasksInstrument("addTaskSource", {
-        taskId,
-        kind: payload.kind,
-        url: payload.url,
-        content: payload.content,
-      });
-    },
-    onUpdateSource: async (sourceId, patch) => {
-      await invokeTasksInstrument("updateTaskSource", { sourceId, patch });
-    },
-    onRemoveSource: async (sourceId) => {
-      await invokeTasksInstrument("removeTaskSource", { sourceId });
-    },
-    onFetchSource: async (sourceId) => {
-      await invokeTasksInstrument("fetchTaskSource", { sourceId });
-    },
-    onOpenConnectors: () => {
-      appState.update((s) => ({ ...s, viewMode: "connectors" }));
-      const stagePath = appState.get().activeStage;
-      if (stagePath) {
-        void loadStageConnectors(stagePath, true);
-      }
-    },
-    onRunAction: async (taskId, action) => {
-      const detail = appState.get().selectedTaskDetail;
-      const stagePath = detail?.stagePath ?? appState.get().activeStage ?? null;
-      const result = await invokeTasksInstrument<{ runId: string; sessionId: string | null }>("runTaskAction", {
-        taskId,
-        action,
-      });
-
-      if (action !== "execute" || !result.sessionId) {
-        if (stagePath) {
-          await loadStageTasks(stagePath, true);
-        }
-        await loadTaskDetail(taskId, true);
-        return;
-      }
-
-      if (stagePath) {
-        const executionTitle = detail?.title
-          ? `Task: ${detail.title}`
-          : "Task execution";
-        registerAppSpawnedSession(result.sessionId, stagePath, executionTitle);
-      }
-
-      appState.update((s) => {
-        const canonicalSessionId = resolveCanonicalSessionId(result.sessionId!) ?? result.sessionId!;
-        const live = remapLiveSessionIds(s.liveSessions);
-        live.add(canonicalSessionId);
-        const expanded = new Set(s.expandedStages);
-        if (stagePath) {
-          expanded.add(stagePath);
-        }
-        return {
-          ...s,
-          viewMode: "stages",
-          activeStage: stagePath ?? s.activeStage,
-          activeSessionId: canonicalSessionId,
-          liveSessions: live,
-          expandedStages: expanded,
-        };
-      });
-
-      const canonicalSessionId = resolveCanonicalSessionId(result.sessionId) ?? result.sessionId;
-      await loadSessionTranscript(canonicalSessionId);
-      if (stagePath) {
-        void loadStageTasks(stagePath, true);
-        void loadSessionHistory(stagePath);
-        await loadDiff(stagePath);
-        ensureBranchHistory(stagePath);
-      }
-    },
-  });
   prView = new PRView(chatPanel, {
     onSelectCommit: (commitSha) => {
       appState.update((s) => ({
@@ -1201,6 +1092,7 @@ function init(): void {
         ...s,
         connectorAuthSession: authSession,
       }));
+      publishFrontendHostEvent("connector.auth.changed", authSession);
 
       if (authSession.authorizeUrl) {
         await openExternalUrl(authSession.authorizeUrl);
@@ -1407,29 +1299,17 @@ function init(): void {
     );
     const isPluginsMode = state.viewMode === "plugins";
     const isInstrumentsMode = state.viewMode === "instruments";
-    const isTasksMode = state.viewMode === "tasks";
     const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
     const runtimeInstrumentId = state.activeInstrumentId ?? activeRuntimeInstrumentId;
     const isRuntimeInstrumentMode = isInstrumentsMode
       && Boolean(activeRuntimeInstrumentModule)
-      && Boolean(runtimeInstrumentId)
-      && runtimeInstrumentId !== TASKS_INSTRUMENT_ID;
+      && Boolean(runtimeInstrumentId);
     const runtimeEntry = isRuntimeInstrumentMode
       ? (state.instrumentEntries.find((entry) => entry.id === runtimeInstrumentId) ?? null)
       : null;
     const runtimeShowsFirst = Boolean(runtimeEntry?.panels.first);
     const runtimeShowsSecond = Boolean(runtimeEntry?.panels.second);
-    const tasksInstrumentEntry = state.instrumentEntries.find(
-      (entry) => entry.id === TASKS_INSTRUMENT_ID
-    ) ?? null;
-    const hasTasksInstrument = Boolean(tasksInstrumentEntry);
-    const canOpenTasks = Boolean(
-      tasksInstrumentEntry
-      && tasksInstrumentEntry.enabled
-      && tasksInstrumentEntry.status !== "blocked"
-    );
-    const taskGroups = buildTaskStageGroups(state);
     const pullRequestSections = buildPullRequestSidebarSections(state);
     const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
     const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
@@ -1448,49 +1328,49 @@ function init(): void {
 
     sidebarPrimaryActions.hidden = isPluginsMode
       || isInstrumentsMode
-      || isTasksMode
       || isPRMode
       || isConnectorsMode;
     stagesSidebarHost.hidden = isPluginsMode
       || isInstrumentsMode
-      || isTasksMode
       || isPRMode
       || isConnectorsMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
     instrumentsSidebarHost.hidden = !isInstrumentsMode;
-    tasksSidebarHost.hidden = !isTasksMode;
     prsSidebarHost.hidden = !isPRMode;
     connectorsSidebarHost.hidden = !isConnectorsMode;
     sidebarPrimaryPluginsBtn?.classList.toggle("active", isPluginsMode);
-    if (sidebarPrimaryTasksBtn) {
-      sidebarPrimaryTasksBtn.hidden = !hasTasksInstrument;
-      sidebarPrimaryTasksBtn.disabled = !canOpenTasks;
-      sidebarPrimaryTasksBtn.title = canOpenTasks
-        ? "Open Tasks"
-        : (tasksInstrumentEntry?.lastError ?? "Tasks instrument is unavailable");
-    }
-    sidebarPrimaryTasksBtn?.classList.toggle("active", isTasksMode);
     sidebarPrimaryInstrumentsBtn?.classList.toggle("active", isInstrumentsMode);
     sidebarPrimaryPRsBtn?.classList.toggle("active", isPRMode);
     sidebarPrimaryConnectorsBtn?.classList.toggle("active", isConnectorsMode);
     if (sidebarPrimaryRuntimeInstrumentsHost) {
       const shortcuts = state.instrumentEntries.filter((entry) =>
-        entry.id !== TASKS_INSTRUMENT_ID
-        && entry.enabled
+        entry.enabled
         && entry.status !== "blocked"
+        && entry.launcher?.sidebarShortcut?.enabled
       );
       sidebarPrimaryRuntimeInstrumentsHost.hidden = shortcuts.length === 0;
       clearChildren(sidebarPrimaryRuntimeInstrumentsHost);
-      for (const entry of shortcuts) {
+      const sortedShortcuts = shortcuts.slice().sort((left, right) => {
+        const leftOrder = Number.isFinite(Number(left.launcher?.sidebarShortcut?.order))
+          ? Number(left.launcher?.sidebarShortcut?.order)
+          : Number.POSITIVE_INFINITY;
+        const rightOrder = Number.isFinite(Number(right.launcher?.sidebarShortcut?.order))
+          ? Number(right.launcher?.sidebarShortcut?.order)
+          : Number.POSITIVE_INFINITY;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        return left.name.localeCompare(right.name);
+      });
+      for (const entry of sortedShortcuts) {
+        const shortcutLabel = entry.launcher?.sidebarShortcut?.label?.trim() || entry.name;
         const shortcutBtn = h("button", {
           class: "sidebar-primary-btn",
-          title: `Open ${entry.name}`,
+          title: `Open ${shortcutLabel}`,
           onclick: () => {
             void activateInstrument(entry.id);
           },
         }, [
-          pluginToolIcon("sidebar-primary-icon"),
-          h("span", { class: "sidebar-primary-label" }, [entry.name]),
+          renderLauncherIcon(entry.launcher?.sidebarShortcut?.icon, "sidebar-primary-icon"),
+          h("span", { class: "sidebar-primary-label" }, [shortcutLabel]),
         ]) as HTMLButtonElement;
         shortcutBtn.classList.toggle(
           "active",
@@ -1523,8 +1403,6 @@ function init(): void {
       instrumentRuntimeSidebarTitleEl.textContent = runtimeTitle;
     }
     syncRuntimePanelVisibility(isRuntimeInstrumentMode, runtimeEntry);
-    tasksSidebar.render(taskGroups, { loading: state.tasksLoading });
-    tasksSidebar.setSelection(state.selectedTaskId);
     prsSidebar.render(pullRequestSections, {
       loading: state.pullRequestsLoading,
       error: state.pullRequestsError,
@@ -1532,9 +1410,6 @@ function init(): void {
     prsSidebar.setSelection(state.selectedPullRequest);
     pluginsPreview.render(state.plugins, pluginsSelection, {
       loading: state.pluginsLoading,
-    });
-    tasksView.render(state.selectedTaskDetail, {
-      loading: state.tasksLoading && Boolean(state.selectedTaskId),
     });
     prView.render(state.selectedPullRequestDetail, {
       loading: state.pullRequestDetailLoading,
@@ -1559,14 +1434,12 @@ function init(): void {
 
     chatView.element.hidden = isPluginsMode
       || isInstrumentsMode
-      || isTasksMode
       || isPRMode
       || isConnectorsMode;
     pluginsPreview.setVisible(isPluginsMode);
-    tasksView.setVisible(isTasksMode);
     prView.setVisible(isPRMode);
     connectorsView.setVisible(isConnectorsMode);
-    diffView.element.hidden = isTasksMode || isRuntimeInstrumentMode;
+    diffView.element.hidden = isRuntimeInstrumentMode;
 
     if (state.activeStage && state.activeStage !== prevConnectorsStage) {
       prevConnectorsStage = state.activeStage;
@@ -1577,8 +1450,7 @@ function init(): void {
 
     syncConnectorAuthPollTimer(state);
 
-    const hideChatPanel = isTasksMode
-      || (isRuntimeInstrumentMode && (!runtimeShowsFirst || !runtimePanelVisibility.first));
+    const hideChatPanel = isRuntimeInstrumentMode && (!runtimeShowsFirst || !runtimePanelVisibility.first);
     const hideDiffPanel = isPluginsMode
       || isConnectorsMode
       || (isInstrumentsMode && !isRuntimeInstrumentMode)
@@ -1616,14 +1488,6 @@ function init(): void {
       panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
     }
 
-    if (isTasksMode) {
-      if (commitModal.isOpen) {
-        commitModal.close();
-      }
-      prevViewMode = state.viewMode;
-      return;
-    }
-
     if (isRuntimeInstrumentMode) {
       if (commitModal.isOpen) {
         commitModal.close();
@@ -1655,7 +1519,7 @@ function init(): void {
 
     if (
       viewModeChanged
-      && (prevViewMode === "prs" || prevViewMode === "tasks")
+      && prevViewMode === "prs"
       && state.viewMode === "stages"
       && state.activeStage
     ) {
@@ -1741,32 +1605,6 @@ function init(): void {
 }
 
 // ── Actions ──────────────────────────────────────────────────────
-
-async function invokeTasksInstrument<T = unknown>(
-  method: string,
-  params?: Record<string, unknown>
-): Promise<T> {
-  const response: { result: T } = await (rpc as any).request.instrumentInvoke({
-    instrumentId: TASKS_INSTRUMENT_ID,
-    method,
-    params,
-  });
-  return response.result;
-}
-
-async function openTasksInstrumentFromSidebar(): Promise<void> {
-  await loadInstruments(false);
-  const hasTasks = appState.get().instrumentEntries.some((entry) => entry.id === TASKS_INSTRUMENT_ID);
-  if (!hasTasks) {
-    appState.update((s) => ({
-      ...s,
-      viewMode: "instruments",
-      instrumentsError: "Tasks instrument is not installed",
-    }));
-    return;
-  }
-  await activateInstrument(TASKS_INSTRUMENT_ID);
-}
 
 function syncRuntimePanelVisibility(
   isRuntimeInstrumentMode: boolean,
@@ -1998,6 +1836,18 @@ function buildInstrumentContext(entry: InstrumentRegistryEntry): InstrumentConte
       },
     },
     sessions: {
+      start: async (params) => {
+        const response: { sessionId: string } = await (rpc as any).request.sendPrompt({
+          prompt: params.prompt,
+          cwd: params.cwd,
+          fullAccess: params.fullAccess ?? true,
+          sessionId: params.sessionId,
+          selectedFiles: params.selectedFiles ?? [],
+          model: params.model,
+          tools: params.tools,
+        });
+        return { sessionId: response.sessionId };
+      },
       spawn: async (params) => {
         const response: { sessionId: string } = await (rpc as any).request.sendPrompt({
           prompt: params.prompt,
@@ -2005,6 +1855,8 @@ function buildInstrumentContext(entry: InstrumentRegistryEntry): InstrumentConte
           fullAccess: params.fullAccess ?? true,
           sessionId: params.sessionId,
           selectedFiles: params.selectedFiles ?? [],
+          model: params.model,
+          tools: params.tools,
         });
         return { sessionId: response.sessionId };
       },
@@ -2021,6 +1873,29 @@ function buildInstrumentContext(entry: InstrumentRegistryEntry): InstrumentConte
       },
       list: async () => {
         return (rpc as any).request.getSessions({});
+      },
+      focus: async ({ sessionId, cwd }) => {
+        const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
+        const normalizedCwd = String(cwd ?? "").trim();
+        appState.update((s) => {
+          const expanded = new Set(s.expandedStages);
+          if (normalizedCwd) {
+            expanded.add(normalizedCwd);
+          }
+          return {
+            ...s,
+            viewMode: "stages",
+            activeStage: normalizedCwd || s.activeStage,
+            activeSessionId: canonicalSessionId,
+            expandedStages: expanded,
+          };
+        });
+        await loadSessionTranscript(canonicalSessionId);
+        if (normalizedCwd) {
+          void loadSessionHistory(normalizedCwd);
+          await loadDiff(normalizedCwd);
+          ensureBranchHistory(normalizedCwd);
+        }
       },
     },
     connectors: {
@@ -2045,6 +1920,9 @@ function buildInstrumentContext(entry: InstrumentRegistryEntry): InstrumentConte
       active: async () => {
         return appState.get().activeStage;
       },
+    },
+    events: {
+      subscribe: (event, handler) => subscribeFrontendHostEvent(entry, event, handler),
     },
     invoke: async <T = unknown>(
       method: string,
@@ -2418,6 +2296,7 @@ async function pollConnectorAuthStatus(): Promise<void> {
       ...s,
       connectorAuthSession: next,
     }));
+    publishFrontendHostEvent("connector.auth.changed", next);
     if (next.status !== "pending") {
       await loadStageConnectors(next.stagePath, true);
     }
@@ -2434,6 +2313,10 @@ async function pollConnectorAuthStatus(): Promise<void> {
           }
         : null,
     }));
+    const failed = appState.get().connectorAuthSession;
+    if (failed) {
+      publishFrontendHostEvent("connector.auth.changed", failed);
+    }
   }
 
   syncConnectorAuthPollTimer(appState.get());
@@ -2609,7 +2492,7 @@ async function loadInstruments(force = false): Promise<void> {
     const prevActiveId = appState.get().activeInstrumentId;
     const nextActiveId = entries.some((entry) => entry.id === prevActiveId)
       ? prevActiveId
-      : (entries.find((entry) => entry.id === TASKS_INSTRUMENT_ID)?.id ?? null);
+      : null;
 
     appState.update((s) => ({
       ...s,
@@ -2663,13 +2546,6 @@ async function activateInstrument(instrumentId: string): Promise<void> {
   panelLayout.showPanel("stages");
   qs("#btn-toggle-stages")?.classList.add("active");
 
-  if (id === TASKS_INSTRUMENT_ID) {
-    await deactivateRuntimeInstrument();
-    appState.update((s) => ({ ...s, viewMode: "tasks" }));
-    await loadAllStageTasks();
-    return;
-  }
-
   try {
     await activateRuntimeInstrument(entry);
     appState.update((s) => ({
@@ -2716,7 +2592,7 @@ async function setInstrumentEnabled(instrumentId: string, enabled: boolean): Pro
         await deactivateRuntimeInstrument();
         appState.update((s) => ({
           ...s,
-          viewMode: state.viewMode === "tasks" ? "instruments" : state.viewMode,
+          viewMode: "instruments",
         }));
       }
     }
@@ -2753,11 +2629,9 @@ async function removeLocalInstrument(instrumentId: string): Promise<void> {
     appState.update((s) => ({
       ...s,
       activeInstrumentId: s.activeInstrumentId === instrumentId ? null : s.activeInstrumentId,
-      viewMode: (s.viewMode === "tasks" || s.viewMode === "instruments")
+      viewMode: s.viewMode === "instruments"
         ? "stages"
         : s.viewMode,
-      selectedTaskId: s.activeInstrumentId === instrumentId ? null : s.selectedTaskId,
-      selectedTaskDetail: s.activeInstrumentId === instrumentId ? null : s.selectedTaskDetail,
     }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -2766,60 +2640,6 @@ async function removeLocalInstrument(instrumentId: string): Promise<void> {
       ...s,
       instrumentsError: message,
     }));
-  }
-}
-
-async function retryBlockedInstrumentMigration(instrumentId: string): Promise<void> {
-  try {
-    const response: { result: { ok: boolean; blocked: boolean; error: string | null } }
-      = await (rpc as any).request.instrumentInvoke({
-        instrumentId,
-        method: "retryMigration",
-        params: {},
-      });
-    await loadInstruments(true);
-
-    if (response.result.ok) {
-      await activateInstrument(instrumentId);
-      return;
-    }
-
-    appState.update((s) => ({
-      ...s,
-      instrumentsError: response.result.error ?? `Migration retry failed for '${instrumentId}'`,
-    }));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Failed to retry migration:", err);
-    appState.update((s) => ({
-      ...s,
-      instrumentsError: message,
-    }));
-  }
-}
-
-async function handleInstrumentEvent(
-  instrumentId: string,
-  event: string,
-  payload?: unknown
-): Promise<void> {
-  if (instrumentId !== TASKS_INSTRUMENT_ID || event !== "tasks.changed") {
-    return;
-  }
-
-  const body = (payload ?? {}) as {
-    stagePath?: string;
-    taskId?: string | null;
-  };
-  const stagePath = String(body.stagePath ?? "").trim();
-  if (!stagePath) return;
-  await loadStageTasks(stagePath, true);
-
-  const taskId = body.taskId ? String(body.taskId).trim() : "";
-  if (!taskId) return;
-  const state = appState.get();
-  if (state.selectedTaskId === taskId) {
-    await loadTaskDetail(taskId, true);
   }
 }
 
@@ -2856,126 +2676,6 @@ async function loadStageConnectors(
       ...s,
       connectorsLoading: false,
     }));
-  }
-}
-
-async function loadAllStageTasks(): Promise<void> {
-  const state = appState.get();
-  if (state.stages.length === 0) {
-    appState.update((s) => ({
-      ...s,
-      tasksByStage: {},
-      tasksLoading: false,
-      selectedTaskId: null,
-      selectedTaskDetail: null,
-    }));
-    return;
-  }
-
-  appState.update((s) => ({
-    ...s,
-    tasksLoading: true,
-  }));
-
-  try {
-    const pairs = await Promise.all(state.stages.map(async (stagePath) => {
-      const tasks = await invokeTasksInstrument<TaskCardSummary[]>("listStageTasks", { stagePath });
-      return [stagePath, tasks] as const;
-    }));
-
-    const byStage: Record<string, TaskCardSummary[]> = {};
-    for (const [stagePath, tasks] of pairs) {
-      byStage[stagePath] = tasks;
-    }
-
-    let selectedTaskId = appState.get().selectedTaskId;
-    if (!selectedTaskId || !findTaskSummaryById(byStage, selectedTaskId)) {
-      const activeStage = appState.get().activeStage;
-      const preferred = activeStage ? byStage[activeStage] : null;
-      selectedTaskId = preferred?.[0]?.id ?? pairs[0]?.[1]?.[0]?.id ?? null;
-    }
-
-    appState.update((s) => ({
-      ...s,
-      tasksByStage: byStage,
-      tasksLoading: false,
-      selectedTaskId,
-      selectedTaskDetail: selectedTaskId === s.selectedTaskDetail?.id ? s.selectedTaskDetail : null,
-    }));
-
-    if (selectedTaskId) {
-      await loadTaskDetail(selectedTaskId, true);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Failed to load tasks:", err);
-    appState.update((s) => ({
-      ...s,
-      tasksLoading: false,
-      viewMode: s.viewMode === "tasks" ? "instruments" : s.viewMode,
-      instrumentsError: message,
-    }));
-  }
-}
-
-async function loadStageTasks(stagePath: string, refreshDetail = false): Promise<void> {
-  if (!stagePath) return;
-  try {
-    const tasks = await invokeTasksInstrument<TaskCardSummary[]>("listStageTasks", { stagePath });
-    appState.update((s) => ({
-      ...s,
-      tasksByStage: {
-        ...s.tasksByStage,
-        [stagePath]: tasks,
-      },
-    }));
-
-    const selectedTaskId = appState.get().selectedTaskId;
-    if (!selectedTaskId) return;
-    const selectedStillExists = tasks.some((task) => task.id === selectedTaskId);
-    if (refreshDetail && selectedStillExists) {
-      await loadTaskDetail(selectedTaskId, true);
-      return;
-    }
-    if (!selectedStillExists && appState.get().selectedTaskDetail?.stagePath === stagePath) {
-      const next = tasks[0] ?? null;
-      appState.update((s) => ({
-        ...s,
-        selectedTaskId: next?.id ?? null,
-        selectedTaskDetail: next ? s.selectedTaskDetail : null,
-      }));
-      if (next) {
-        await loadTaskDetail(next.id, true);
-      } else {
-        appState.update((s) => ({ ...s, selectedTaskDetail: null }));
-      }
-    }
-  } catch (err) {
-    console.error("Failed to load stage tasks:", err);
-  }
-}
-
-async function loadTaskDetail(taskId: string, keepSelection = false): Promise<void> {
-  if (!taskId) return;
-  try {
-    const detail = await invokeTasksInstrument<TaskCardDetail | null>("getTaskDetail", { taskId });
-    if (!detail) {
-      appState.update((s) => ({
-        ...s,
-        selectedTaskId: s.selectedTaskId === taskId ? null : s.selectedTaskId,
-        selectedTaskDetail: s.selectedTaskDetail?.id === taskId ? null : s.selectedTaskDetail,
-      }));
-      return;
-    }
-
-    appState.update((s) => ({
-      ...s,
-      selectedTaskId: keepSelection ? (s.selectedTaskId ?? detail.id) : detail.id,
-      selectedTaskDetail: detail,
-      activeStage: detail.stagePath,
-    }));
-  } catch (err) {
-    console.error("Failed to load task detail:", err);
   }
 }
 
@@ -3575,30 +3275,6 @@ function applyCachedSelectedPullRequestDiff(state: AppState): boolean {
   return true;
 }
 
-async function createTaskInStage(stagePath: string): Promise<void> {
-  try {
-    const detail = await invokeTasksInstrument<TaskCardDetail>("createTask", {
-      stagePath,
-      title: "Untitled task",
-      notes: "",
-    });
-
-    appState.update((s) => ({
-      ...s,
-      selectedTaskId: detail.id,
-      selectedTaskDetail: detail,
-      activeStage: stagePath,
-      activeInstrumentId: TASKS_INSTRUMENT_ID,
-      viewMode: "tasks",
-    }));
-
-    await loadStageTasks(stagePath, false);
-    await loadTaskDetail(detail.id, true);
-  } catch (err) {
-    console.error("Failed to create task:", err);
-  }
-}
-
 async function openStage(): Promise<void> {
   try {
     const dir: string | null = await (rpc as any).request.pickDirectory({});
@@ -3615,6 +3291,7 @@ async function openStage(): Promise<void> {
       expandedStages: expanded,
       activeStage: dir,
     }));
+    publishFrontendHostEvent("stage.added", { path: dir });
 
     panelLayout.showPanel("stages");
     qs("#btn-toggle-stages")?.classList.add("active");
@@ -3630,6 +3307,7 @@ async function openStage(): Promise<void> {
 async function removeStage(path: string): Promise<void> {
   try {
     await (rpc as any).request.removeStage({ path });
+    publishFrontendHostEvent("stage.removed", { path });
     stageFileCache.delete(path);
     slashCommandCache.delete(path);
     if (commitModal.isOpen && appState.get().activeStage === path) {
@@ -3647,14 +3325,11 @@ async function removeStage(path: string): Promise<void> {
       const branchHistory = { ...s.branchHistory };
       const vcsInfoByStage = { ...s.vcsInfoByStage };
       const commitContextByStage = { ...s.commitContextByStage };
-      const tasksByStage = { ...s.tasksByStage };
       const connectorsByStage = { ...s.connectorsByStage };
       delete branchHistory[path];
       delete vcsInfoByStage[path];
       delete commitContextByStage[path];
-      delete tasksByStage[path];
       delete connectorsByStage[path];
-      const selectedTaskRemoved = s.selectedTaskDetail?.stagePath === path;
       const authSessionRemoved = s.connectorAuthSession?.stagePath === path;
       return {
         ...s,
@@ -3663,11 +3338,8 @@ async function removeStage(path: string): Promise<void> {
         branchHistory,
         vcsInfoByStage,
         commitContextByStage,
-        tasksByStage,
         connectorsByStage,
         loadedBranchHistory,
-        selectedTaskId: selectedTaskRemoved ? null : s.selectedTaskId,
-        selectedTaskDetail: selectedTaskRemoved ? null : s.selectedTaskDetail,
         connectorAuthSession: authSessionRemoved ? null : s.connectorAuthSession,
         activeStage: s.activeStage === path
           ? (stages[0] ?? null)
@@ -3679,10 +3351,6 @@ async function removeStage(path: string): Promise<void> {
     if (nextStage) {
       ensureBranchHistory(nextStage);
       void loadStageConnectors(nextStage, false);
-    }
-    const state = appState.get();
-    if (state.activeInstrumentId === TASKS_INSTRUMENT_ID || state.viewMode === "tasks") {
-      void loadAllStageTasks();
     }
   } catch (err) {
     console.error("Failed to remove stage:", err);
@@ -3876,31 +3544,6 @@ function resolvePluginSelection(
     kind: "plugin",
     pluginId: plugin.id,
   };
-}
-
-function buildTaskStageGroups(state: AppState): TaskStageGroup[] {
-  return state.stages.map((stagePath) => {
-    const vcsInfo = state.vcsInfoByStage[stagePath];
-    const branch = vcsInfo?.branch
-      ?? resolveStageBranchName(state.branchHistory[stagePath] ?? EMPTY_BRANCH_COMMITS);
-    return {
-      stagePath,
-      stageName: stagePath.split("/").pop() ?? stagePath,
-      branch,
-      tasks: state.tasksByStage[stagePath] ?? [],
-    };
-  });
-}
-
-function findTaskSummaryById(
-  byStage: Record<string, TaskCardSummary[]>,
-  taskId: string
-): TaskCardSummary | null {
-  for (const tasks of Object.values(byStage)) {
-    const found = tasks.find((task) => task.id === taskId);
-    if (found) return found;
-  }
-  return null;
 }
 
 function buildPullRequestRepoGroups(

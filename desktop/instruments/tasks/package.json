@@ -11,6 +11,14 @@
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
       "hostApiVersion": "1.0.0",
+      "launcher": {
+        "sidebarShortcut": {
+          "enabled": true,
+          "label": "Tasks",
+          "icon": "task",
+          "order": 20
+        }
+      },
       "panels": {
         "sidebar": true,
         "first": false,

@@ -14,15 +14,6 @@ import type {
 import type { SlashCommandEntry, ToolApprovalRequest } from "./tools.ts";
 import type { InstalledPlugin } from "./plugins.ts";
 import type {
-  TaskCardSummary,
-  TaskCardDetail,
-  TaskCardStatus,
-  TaskSourceKind,
-  TaskSource,
-  TaskAction,
-  TaskRun,
-} from "./tasks.ts";
-import type {
   StageConnector,
   ConnectorProvider,
   ConnectorAuthSession,
@@ -57,6 +48,8 @@ export type AppRPC = {
           fullAccess?: boolean;
           sessionId?: string;
           selectedFiles?: string[];
+          model?: string;
+          tools?: string[];
         };
         response: { sessionId: string };
       };
@@ -145,70 +138,6 @@ export type AppRPC = {
       getInstalledPlugins: {
         params: {};
         response: InstalledPlugin[];
-      };
-      getStageTasks: {
-        params: { stagePath: string };
-        response: TaskCardSummary[];
-      };
-      getTaskDetail: {
-        params: { taskId: string };
-        response: TaskCardDetail | null;
-      };
-      createTask: {
-        params: { stagePath: string; title?: string; notes?: string };
-        response: TaskCardDetail;
-      };
-      updateTask: {
-        params: {
-          taskId: string;
-          patch: {
-            title?: string;
-            notes?: string;
-            status?: TaskCardStatus;
-            planMarkdown?: string | null;
-          };
-        };
-        response: TaskCardDetail | null;
-      };
-      deleteTask: {
-        params: { taskId: string };
-        response: void;
-      };
-      addTaskSource: {
-        params: {
-          taskId: string;
-          kind: TaskSourceKind;
-          url?: string | null;
-          content?: string | null;
-        };
-        response: TaskSource;
-      };
-      updateTaskSource: {
-        params: {
-          sourceId: string;
-          patch: {
-            title?: string | null;
-            content?: string | null;
-            url?: string | null;
-          };
-        };
-        response: TaskSource | null;
-      };
-      removeTaskSource: {
-        params: { sourceId: string };
-        response: void;
-      };
-      fetchTaskSource: {
-        params: { sourceId: string };
-        response: TaskSource | null;
-      };
-      runTaskAction: {
-        params: { taskId: string; action: TaskAction };
-        response: { runId: string; sessionId: string | null };
-      };
-      getTaskRuns: {
-        params: { taskId: string; limit?: number };
-        response: TaskRun[];
       };
       getStageConnectors: {
         params: { stagePath: string };
@@ -450,10 +379,6 @@ export type AppRPC = {
         exitCode: number;
       };
       toolApproval: ToolApprovalRequest;
-      tasksChanged: {
-        stagePath: string;
-        taskId?: string;
-      };
       pullRequestAgentReviewChanged: {
         repo: string;
         number: number;

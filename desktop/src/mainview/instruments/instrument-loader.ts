@@ -11,17 +11,6 @@ export async function loadInstrumentFrontend(
   entry: InstrumentRegistryEntry,
   loadSource?: LoadInstrumentFrontendSource
 ): Promise<InstrumentFrontendModule> {
-  // Tasks pilot continues to be mounted by host integration in mainview.
-  if (entry.id === "tasks") {
-    const mod = await import("../components/tasks-view.ts");
-    return {
-      activate: () => {
-        void mod;
-      },
-      deactivate: () => {},
-    };
-  }
-
   const imported = await importInstrumentFrontendModule(entry, loadSource);
   const moduleLike = (imported.default ?? imported) as Partial<InstrumentFrontendModule>;
   if (!moduleLike || typeof moduleLike.activate !== "function") {

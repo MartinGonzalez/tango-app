@@ -77,6 +77,25 @@ export async function loadInstrumentManifest(
       .filter((value): value is InstrumentManifest["permissions"][number] => Boolean(value))
     : [];
 
+  const launcher = base.launcher && typeof base.launcher === "object"
+    ? {
+        sidebarShortcut: base.launcher.sidebarShortcut && typeof base.launcher.sidebarShortcut === "object"
+          ? {
+              enabled: Boolean(base.launcher.sidebarShortcut.enabled),
+              ...(base.launcher.sidebarShortcut.label
+                ? { label: String(base.launcher.sidebarShortcut.label).trim() }
+                : {}),
+              ...(base.launcher.sidebarShortcut.icon
+                ? { icon: String(base.launcher.sidebarShortcut.icon).trim() }
+                : {}),
+              ...(Number.isFinite(Number(base.launcher.sidebarShortcut.order))
+                ? { order: Number(base.launcher.sidebarShortcut.order) }
+                : {}),
+            }
+          : undefined,
+      }
+    : undefined;
+
   const manifest: InstrumentManifest = {
     id,
     name,
@@ -86,6 +105,7 @@ export async function loadInstrumentManifest(
     hostApiVersion,
     panels,
     permissions,
+    ...(launcher ? { launcher } : {}),
   };
 
   await assertEntrypointExists(installPath, manifest.entrypoint, "entrypoint");

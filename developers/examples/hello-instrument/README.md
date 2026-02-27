@@ -6,6 +6,8 @@ This is a tiny Tango instrument used in the docs.
 
 - `package.json`: instrument manifest (`tango.instrument`)
 - `dist/index.js`: frontend lifecycle (`activate`, `deactivate`)
+  - mounts sidebar + second panel
+  - uses `ctx.invoke(...)`, `ctx.sessions.start(...)`, `ctx.events.subscribe(...)`
 - `dist/backend.js`: backend `invoke` handler (`ping`)
 
 ## Install locally

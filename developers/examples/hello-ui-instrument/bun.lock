@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@example/tango-instrument-hello-ui",
+      "dependencies": {
+        "@tango/instrument-ui": "file:../../../desktop/instruments/ui",
+      },
+    },
+  },
+  "packages": {
+    "@tango/instrument-ui": ["@tango/instrument-ui@file:../../../desktop/instruments/ui", {}],
+  }
+}

@@ -1,5 +1,5 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -50,8 +50,6 @@ import {
   replyPullRequestReviewComment,
   createPullRequestReviewComment,
 } from "./pr-provider.ts";
-import { TaskRepository } from "./task-repository.ts";
-import { TasksStore } from "./tasks-store.ts";
 import { PRReviewStore } from "./pr-review-store.ts";
 import { PRAgentReviewStore } from "./pr-agent-review-store.ts";
 import { PRAgentReviewProvider } from "./pr-agent-review-provider.ts";
@@ -65,31 +63,15 @@ import {
 } from "./project-path.ts";
 import type {
   AppRPC,
-  InstrumentBackendContext,
-  InstrumentRegistryEntry,
   SessionInfo,
   Snapshot,
   Activity,
-  TaskAction,
-  TaskCardStatus,
   ConnectorProvider,
-  TaskSourceKind,
   PullRequestAgentReviewRun,
 } from "../shared/types.ts";
 
 console.log("Tango starting...");
 
-const TASKS_INSTRUMENT_ID = "tasks";
-const LEGACY_TASKS_DB_PATH = join(homedir(), ".tango", "tasks.db");
-const TASKS_INSTRUMENT_DB_PATH = join(
-  homedir(),
-  ".tango",
-  "instruments",
-  TASKS_INSTRUMENT_ID,
-  "db",
-  "tasks.db"
-);
-const TASKS_MIGRATION_MARKER_KEY = "migration.tasks-db.completedAt";
 const MAINVIEW_LOG_PATH = join(homedir(), ".tango", "logs", "mainview.log");
 
 function writeMainviewLogLine(line: string): void {
@@ -101,16 +83,6 @@ function writeMainviewLogLine(line: string): void {
   }
 }
 
-type TasksMigrationState = {
-  migrated: boolean;
-  blocked: boolean;
-  completedAt: string | null;
-  backupPath: string | null;
-  error: string | null;
-};
-
-let tasksMigrationState = migrateLegacyTasksDbSync();
-
 // ── Services ─────────────────────────────────────────────────────
 
 const watcher = new WatcherClient();
@@ -119,10 +91,6 @@ const stages = new StageStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
 const connectors = new ConnectorsRepository();
-const taskRepository = new TaskRepository(
-  new TasksStore(TASKS_INSTRUMENT_DB_PATH),
-  connectors
-);
 const prReviewStore = new PRReviewStore();
 const prAgentReviewStore = new PRAgentReviewStore();
 const prAgentReviewProvider = new PRAgentReviewProvider({
@@ -133,21 +101,65 @@ const instrumentRuntime = new InstrumentRuntime({
   bundledInstallPaths: resolveBundledInstrumentInstallPaths(),
   onEvent: (event) => {
     mainRPC?.send.instrumentEvent(event);
+    instrumentRuntime.emitHostEvent("instrument.event", event);
   },
-  invokeHandlers: {
-    tasks: (ctx, method, params) => invokeTasksInstrument(ctx, method, params),
+  hostApi: {
+    sessions: {
+      start: async ({
+        prompt,
+        cwd,
+        fullAccess,
+        sessionId,
+        selectedFiles,
+        model,
+        tools,
+      }) => {
+        const resolvedSessionId = await sessions.spawn(
+          prompt,
+          cwd,
+          fullAccess ?? true,
+          sessionId,
+          selectedFiles ?? [],
+          model,
+          tools
+        );
+        approvals.registerSession(resolvedSessionId, fullAccess ?? true);
+        sessionCwds.set(resolvedSessionId, cwd);
+        await stages.add(cwd);
+        instrumentRuntime.emitHostEvent("stage.added", { path: cwd });
+        return { sessionId: resolvedSessionId };
+      },
+      sendFollowUp: async ({ sessionId, text, fullAccess, selectedFiles }) => {
+        if (typeof fullAccess === "boolean") {
+          approvals.setSessionFullAccess(sessionId, fullAccess);
+        }
+        await sessions.sendMessage(sessionId, text, selectedFiles ?? []);
+      },
+      kill: async (sessionId) => {
+        sessions.kill(sessionId);
+      },
+      list: async () => {
+        if (!latestSnapshot) return [];
+        return buildSessionList(latestSnapshot);
+      },
+    },
+    connectors: {
+      listStageConnectors: async (stagePath) => connectors.listStageConnectors(stagePath),
+      connect: async (stagePath, provider) => connectors.startConnectorAuth(stagePath, provider),
+      disconnect: async (stagePath, provider) => {
+        await connectors.disconnectStageConnector(stagePath, provider);
+      },
+    },
+    stages: {
+      list: async () => stages.getAll(),
+      active: async () => null,
+    },
   },
 });
 
 let latestSnapshot: Snapshot | null = null;
 let mainRPC: any = null;
 const sessionCwds = new Map<string, string>();
-const taskRunsBySession = new Map<string, {
-  runId: string;
-  taskId: string;
-  action: TaskAction;
-  stagePath: string;
-}>();
 const prAgentRunsBySession = new Map<string, {
   runId: string;
   repo: string;
@@ -160,15 +172,6 @@ const prAgentApplyRunsBySession = new Map<string, {
   reviewVersion: number;
   suggestionIndex: number;
 }>();
-const hiddenTaskSessionIds = new Set<string>(taskRepository.listHiddenSessionIds());
-const HIDDEN_TASK_PROMPT_PREFIXES = [
-  "You are improving a task note for an engineering workflow.",
-  "You are planning a software engineering task.",
-];
-const IMPROVE_TASK_MODEL = process.env.CLAUDE_TASK_IMPROVE_MODEL?.trim()
-  || "claude-haiku-4-5-20251001";
-const PLAN_TASK_MODEL = process.env.CLAUDE_TASK_PLAN_MODEL?.trim()
-  || "opus";
 
 function resolveBundledInstrumentInstallPaths(): string[] {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -197,58 +200,6 @@ function resolveBundledInstrumentInstallPaths(): string[] {
     deduped.push(candidate);
   }
   return deduped;
-}
-
-function migrateLegacyTasksDbSync(): TasksMigrationState {
-  const state: TasksMigrationState = {
-    migrated: false,
-    blocked: false,
-    completedAt: null,
-    backupPath: null,
-    error: null,
-  };
-
-  try {
-    mkdirSync(dirname(TASKS_INSTRUMENT_DB_PATH), { recursive: true });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      ...state,
-      blocked: true,
-      error: `Failed to create tasks instrument db directory: ${message}`,
-    };
-  }
-
-  const targetExists = existsSync(TASKS_INSTRUMENT_DB_PATH);
-  const legacyExists = existsSync(LEGACY_TASKS_DB_PATH);
-
-  if (!legacyExists || targetExists) {
-    return state;
-  }
-
-  const timestamp = new Date().toISOString().replace(/[.:]/g, "-");
-  const backupPath = `${LEGACY_TASKS_DB_PATH}.${timestamp}.backup`;
-
-  try {
-    copyFileSync(LEGACY_TASKS_DB_PATH, backupPath);
-    copyFileSync(LEGACY_TASKS_DB_PATH, TASKS_INSTRUMENT_DB_PATH);
-    return {
-      migrated: true,
-      blocked: false,
-      completedAt: new Date().toISOString(),
-      backupPath,
-      error: null,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      migrated: false,
-      blocked: true,
-      completedAt: null,
-      backupPath,
-      error: `Tasks migration failed: ${message}`,
-    };
-  }
 }
 
 // ── Auto-start watcher server if needed ──────────────────────────
@@ -334,9 +285,9 @@ async function ensureServer(): Promise<void> {
 // ── Watcher callbacks ────────────────────────────────────────────
 
 watcher.onSnapshot((snapshot) => {
-  const filteredSnapshot = filterSnapshotHiddenTaskSessions(snapshot);
-  latestSnapshot = filteredSnapshot;
-  mainRPC?.send.snapshotUpdate(filteredSnapshot);
+  latestSnapshot = snapshot;
+  mainRPC?.send.snapshotUpdate(snapshot);
+  instrumentRuntime.emitHostEvent("snapshot.update", snapshot);
 });
 
 watcher.onError((err) => {
@@ -348,15 +299,6 @@ watcher.onError((err) => {
 sessions.onIdResolved((tempId, realId) => {
   // Move approval policy from temp ID to real session ID
   approvals.resolveSessionId(tempId, realId);
-  const taskRun = taskRunsBySession.get(tempId);
-  if (taskRun) {
-    taskRunsBySession.delete(tempId);
-    taskRunsBySession.set(realId, taskRun);
-    taskRepository.bindRunSession(taskRun.runId, realId);
-    if (taskRun.action !== "execute") {
-      remapHiddenTaskSessionId(tempId, realId);
-    }
-  }
   const cwd = sessionCwds.get(tempId);
   if (cwd) {
     sessionCwds.delete(tempId);
@@ -380,6 +322,7 @@ sessions.onIdResolved((tempId, realId) => {
   // Notify webview to update its activeSessionId.
   // RPC messages are ordered — this always arrives before events with realId.
   mainRPC?.send.sessionIdResolved({ tempId, realId });
+  instrumentRuntime.emitHostEvent("session.idResolved", { tempId, realId });
 });
 
 sessions.onEvent((sessionId, event) => {
@@ -401,21 +344,8 @@ sessions.onEnd((sessionId, exitCode) => {
     void finalizeAgentReviewApplyFromExit(prAgentApplyRun, exitCode);
     return;
   }
-  const taskRun = taskRunsBySession.get(sessionId);
-  if (taskRun) {
-    taskRunsBySession.delete(sessionId);
-    try {
-      const { task } = taskRepository.finalizeRun(taskRun.runId, {
-        success: exitCode === 0,
-        exitCode,
-        error: exitCode === 0 ? null : `Session exited with code ${exitCode}`,
-      });
-      notifyTasksChanged(task.stagePath, task.id);
-    } catch (err) {
-      console.warn("Failed to finalize task run:", err);
-    }
-  }
   mainRPC?.send.sessionEnded({ sessionId, exitCode });
+  instrumentRuntime.emitHostEvent("session.ended", { sessionId, exitCode });
 });
 
 sessions.onError((sessionId, error) => {
@@ -431,16 +361,11 @@ sessions.onError((sessionId, error) => {
     console.warn("Agent review apply session failed:", error);
     return;
   }
-  const taskRun = taskRunsBySession.get(sessionId);
-  if (taskRun) {
-    if (taskRun.action === "execute") {
-      taskRepository.appendRunOutput(taskRun.runId, `\n[error]\n${error}\n`);
-    }
-    if (taskRun.action !== "execute") {
-      return;
-    }
-  }
   mainRPC?.send.sessionStream({
+    sessionId,
+    event: { type: "error", error: { message: error } },
+  });
+  instrumentRuntime.emitHostEvent("session.stream", {
     sessionId,
     event: { type: "error", error: { message: error } },
   });
@@ -471,12 +396,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         fullAccess,
         sessionId: resumeId,
         selectedFiles,
+        model,
+        tools,
       }: {
         prompt: string;
         cwd: string;
         fullAccess?: boolean;
         sessionId?: string;
         selectedFiles?: string[];
+        model?: string;
+        tools?: string[];
       }) => {
         try {
           console.log("[rpc] sendPrompt", {
@@ -492,7 +421,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
             cwd,
             fullAccess ?? true,
             resumeId,
-            selectedFiles ?? []
+            selectedFiles ?? [],
+            model,
+            tools
           );
           await setTurnDiffSession(cwd, sessionId).catch(() => {});
           // Register the tempId immediately (will be updated to realId on resolve)
@@ -611,8 +542,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
 
       getSessionHistory: async ({ cwd }) => {
-        const sessions = await listSessionsForStage(cwd);
-        return sessions.filter((session) => !isHiddenTaskSession(session.sessionId, session.prompt));
+        return listSessionsForStage(cwd);
       },
 
       getDiff: async ({ cwd, scope, sessionId }) => {
@@ -709,168 +639,6 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return getInstalledPlugins();
       },
 
-      getStageTasks: async ({
-        stagePath,
-      }: {
-        stagePath: string;
-      }) => {
-        assertTasksInstrumentUsable();
-        if (!stagePath) return [];
-        return taskRepository.listStageTasks(stagePath);
-      },
-
-      getTaskDetail: async ({ taskId }: { taskId: string }) => {
-        assertTasksInstrumentUsable();
-        if (!taskId) return null;
-        return taskRepository.getTaskDetail(taskId);
-      },
-
-      createTask: async ({
-        stagePath,
-        title,
-        notes,
-      }: {
-        stagePath: string;
-        title?: string;
-        notes?: string;
-      }) => {
-        assertTasksInstrumentUsable();
-        const task = taskRepository.createTask(stagePath, title, notes);
-        notifyTasksChanged(task.stagePath, task.id);
-        return task;
-      },
-
-      updateTask: async ({
-        taskId,
-        patch,
-      }: {
-        taskId: string;
-        patch: {
-          title?: string;
-          notes?: string;
-          status?: TaskCardStatus;
-          planMarkdown?: string | null;
-        };
-      }) => {
-        assertTasksInstrumentUsable();
-        if (!taskId) return null;
-        const task = taskRepository.updateTask(taskId, patch);
-        if (task) {
-          notifyTasksChanged(task.stagePath, task.id);
-        }
-        return task;
-      },
-
-      deleteTask: async ({ taskId }: { taskId: string }) => {
-        assertTasksInstrumentUsable();
-        const stagePath = taskRepository.getTaskDetail(taskId)?.stagePath ?? null;
-        taskRepository.deleteTask(taskId);
-        if (stagePath) {
-          notifyTasksChanged(stagePath);
-        }
-      },
-
-      addTaskSource: async ({
-        taskId,
-        kind,
-        url,
-        content,
-      }: {
-        taskId: string;
-        kind: TaskSourceKind;
-        url?: string | null;
-        content?: string | null;
-      }) => {
-        assertTasksInstrumentUsable();
-        let source = taskRepository.addTaskSource(
-          taskId,
-          kind,
-          url ?? null,
-          content ?? null
-        );
-
-        if (source.url) {
-          const fetched = await taskRepository.fetchTaskSource(source.id);
-          if (fetched) source = fetched;
-        }
-
-        const task = taskRepository.getTaskDetail(taskId);
-        if (task) {
-          notifyTasksChanged(task.stagePath, task.id);
-        }
-        return source;
-      },
-
-      updateTaskSource: async ({
-        sourceId,
-        patch,
-      }: {
-        sourceId: string;
-        patch: {
-          title?: string | null;
-          content?: string | null;
-          url?: string | null;
-        };
-      }) => {
-        assertTasksInstrumentUsable();
-        let source = taskRepository.updateTaskSource(sourceId, patch);
-        if (source && patch.url !== undefined && patch.url !== null && patch.url.trim()) {
-          const fetched = await taskRepository.fetchTaskSource(source.id);
-          if (fetched) source = fetched;
-        }
-
-        if (source) {
-          const task = taskRepository.getTaskDetail(source.taskId);
-          if (task) {
-            notifyTasksChanged(task.stagePath, task.id);
-          }
-        }
-        return source;
-      },
-
-      removeTaskSource: async ({ sourceId }: { sourceId: string }) => {
-        assertTasksInstrumentUsable();
-        const source = taskRepository.getTaskSource(sourceId);
-        taskRepository.removeTaskSource(sourceId);
-        if (source) {
-          const task = taskRepository.getTaskDetail(source.taskId);
-          if (task) notifyTasksChanged(task.stagePath, task.id);
-        }
-      },
-
-      fetchTaskSource: async ({ sourceId }: { sourceId: string }) => {
-        assertTasksInstrumentUsable();
-        const source = await taskRepository.fetchTaskSource(sourceId);
-        if (source) {
-          const task = taskRepository.getTaskDetail(source.taskId);
-          if (task) {
-            notifyTasksChanged(task.stagePath, task.id);
-          }
-        }
-        return source;
-      },
-
-      runTaskAction: async ({
-        taskId,
-        action,
-      }: {
-        taskId: string;
-        action: TaskAction;
-      }) => {
-        return runTaskActionInternal(taskId, action);
-      },
-
-      getTaskRuns: async ({
-        taskId,
-        limit,
-      }: {
-        taskId: string;
-        limit?: number;
-      }) => {
-        assertTasksInstrumentUsable();
-        return taskRepository.getTaskRuns(taskId, limit ?? 20);
-      },
-
       getStageConnectors: async ({
         stagePath,
       }: {
@@ -887,7 +655,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         stagePath: string;
         provider: ConnectorProvider;
       }) => {
-        return connectors.startConnectorAuth(stagePath, provider);
+        const session = await connectors.startConnectorAuth(stagePath, provider);
+        instrumentRuntime.emitHostEvent("connector.auth.changed", session);
+        return session;
       },
 
       getConnectorAuthStatus: async ({
@@ -895,7 +665,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       }: {
         authSessionId: string;
       }) => {
-        return connectors.getConnectorAuthStatus(authSessionId);
+        const session = await connectors.getConnectorAuthStatus(authSessionId);
+        instrumentRuntime.emitHostEvent("connector.auth.changed", session);
+        return session;
       },
 
       disconnectStageConnector: async ({
@@ -1209,6 +981,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         invalidateStageFilesCache(path);
         invalidateSlashCommandsCache(path);
         invalidateInstalledPluginsCache();
+        instrumentRuntime.emitHostEvent("stage.added", { path });
       },
 
       removeStage: async ({ path }) => {
@@ -1220,6 +993,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         invalidateStageFilesCache(path);
         invalidateSlashCommandsCache(path);
         invalidateInstalledPluginsCache();
+        instrumentRuntime.emitHostEvent("stage.removed", { path });
       },
 
       openInFinder: async ({ path }: { path: string }) => {
@@ -1464,10 +1238,6 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         method: string;
         params?: Record<string, unknown>;
       }) => {
-        if (instrumentId === TASKS_INSTRUMENT_ID && method === "retryMigration") {
-          const result = await retryTasksMigration();
-          return { result };
-        }
         const result = await instrumentRuntime.invoke(instrumentId, method, params);
         return { result };
       },
@@ -1568,41 +1338,17 @@ async function handleSessionEvent(sessionId: string, event: any): Promise<void> 
     return;
   }
 
-  const taskRun = taskRunsBySession.get(sessionId);
-  if (taskRun && taskRun.action === "execute") {
-    const chunk = extractTaskRunOutput(event);
-    if (chunk) {
-      taskRepository.appendRunOutput(taskRun.runId, chunk);
-    }
-  }
-
   if (event?.type === "result" && event?.subtype === "success") {
-    if (!taskRun || taskRun.action === "execute") {
-      const cwd = resolveSessionCwd(sessionId);
-      if (cwd) {
-        await finalizeTurnDiff(cwd, sessionId).catch((err) => {
-          console.warn("Failed to finalize turn diff:", err);
-        });
-      }
+    const cwd = resolveSessionCwd(sessionId);
+    if (cwd) {
+      await finalizeTurnDiff(cwd, sessionId).catch((err) => {
+        console.warn("Failed to finalize turn diff:", err);
+      });
     }
-  }
-
-  if (taskRun && taskRun.action === "execute") {
-    finalizeExecuteTaskRunFromEvent(sessionId, taskRun, event);
-  }
-
-  if (taskRun && taskRun.action !== "execute") {
-    const consumed = finalizeBackgroundTaskRunFromEvent(sessionId, taskRun, event);
-    if (consumed) {
-      return;
-    }
-  }
-
-  if (taskRun && taskRun.action !== "execute") {
-    return;
   }
 
   mainRPC?.send.sessionStream({ sessionId, event });
+  instrumentRuntime.emitHostEvent("session.stream", { sessionId, event });
 }
 
 function resolveSessionCwd(sessionId: string): string | null {
@@ -1625,405 +1371,22 @@ function guessTranscriptPaths(cwd: string, sessionId: string): string[] {
   return Array.from(paths);
 }
 
-function notifyTasksChanged(stagePath: string, taskId?: string): void {
-  if (!stagePath) return;
-  mainRPC?.send.instrumentEvent({
-    instrumentId: TASKS_INSTRUMENT_ID,
-    event: "tasks.changed",
-    payload: { stagePath, taskId: taskId ?? null },
-  });
-}
-
-function assertTasksInstrumentUsable(): InstrumentRegistryEntry {
-  const entry = instrumentRuntime.get(TASKS_INSTRUMENT_ID);
-  if (!entry) {
-    throw new Error("Tasks instrument is not installed");
-  }
-  if (!entry.enabled || entry.status === "disabled") {
-    throw new Error("Tasks instrument is disabled");
-  }
-  if (entry.status === "blocked") {
-    throw new Error(
-      entry.lastError
-        ? `Tasks instrument is blocked: ${entry.lastError}`
-        : "Tasks instrument is blocked"
-    );
-  }
-  return entry;
-}
-
-async function persistTasksMigrationMarker(
-  state: TasksMigrationState
-): Promise<void> {
-  if (!state.completedAt) return;
-  const entry = instrumentRuntime.get(TASKS_INSTRUMENT_ID);
-  if (!entry?.enabled || entry.status === "blocked") return;
-  await instrumentRuntime.setProperty(
-    TASKS_INSTRUMENT_ID,
-    TASKS_MIGRATION_MARKER_KEY,
-    {
-      completedAt: state.completedAt,
-      backupPath: state.backupPath,
-      sourcePath: LEGACY_TASKS_DB_PATH,
-      targetPath: TASKS_INSTRUMENT_DB_PATH,
-    }
-  );
-}
-
 async function initializeInstrumentRuntime(): Promise<void> {
   try {
     await instrumentRuntime.load();
   } catch (err) {
     console.warn("Failed to load instruments runtime:", err);
-    return;
   }
-
-  const tasksEntry = instrumentRuntime.get(TASKS_INSTRUMENT_ID);
-  if (!tasksEntry) return;
-
-  if (tasksMigrationState.blocked) {
-    await instrumentRuntime.markBlocked(
-      TASKS_INSTRUMENT_ID,
-      tasksMigrationState.error ?? "Tasks data migration failed"
-    ).catch((err) => {
-      console.warn("Failed to mark Tasks instrument as blocked:", err);
-    });
-    return;
-  }
-
-  await instrumentRuntime.clearError(TASKS_INSTRUMENT_ID).catch((err) => {
-    console.warn("Failed to clear Tasks instrument error state:", err);
-  });
-
-  await persistTasksMigrationMarker(tasksMigrationState).catch((err) => {
-    console.warn("Failed to persist Tasks migration marker:", err);
-  });
-}
-
-async function retryTasksMigration(): Promise<{
-  ok: boolean;
-  blocked: boolean;
-  error: string | null;
-}> {
-  tasksMigrationState = migrateLegacyTasksDbSync();
-
-  if (tasksMigrationState.blocked) {
-    await instrumentRuntime.markBlocked(
-      TASKS_INSTRUMENT_ID,
-      tasksMigrationState.error ?? "Tasks data migration failed"
-    ).catch((err) => {
-      console.warn("Failed to update Tasks blocked state:", err);
-    });
-    return {
-      ok: false,
-      blocked: true,
-      error: tasksMigrationState.error ?? "Tasks data migration failed",
-    };
-  }
-
-  await instrumentRuntime.clearError(TASKS_INSTRUMENT_ID).catch((err) => {
-    console.warn("Failed to clear Tasks blocked state:", err);
-  });
-
-  await persistTasksMigrationMarker(tasksMigrationState).catch((err) => {
-    console.warn("Failed to persist Tasks migration marker:", err);
-  });
-
-  return {
-    ok: true,
-    blocked: false,
-    error: null,
-  };
-}
-
-async function runTaskActionInternal(
-  taskId: string,
-  action: TaskAction
-): Promise<{ runId: string; sessionId: string | null }> {
-  assertTasksInstrumentUsable();
-
-  const prepared = taskRepository.prepareTaskRun(taskId, action);
-  notifyTasksChanged(prepared.stagePath, prepared.task.id);
-
-  let sessionId: string | null = null;
-  try {
-    if (action === "execute") {
-      await beginTurnDiff(prepared.stagePath).catch(() => {});
-    }
-
-    const tempSessionId = await sessions.spawn(
-      prepared.prompt,
-      prepared.stagePath,
-      true,
-      undefined,
-      [],
-      action === "improve"
-        ? IMPROVE_TASK_MODEL
-        : action === "plan"
-          ? PLAN_TASK_MODEL
-          : undefined,
-      action === "execute" ? undefined : []
-    );
-    sessionId = tempSessionId;
-    if (action !== "execute") {
-      addHiddenTaskSessionId(tempSessionId);
-    }
-
-    if (action === "execute") {
-      await setTurnDiffSession(prepared.stagePath, tempSessionId).catch(() => {});
-    }
-
-    taskRepository.bindRunSession(prepared.run.id, tempSessionId);
-    taskRunsBySession.set(tempSessionId, {
-      runId: prepared.run.id,
-      taskId: prepared.task.id,
-      action,
-      stagePath: prepared.stagePath,
-    });
-    sessionCwds.set(tempSessionId, prepared.stagePath);
-    approvals.registerSession(tempSessionId, true);
-    await stages.add(prepared.stagePath);
-    notifyTasksChanged(prepared.stagePath, prepared.task.id);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    taskRepository.finalizeRun(prepared.run.id, {
-      success: false,
-      error: message,
-    });
-    notifyTasksChanged(prepared.stagePath, prepared.task.id);
-    throw err;
-  }
-
-  return {
-    runId: prepared.run.id,
-    sessionId: action === "execute" ? sessionId : null,
-  };
-}
-
-async function invokeTasksInstrument(
-  _ctx: InstrumentBackendContext,
-  method: string,
-  params: Record<string, unknown> | undefined
-): Promise<unknown> {
-  const payload = params ?? {};
-
-  if (method === "retryMigration") {
-    return retryTasksMigration();
-  }
-
-  assertTasksInstrumentUsable();
-
-  switch (method) {
-    case "listStageTasks": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      if (!stagePath) return [];
-      return taskRepository.listStageTasks(stagePath);
-    }
-    case "getTaskDetail": {
-      const taskId = String(payload.taskId ?? "").trim();
-      if (!taskId) return null;
-      return taskRepository.getTaskDetail(taskId);
-    }
-    case "createTask": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      const title = payload.title == null ? undefined : String(payload.title);
-      const notes = payload.notes == null ? undefined : String(payload.notes);
-      if (!stagePath) {
-        throw new Error("stagePath is required");
-      }
-      const task = taskRepository.createTask(stagePath, title, notes);
-      notifyTasksChanged(task.stagePath, task.id);
-      return task;
-    }
-    case "updateTask": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const patch = (payload.patch ?? {}) as {
-        title?: string;
-        notes?: string;
-        status?: TaskCardStatus;
-        planMarkdown?: string | null;
-      };
-      if (!taskId) return null;
-      const task = taskRepository.updateTask(taskId, patch);
-      if (task) {
-        notifyTasksChanged(task.stagePath, task.id);
-      }
-      return task;
-    }
-    case "deleteTask": {
-      const taskId = String(payload.taskId ?? "").trim();
-      if (!taskId) return null;
-      const stagePath = taskRepository.getTaskDetail(taskId)?.stagePath ?? null;
-      taskRepository.deleteTask(taskId);
-      if (stagePath) {
-        notifyTasksChanged(stagePath);
-      }
-      return { deleted: true };
-    }
-    case "addTaskSource": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const kind = String(payload.kind ?? "").trim() as TaskSourceKind;
-      const url = payload.url == null ? null : String(payload.url);
-      const content = payload.content == null ? null : String(payload.content);
-      if (!taskId) throw new Error("taskId is required");
-      let source = taskRepository.addTaskSource(taskId, kind, url, content);
-
-      if (source.url) {
-        const fetched = await taskRepository.fetchTaskSource(source.id);
-        if (fetched) source = fetched;
-      }
-
-      const task = taskRepository.getTaskDetail(taskId);
-      if (task) {
-        notifyTasksChanged(task.stagePath, task.id);
-      }
-      return source;
-    }
-    case "updateTaskSource": {
-      const sourceId = String(payload.sourceId ?? "").trim();
-      const patch = (payload.patch ?? {}) as {
-        title?: string | null;
-        content?: string | null;
-        url?: string | null;
-      };
-      if (!sourceId) return null;
-      let source = taskRepository.updateTaskSource(sourceId, patch);
-      if (source && patch.url !== undefined && patch.url !== null && patch.url.trim()) {
-        const fetched = await taskRepository.fetchTaskSource(source.id);
-        if (fetched) source = fetched;
-      }
-
-      if (source) {
-        const task = taskRepository.getTaskDetail(source.taskId);
-        if (task) {
-          notifyTasksChanged(task.stagePath, task.id);
-        }
-      }
-      return source;
-    }
-    case "removeTaskSource": {
-      const sourceId = String(payload.sourceId ?? "").trim();
-      if (!sourceId) return { removed: false };
-      const source = taskRepository.getTaskSource(sourceId);
-      taskRepository.removeTaskSource(sourceId);
-      if (source) {
-        const task = taskRepository.getTaskDetail(source.taskId);
-        if (task) notifyTasksChanged(task.stagePath, task.id);
-      }
-      return { removed: true };
-    }
-    case "fetchTaskSource": {
-      const sourceId = String(payload.sourceId ?? "").trim();
-      if (!sourceId) return null;
-      const source = await taskRepository.fetchTaskSource(sourceId);
-      if (source) {
-        const task = taskRepository.getTaskDetail(source.taskId);
-        if (task) notifyTasksChanged(task.stagePath, task.id);
-      }
-      return source;
-    }
-    case "runTaskAction": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const action = String(payload.action ?? "").trim() as TaskAction;
-      if (!taskId) {
-        throw new Error("taskId is required");
-      }
-      return runTaskActionInternal(taskId, action);
-    }
-    case "getTaskRuns": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const limit = Number(payload.limit ?? 20);
-      return taskRepository.getTaskRuns(taskId, Number.isFinite(limit) ? limit : 20);
-    }
-    case "listStageConnectors": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      if (!stagePath) return [];
-      return connectors.listStageConnectors(stagePath);
-    }
-    case "startConnectorAuth": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      const provider = String(payload.provider ?? "").trim() as ConnectorProvider;
-      return connectors.startConnectorAuth(stagePath, provider);
-    }
-    case "getConnectorAuthStatus": {
-      const authSessionId = String(payload.authSessionId ?? "").trim();
-      return connectors.getConnectorAuthStatus(authSessionId);
-    }
-    case "disconnectStageConnector": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      const provider = String(payload.provider ?? "").trim() as ConnectorProvider;
-      await connectors.disconnectStageConnector(stagePath, provider);
-      return null;
-    }
-    default:
-      throw new Error(`Unsupported Tasks instrument method '${method}'`);
-  }
-}
-
-function addHiddenTaskSessionId(sessionId: string | null | undefined): void {
-  const normalized = String(sessionId ?? "").trim();
-  if (!normalized) return;
-  hiddenTaskSessionIds.add(normalized);
-}
-
-function remapHiddenTaskSessionId(tempId: string, realId: string): void {
-  const prev = String(tempId ?? "").trim();
-  const next = String(realId ?? "").trim();
-  if (!prev || !next || prev === next) return;
-  if (!hiddenTaskSessionIds.has(prev)) return;
-  hiddenTaskSessionIds.delete(prev);
-  hiddenTaskSessionIds.add(next);
-}
-
-function isHiddenTaskSessionId(sessionId: string | null | undefined): boolean {
-  const normalized = String(sessionId ?? "").trim();
-  if (!normalized) return false;
-  return hiddenTaskSessionIds.has(normalized);
-}
-
-function isHiddenTaskPrompt(prompt: string | null | undefined): boolean {
-  const normalized = String(prompt ?? "").trim();
-  if (!normalized) return false;
-  return HIDDEN_TASK_PROMPT_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-}
-
-function isHiddenTaskSession(
-  sessionId: string | null | undefined,
-  prompt?: string | null
-): boolean {
-  return isHiddenTaskSessionId(sessionId) || isHiddenTaskPrompt(prompt);
-}
-
-function filterSnapshotHiddenTaskSessions(snapshot: Snapshot): Snapshot {
-  const tasks = snapshot.tasks.filter((task) => !isHiddenTaskSession(task.sessionId, task.prompt));
-  const processes = snapshot.processes.filter((process) => {
-    const task = process.task;
-    return !isHiddenTaskSession(task?.sessionId, task?.prompt);
-  });
-  const subagents = snapshot.subagents.filter((subagent) => {
-    if (isHiddenTaskSessionId(subagent.parentSessionId)) return false;
-    if (isHiddenTaskSessionId(subagent.subagentSessionId)) return false;
-    return true;
-  });
-
-  if (
-    tasks.length === snapshot.tasks.length
-    && processes.length === snapshot.processes.length
-    && subagents.length === snapshot.subagents.length
-  ) {
-    return snapshot;
-  }
-
-  return {
-    ...snapshot,
-    tasks,
-    processes,
-    subagents,
-  };
 }
 
 function notifyPullRequestAgentReviewChanged(run: PullRequestAgentReviewRun): void {
   mainRPC?.send.pullRequestAgentReviewChanged({
+    repo: run.repo,
+    number: run.number,
+    runId: run.id,
+    status: run.status,
+  });
+  instrumentRuntime.emitHostEvent("pullRequest.agentReviewChanged", {
     repo: run.repo,
     number: run.number,
     runId: run.id,
@@ -2305,112 +1668,6 @@ function isDocumentPlaceholder(rawJson: string | null): boolean {
   }
 }
 
-function finalizeBackgroundTaskRunFromEvent(
-  sessionId: string,
-  taskRun: {
-    runId: string;
-    taskId: string;
-    action: TaskAction;
-    stagePath: string;
-  },
-  event: unknown
-): boolean {
-  if (!event || typeof event !== "object") return false;
-  const ev = event as Record<string, any>;
-  if (ev.type !== "result") return false;
-
-  const isSuccess = ev.subtype === "success";
-  const isFailure = ev.subtype === "error";
-  if (!isSuccess && !isFailure) return false;
-
-  taskRunsBySession.delete(sessionId);
-  try {
-    const output = isSuccess
-      ? String(ev.result ?? "").trim() || null
-      : null;
-    const error = isFailure
-      ? String(ev.error?.message ?? ev.result ?? "Task action failed").trim() || "Task action failed"
-      : null;
-    const { task } = taskRepository.finalizeRun(taskRun.runId, {
-      success: isSuccess,
-      output,
-      error,
-    });
-    notifyTasksChanged(task.stagePath, task.id);
-  } catch (err) {
-    console.warn("Failed to finalize background task run from result event:", err);
-  } finally {
-    // Hidden runs are single-turn tasks; terminate the process once result is available.
-    sessions.kill(sessionId);
-  }
-  return true;
-}
-
-function finalizeExecuteTaskRunFromEvent(
-  sessionId: string,
-  taskRun: {
-    runId: string;
-    taskId: string;
-    action: TaskAction;
-    stagePath: string;
-  },
-  event: unknown
-): void {
-  if (!event || typeof event !== "object") return;
-  const ev = event as Record<string, any>;
-  if (ev.type !== "result") return;
-
-  const isSuccess = ev.subtype === "success";
-  const isFailure = ev.subtype === "error";
-  if (!isSuccess && !isFailure) return;
-
-  taskRunsBySession.delete(sessionId);
-  try {
-    const output = isSuccess
-      ? String(ev.result ?? "").trim() || null
-      : null;
-    const error = isFailure
-      ? String(ev.error?.message ?? ev.result ?? "Task execution failed").trim() || "Task execution failed"
-      : null;
-    const { task } = taskRepository.finalizeRun(taskRun.runId, {
-      success: isSuccess,
-      output,
-      error,
-    });
-    notifyTasksChanged(task.stagePath, task.id);
-  } catch (err) {
-    console.warn("Failed to finalize execute task run from result event:", err);
-  }
-}
-
-function extractTaskRunOutput(event: unknown): string {
-  if (!event || typeof event !== "object") return "";
-
-  const ev = event as Record<string, any>;
-  if (ev.type === "assistant") {
-    const blocks = ev?.message?.content;
-    if (!Array.isArray(blocks)) return "";
-    const text = blocks
-      .filter((block) => block && typeof block === "object" && block.type === "text")
-      .map((block) => String(block.text ?? ""))
-      .join("\n")
-      .trim();
-    return text ? `${text}\n` : "";
-  }
-
-  if (ev.type === "result") {
-    const result = String(ev.result ?? "").trim();
-    return result ? `${result}\n` : "";
-  }
-
-  if (ev.type === "error") {
-    const message = String(ev.error?.message ?? "Unknown error").trim();
-    return message ? `[error]\n${message}\n` : "";
-  }
-
-  return "";
-}
-
 // ── Window ───────────────────────────────────────────────────────
 
 ApplicationMenu.setApplicationMenu([
@@ -2502,7 +1759,6 @@ mainWindow.on("close", () => {
   watcher.stop();
   approvals.stop();
   connectors.close();
-  taskRepository.close();
   Utils.quit();
 });
 
@@ -2511,6 +1767,7 @@ mainWindow.on("close", () => {
 approvals.onApprovalRequest((req) => {
   console.log(`Tool approval requested: ${req.toolName} (${req.toolUseId})`);
   mainRPC?.send.toolApproval(req);
+  instrumentRuntime.emitHostEvent("tool.approval", req);
 });
 
 // ── Start ────────────────────────────────────────────────────────

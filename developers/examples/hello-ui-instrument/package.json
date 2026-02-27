@@ -1,12 +1,19 @@
 {
-  "name": "@example/tango-instrument-hello",
+  "name": "@example/tango-instrument-hello-ui",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "main": "dist/index.js",
+  "scripts": {
+    "build": "bun build src/index.ts --outfile dist/index.js --format esm --target browser"
+  },
+  "dependencies": {
+    "@tango/instrument-ui": "file:../../../desktop/instruments/ui"
+  },
   "tango": {
     "instrument": {
-      "id": "hello",
-      "name": "Hello",
+      "id": "hello-ui",
+      "name": "Hello UI",
       "group": "Examples",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
@@ -14,8 +21,9 @@
       "launcher": {
         "sidebarShortcut": {
           "enabled": true,
-          "label": "Hello",
-          "order": 40
+          "label": "Hello UI",
+          "icon": "plugins",
+          "order": 50
         }
       },
       "panels": {

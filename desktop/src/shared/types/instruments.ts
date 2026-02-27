@@ -15,6 +15,15 @@ export type InstrumentPanelConfig = {
   right: boolean;
 };
 
+export type InstrumentLauncherConfig = {
+  sidebarShortcut?: {
+    enabled: boolean;
+    label?: string;
+    icon?: string;
+    order?: number;
+  };
+};
+
 export type InstrumentManifest = {
   id: string;
   name: string;
@@ -24,6 +33,7 @@ export type InstrumentManifest = {
   hostApiVersion: string;
   panels: InstrumentPanelConfig;
   permissions: InstrumentPermission[];
+  launcher?: InstrumentLauncherConfig;
 };
 
 export type InstrumentStatus =
@@ -46,6 +56,7 @@ export type InstrumentRegistryEntry = {
   hostApiVersion: string;
   panels: InstrumentPanelConfig;
   permissions: InstrumentPermission[];
+  launcher?: InstrumentLauncherConfig;
   enabled: boolean;
   status: InstrumentStatus;
   version: string;

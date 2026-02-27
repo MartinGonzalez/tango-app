@@ -39,6 +39,7 @@ export class InstrumentRegistry {
           status: normalizeStatus(entry.status),
           lastError: entry.lastError ?? null,
           permissions: Array.isArray(entry.permissions) ? entry.permissions : [],
+          launcher: normalizeLauncher(entry.launcher),
           panels: entry.panels ?? {
             sidebar: true,
             first: false,
@@ -111,4 +112,20 @@ function normalizeStatus(
     return value;
   }
   return "active";
+}
+
+function normalizeLauncher(
+  launcher: InstrumentRegistryEntry["launcher"] | null | undefined
+): InstrumentRegistryEntry["launcher"] | undefined {
+  if (!launcher || typeof launcher !== "object") return undefined;
+  const raw = launcher.sidebarShortcut;
+  if (!raw || typeof raw !== "object") return undefined;
+  return {
+    sidebarShortcut: {
+      enabled: Boolean(raw.enabled),
+      ...(raw.label ? { label: String(raw.label).trim() } : {}),
+      ...(raw.icon ? { icon: String(raw.icon).trim() } : {}),
+      ...(Number.isFinite(Number(raw.order)) ? { order: Number(raw.order) } : {}),
+    },
+  };
 }

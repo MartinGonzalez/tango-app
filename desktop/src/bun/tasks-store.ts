@@ -14,7 +14,7 @@ import type {
   TaskSourceKind,
 } from "../shared/types.ts";
 
-const DEFAULT_DB_PATH = join(homedir(), ".tango", "tasks.db");
+const DEFAULT_DB_PATH = join(homedir(), ".tango", "instruments", "tasks", "db", "tasks.db");
 const CURRENT_SCHEMA_VERSION = 2;
 
 type TaskUpdateFields = {

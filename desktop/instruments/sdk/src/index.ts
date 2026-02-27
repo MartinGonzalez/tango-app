@@ -5,6 +5,8 @@ export type {
   SessionsAPI,
   ConnectorsAPI,
   StageAPI,
+  HostEventMap,
+  HostEventsAPI,
   ShortcutRegistration,
   InstrumentContext,
   InstrumentFrontendModule,

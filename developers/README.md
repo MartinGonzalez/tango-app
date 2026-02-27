@@ -23,7 +23,9 @@ http://localhost:4173
 - Frontend/backend lifecycle contracts
 - SDK API overview
 - Local path installation flow
-- Minimal runnable example (`developers/examples/hello-instrument`) with hot-mount + backend ping
-- Tasks pilot notes
+- Minimal runnable examples:
+  - `developers/examples/hello-instrument` (runtime minimum)
+  - `developers/examples/hello-ui-instrument` (`@tango/instrument-ui` primitives)
+- Tasks pilot notes (fully decoupled runtime instrument)
 
 Publishing/marketplace flow is intentionally not covered in this phase.
