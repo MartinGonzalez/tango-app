@@ -287,10 +287,17 @@ export function UITabs(props: {
     content: React.ReactNode;
   }>;
   initialValue?: string;
+  onChange?: (value: string) => void;
 }): JSX.Element {
   const initial = props.initialValue ?? props.tabs[0]?.value ?? "";
   const [value, setValue] = useState(initial);
   const selected = props.tabs.find((tab) => tab.value === value) ?? props.tabs[0] ?? null;
+
+  const selectTab = (next: string) => {
+    setValue(next);
+    props.onChange?.(next);
+  };
+
   return (
     <div className="tui-tabs">
       <div className="tui-tabs-list">
@@ -299,7 +306,7 @@ export function UITabs(props: {
             key={tab.value}
             type="button"
             className={`tui-tabs-trigger${tab.value === value ? " is-active" : ""}`}
-            onClick={() => setValue(tab.value)}
+            onClick={() => selectTab(tab.value)}
           >
             {tab.label}
           </button>
