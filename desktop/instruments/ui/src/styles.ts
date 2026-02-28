@@ -218,6 +218,210 @@ export const UI_STYLES = `
   color: var(--tui-text-secondary);
 }
 
+.tui-root .tui-group {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  margin-bottom: 6px;
+  overflow: visible;
+  transition: border-color 100ms ease, background 100ms ease;
+}
+
+.tui-root .tui-group-expanded {
+  border-color: var(--tui-border);
+  background: var(--tui-bg-card);
+}
+
+.tui-root .tui-group-expanded:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.tui-root .tui-group-active .tui-group-header {
+  background: rgba(217, 119, 87, 0.06);
+}
+
+.tui-root .tui-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--tui-border);
+  border-radius: 8px 8px 0 0;
+  padding: 8px 10px;
+}
+
+.tui-root .tui-group-header-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.tui-root .tui-group-header:hover {
+  background: var(--tui-bg-hover);
+}
+
+.tui-root .tui-group-header:focus-visible {
+  outline: 1px solid var(--tui-primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.tui-root .tui-group-header-collapsed {
+  border-bottom: 0;
+  border-radius: 8px;
+}
+
+.tui-root .tui-group-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tui-root .tui-group-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tui-root .tui-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tui-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tui-root .tui-group-subtitle {
+  font-size: 11px;
+  color: var(--tui-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tui-root .tui-group-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tui-root .tui-group-caret {
+  color: var(--tui-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.tui-root .tui-group-caret-expanded {
+  transform: rotate(0deg);
+}
+
+.tui-root .tui-collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms ease-out;
+}
+
+.tui-root .tui-collapsible.is-collapsed {
+  grid-template-rows: 0fr;
+}
+
+.tui-root .tui-collapsible-inner {
+  overflow: hidden;
+}
+
+.tui-root .tui-group-list {
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tui-root .tui-group-empty {
+  font-size: 11px;
+  color: var(--tui-text-secondary);
+  padding: 8px 12px;
+}
+
+.tui-root .tui-group-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: var(--tui-text-secondary);
+  padding: 6px 12px;
+  text-align: left;
+  transition: all 100ms ease;
+}
+
+.tui-root button.tui-group-item {
+  cursor: pointer;
+}
+
+.tui-root .tui-group-item:hover {
+  background: var(--tui-bg-hover);
+}
+
+.tui-root .tui-group-item:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tui-root .tui-group-item-active {
+  color: var(--tui-text);
+  background: rgba(217, 119, 87, 0.10);
+}
+
+.tui-root .tui-group-item-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tui-primary);
+  border-radius: 0 2px 2px 0;
+}
+
+.tui-root .tui-group-item-active:hover {
+  background: rgba(217, 119, 87, 0.14);
+}
+
+.tui-root .tui-group-item-main {
+  min-width: 0;
+}
+
+.tui-root .tui-group-item-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tui-root .tui-group-item-subtitle {
+  display: block;
+  font-size: 10px;
+  color: var(--tui-text-secondary);
+  margin-top: 4px;
+}
+
+.tui-root .tui-group-item-meta {
+  font-size: 10px;
+  color: var(--tui-text-secondary);
+  flex-shrink: 0;
+}
+
 .tui-root .tui-list {
   display: flex;
   flex-direction: column;

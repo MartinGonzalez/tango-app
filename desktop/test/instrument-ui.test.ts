@@ -8,6 +8,10 @@ import {
   button,
   createRoot,
   ensureInstrumentUI,
+  group,
+  groupEmpty,
+  groupItem,
+  groupList,
   listItem,
   select,
 } from "../instruments/ui/src/index.ts";
@@ -102,6 +106,65 @@ describe("instrument-ui", () => {
     }
     const node = badge({ label: "ok", tone: "success" });
     expect(node.className).toContain("tui-badge-success");
+  });
+
+  test("group supports expanded and toggle state", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let nextExpanded: boolean | null = null;
+    const node = group({
+      title: "Stage",
+      expanded: false,
+      onToggle: (next) => {
+        nextExpanded = next;
+      },
+      content: groupList({ items: [groupItem({ title: "Task A" })] }),
+    });
+
+    expect(node.className).toContain("tui-group");
+    expect(node.className).not.toContain("tui-group-expanded");
+    const header = node.querySelector(".tui-group-header") as HTMLElement;
+    header.click();
+    expect(nextExpanded).toBe(true);
+  });
+
+  test("group action clicks do not trigger toggle", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let toggled = 0;
+    const action = button({ label: "New" });
+    const node = group({
+      title: "Stage",
+      expanded: true,
+      onToggle: () => {
+        toggled += 1;
+      },
+      actions: [action],
+      content: groupEmpty({ text: "No items" }),
+    });
+
+    const actionButton = node.querySelector(".tui-group-actions button") as HTMLButtonElement;
+    actionButton.click();
+    expect(toggled).toBe(0);
+  });
+
+  test("groupItem active state applies active class", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const activeNode = groupItem({
+      title: "Task",
+      active: true,
+    });
+    expect(activeNode.className).toContain("tui-group-item-active");
   });
 
   test("styles stay scoped to tui selectors", () => {

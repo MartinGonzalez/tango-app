@@ -2,7 +2,14 @@
   "name": "@tango/instrument-tasks",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "main": "dist/index.js",
+  "scripts": {
+    "build:frontend": "bun build src/index.ts --outfile dist/index.js --format esm --target browser"
+  },
+  "dependencies": {
+    "@tango/instrument-ui": "file:../ui"
+  },
   "tango": {
     "instrument": {
       "id": "tasks",

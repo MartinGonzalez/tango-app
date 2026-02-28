@@ -3,12 +3,27 @@ import { UI_STYLE_ID, UI_STYLES } from "./styles.ts";
 
 export type UIButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type UIButtonSize = "sm" | "md";
+export type UIGroupTitle = string | HTMLElement;
+export type UIGroupSubtitle = string | HTMLElement;
+export type UIGroupItemMeta = string | HTMLElement;
 
 type BadgeTone = "neutral" | "info" | "success" | "warning" | "danger";
 
 function normalizeContent(content?: HTMLElement | HTMLElement[]): HTMLElement[] {
   if (!content) return [];
   return Array.isArray(content) ? content : [content];
+}
+
+function normalizeNodeText(
+  value: string | HTMLElement | undefined,
+  className: string
+): HTMLElement | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    return el("span", { className, text: value });
+  }
+  value.classList.add(className);
+  return value;
 }
 
 export function ensureInstrumentUI(doc: Document = document): void {
@@ -185,6 +200,139 @@ export function emptyState(opts: {
     content.push(el("div", { className: "tui-row" }, [opts.action]));
   }
   return el("div", { className: "tui-empty" }, content);
+}
+
+export function group(opts: {
+  title: UIGroupTitle;
+  subtitle?: UIGroupSubtitle;
+  expanded?: boolean;
+  active?: boolean;
+  animate?: boolean;
+  meta?: HTMLElement[];
+  actions?: HTMLElement[];
+  content?: HTMLElement | HTMLElement[];
+  onToggle?: (nextExpanded: boolean) => void;
+}): HTMLElement {
+  const expanded = opts.expanded ?? true;
+  const hasToggle = typeof opts.onToggle === "function";
+  const titleNode = normalizeNodeText(opts.title, "tui-group-title");
+  const subtitleNode = normalizeNodeText(opts.subtitle, "tui-group-subtitle");
+  const metaNodes = opts.meta ?? [];
+  const actionNodes = opts.actions ?? [];
+
+  const titleRow = el("div", { className: "tui-group-title-row" }, [
+    titleNode,
+    ...metaNodes,
+  ]);
+
+  const meta = el("div", { className: "tui-group-meta" }, [
+    titleRow,
+    subtitleNode,
+  ]);
+
+  const caret = hasToggle
+    ? el("span", {
+      className: `tui-group-caret${expanded ? " tui-group-caret-expanded" : ""}`,
+      "aria-hidden": "true",
+      text: "▾",
+    })
+    : null;
+
+  const actions = el("div", {
+    className: "tui-group-actions",
+    onClick: (event: Event) => event.stopPropagation(),
+  }, [
+    ...actionNodes,
+    caret,
+  ]);
+
+  const onToggle = () => {
+    if (!opts.onToggle) return;
+    opts.onToggle(!expanded);
+  };
+
+  const headerAttrs: Record<string, unknown> = {
+    className: `tui-group-header${expanded ? "" : " tui-group-header-collapsed"}${hasToggle ? " tui-group-header-clickable" : ""}`,
+  };
+
+  if (hasToggle) {
+    headerAttrs.role = "button";
+    headerAttrs.tabIndex = 0;
+    headerAttrs.onClick = onToggle;
+    headerAttrs.onKeydown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onToggle();
+    };
+  }
+
+  const header = el("div", headerAttrs, [meta, actions]);
+  const initialCollapsed = opts.animate ? expanded : !expanded;
+  const collapsible = el("div", {
+    className: `tui-collapsible${initialCollapsed ? " is-collapsed" : ""}`,
+  }, [
+    el("div", { className: "tui-collapsible-inner" }, [
+      el("div", { className: "tui-group-body" }, normalizeContent(opts.content)),
+    ]),
+  ]);
+
+  if (opts.animate) {
+    requestAnimationFrame(() => {
+      collapsible.offsetHeight;
+      requestAnimationFrame(() => {
+        collapsible.classList.toggle("is-collapsed", !expanded);
+      });
+    });
+  }
+
+  return el("div", {
+    className: `tui-group${expanded ? " tui-group-expanded" : ""}${opts.active ? " tui-group-active" : ""}`,
+  }, [header, collapsible]);
+}
+
+export function groupList(opts: { items: HTMLElement[] }): HTMLElement {
+  return el("div", { className: "tui-group-list" }, opts.items);
+}
+
+export function groupEmpty(opts: { text: string }): HTMLElement {
+  return el("div", { className: "tui-group-empty", text: opts.text });
+}
+
+export function groupItem(opts: {
+  title: string;
+  subtitle?: string;
+  meta?: UIGroupItemMeta;
+  active?: boolean;
+  onClick?: () => void;
+}): HTMLElement {
+  const main = el("div", { className: "tui-group-item-main" }, [
+    el("span", { className: "tui-group-item-title", text: opts.title }),
+    opts.subtitle
+      ? el("span", { className: "tui-group-item-subtitle", text: opts.subtitle })
+      : null,
+  ]);
+
+  let metaNode: HTMLElement | null = null;
+  if (opts.meta) {
+    if (typeof opts.meta === "string") {
+      metaNode = el("span", { className: "tui-group-item-meta", text: opts.meta });
+    } else {
+      opts.meta.classList.add("tui-group-item-meta");
+      metaNode = opts.meta;
+    }
+  }
+
+  const children = metaNode ? [main, metaNode] : [main];
+  const className = `tui-group-item${opts.active ? " tui-group-item-active" : ""}`;
+  if (opts.onClick) {
+    return el("button", {
+      className,
+      type: "button",
+      onClick: opts.onClick,
+    }, children);
+  }
+
+  return el("div", { className }, children);
 }
 
 export function list(opts: { items: HTMLElement[] }): HTMLElement {
