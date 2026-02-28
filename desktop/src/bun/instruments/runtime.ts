@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
+  ConnectorCredential,
   ConnectorProvider,
   InstrumentBackendContext,
   InstrumentBackendModule,
@@ -54,6 +55,10 @@ type HostApi = {
   };
   connectors: {
     listStageConnectors: (stagePath: string) => Promise<StageConnector[]>;
+    getCredential: (
+      stagePath: string,
+      provider: ConnectorProvider
+    ) => Promise<ConnectorCredential>;
     connect: (
       stagePath: string,
       provider: ConnectorProvider
@@ -128,6 +133,9 @@ export class InstrumentRuntime {
       },
       connectors: {
         listStageConnectors: async () => [],
+        getCredential: async () => {
+          throw new Error("connectors.getCredential host API is not configured");
+        },
         connect: async () => {
           throw new Error("connectors.connect host API is not configured");
         },
@@ -485,6 +493,10 @@ export class InstrumentRuntime {
           listStageConnectors: async (stagePath) => {
             requirePermission(entry, "connectors.read");
             return this.#hostApi.connectors.listStageConnectors(stagePath);
+          },
+          getCredential: async (stagePath, provider) => {
+            requirePermission(entry, "connectors.credentials.read");
+            return this.#hostApi.connectors.getCredential(stagePath, provider);
           },
           isAuthorized: async (stagePath, provider) => {
             requirePermission(entry, "connectors.read");

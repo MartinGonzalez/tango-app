@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildTaskActionPrompt } from "../src/bun/task-prompts.ts";
-import type { TaskCardDetail } from "../src/shared/types.ts";
+import { buildTaskActionPrompt } from "../src/backend/task-prompts.ts";
+import type { TaskCardDetail } from "../src/backend/types.ts";
 
 const SAMPLE_TASK: TaskCardDetail = {
   id: "task-1",

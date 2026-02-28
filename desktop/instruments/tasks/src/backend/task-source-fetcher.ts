@@ -1,4 +1,4 @@
-import type { TaskSourceFetchStatus, TaskSourceKind } from "../shared/types.ts";
+import type { TaskSourceFetchStatus, TaskSourceKind } from "./types.ts";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_MAX_BYTES = 24 * 1024;

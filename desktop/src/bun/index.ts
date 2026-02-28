@@ -145,6 +145,9 @@ const instrumentRuntime = new InstrumentRuntime({
     },
     connectors: {
       listStageConnectors: async (stagePath) => connectors.listStageConnectors(stagePath),
+      getCredential: async (stagePath, provider) => {
+        return connectors.getConnectorCredential(stagePath, provider);
+      },
       connect: async (stagePath, provider) => connectors.startConnectorAuth(stagePath, provider),
       disconnect: async (stagePath, provider) => {
         await connectors.disconnectStageConnector(stagePath, provider);
@@ -678,6 +681,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         provider: ConnectorProvider;
       }) => {
         await connectors.disconnectStageConnector(stagePath, provider);
+      },
+
+      getConnectorCredential: async ({
+        stagePath,
+        provider,
+      }: {
+        stagePath: string;
+        provider: ConnectorProvider;
+      }) => {
+        return connectors.getConnectorCredential(stagePath, provider);
       },
 
       getAssignedPullRequests: async ({ limit }: { limit?: number }) => {

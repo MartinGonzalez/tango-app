@@ -208,6 +208,59 @@ describe("ConnectorsRepository", () => {
     expect(slack?.lastError).toContain("invalid_auth");
   });
 
+  test("returns Slack connector credential payload via generic API", async () => {
+    const store = new MemoryConnectorsStore();
+    const keychain = new MemoryKeychainStore();
+    const repo = new ConnectorsRepository({
+      store,
+      keychain,
+      oauthServer: fakeOAuthServer(),
+      slackClientId: "test-client-id",
+      slackClientSecret: "test-client-secret",
+      fetchImpl: async () => Response.json({
+        ok: true,
+        authed_user: {
+          access_token: "xoxp-fresh",
+          refresh_token: "xoxe-next",
+          expires_in: 3600,
+          scope: "channels:history",
+          token_type: "user",
+        },
+      }),
+    });
+
+    const futureExpiry = new Date(Date.now() + 3_600_000).toISOString();
+    store.upsertStageConnector({
+      stagePath: "/repo/a",
+      provider: "slack",
+      status: "connected",
+      externalStageId: "T1",
+      externalStageName: "Acme Team",
+      externalUserId: "U1",
+      scopes: ["channels:history"],
+      tokenExpiresAt: futureExpiry,
+      lastError: null,
+      keychainAccount: "stage:test",
+    });
+    await keychain.setSecret(SLACK_KEYCHAIN_SERVICE, "stage:test", JSON.stringify({
+      accessToken: "xoxp-access",
+      refreshToken: "xoxe-refresh",
+      expiresAt: futureExpiry,
+      scope: "channels:history",
+      tokenType: "user",
+      teamId: "T1",
+      teamName: "Acme Team",
+      userId: "U1",
+    }));
+
+    const credential = await repo.getConnectorCredential("/repo/a", "slack");
+    expect(credential.provider).toBe("slack");
+    expect(credential.accessToken).toBe("xoxp-access");
+    expect(credential.scopes).toContain("channels:history");
+    expect(credential.metadata?.teamId).toBe("T1");
+    expect(credential.metadata?.userId).toBe("U1");
+  });
+
   test("starts auth session and completes Jira OAuth callback", async () => {
     const store = new MemoryConnectorsStore();
     const keychain = new MemoryKeychainStore();
@@ -274,6 +327,51 @@ describe("ConnectorsRepository", () => {
       String(stored?.keychainAccount)
     );
     expect(secret).toContain("jira-access");
+  });
+
+  test("returns Jira connector credential payload via generic API", async () => {
+    const store = new MemoryConnectorsStore();
+    const keychain = new MemoryKeychainStore();
+    const repo = new ConnectorsRepository({
+      store,
+      keychain,
+      oauthServer: fakeOAuthServer(),
+      jiraClientId: "jira-client-id",
+      jiraClientSecret: "jira-client-secret",
+      fetchImpl: async () => Response.json({ error: "unexpected" }, { status: 400 }),
+    });
+
+    const futureExpiry = new Date(Date.now() + 3_600_000).toISOString();
+    store.upsertStageConnector({
+      stagePath: "/repo/a",
+      provider: "jira",
+      status: "connected",
+      externalStageId: "cloud-1",
+      externalStageName: "Acme Jira",
+      externalUserId: "user-1",
+      scopes: ["read:jira-work", "read:jira-user"],
+      tokenExpiresAt: futureExpiry,
+      lastError: null,
+      keychainAccount: "stage:test",
+    });
+    await keychain.setSecret(JIRA_KEYCHAIN_SERVICE, "stage:test", JSON.stringify({
+      accessToken: "jira-access",
+      refreshToken: "jira-refresh",
+      expiresAt: futureExpiry,
+      scope: "read:jira-work read:jira-user offline_access",
+      tokenType: "Bearer",
+      cloudId: "cloud-1",
+      cloudName: "Acme Jira",
+      cloudUrl: "https://acme.atlassian.net",
+      userAccountId: "user-1",
+    }));
+
+    const credential = await repo.getConnectorCredential("/repo/a", "jira");
+    expect(credential.provider).toBe("jira");
+    expect(credential.accessToken).toBe("jira-access");
+    expect(credential.scopes).toContain("read:jira-work");
+    expect(credential.metadata?.cloudId).toBe("cloud-1");
+    expect(credential.metadata?.userAccountId).toBe("user-1");
   });
 });
 

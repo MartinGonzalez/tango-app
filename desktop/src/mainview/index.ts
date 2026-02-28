@@ -1912,6 +1912,9 @@ function buildInstrumentContext(entry: InstrumentRegistryEntry): InstrumentConte
       disconnect: async (stagePath, provider) => {
         await (rpc as any).request.disconnectStageConnector({ stagePath, provider });
       },
+      getCredential: async (stagePath, provider) => {
+        return (rpc as any).request.getConnectorCredential({ stagePath, provider });
+      },
     },
     stages: {
       list: async () => {

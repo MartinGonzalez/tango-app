@@ -1,10 +1,14 @@
-import type { TaskSourceFetchStatus } from "../shared/types.ts";
-import type { JiraAuthContext } from "./connectors-repository.ts";
+import type { TaskSourceFetchStatus } from "./types.ts";
 
 const JIRA_API_BASE = "https://api.atlassian.com/ex/jira";
 const DEFAULT_COMMENT_LIMIT = 30;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BYTES = 24 * 1024;
+
+export type JiraAuthContext = {
+  accessToken: string;
+  cloudId: string;
+};
 
 export type JiraSourceFetchOptions = {
   commentLimit?: number;

@@ -4,6 +4,7 @@ export type InstrumentPermission =
   | "storage.properties"
   | "sessions"
   | "connectors.read"
+  | "connectors.credentials.read"
   | "connectors.connect"
   | "stages.read"
   | "stages.observe";

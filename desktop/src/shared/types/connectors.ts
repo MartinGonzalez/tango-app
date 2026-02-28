@@ -31,3 +31,11 @@ export type ConnectorAuthSession = {
   expiresAt: string;
   updatedAt: string;
 };
+
+export type ConnectorCredential = {
+  provider: ConnectorProvider;
+  accessToken: string;
+  expiresAt: string | null;
+  scopes: string[];
+  metadata?: Record<string, string | null>;
+};

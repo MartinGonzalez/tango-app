@@ -12,7 +12,8 @@
     "clean": "bun run kill-app; bun run kill-server; true",
     "kill-app": "pkill -f 'Tango' 2>/dev/null; pkill -f 'electrobun dev' 2>/dev/null; true",
     "kill-server": "lsof -ti:4242 | xargs kill 2>/dev/null; true",
-    "test": "bun test"
+    "test": "bun test",
+    "check:tasks-decoupling": "bun ./scripts/assert-tasks-decoupling.mjs"
   },
   "dependencies": {
     "electrobun": "latest",

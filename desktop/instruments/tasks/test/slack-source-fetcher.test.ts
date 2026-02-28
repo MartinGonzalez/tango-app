@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   fetchSlackSourceFromPermalink,
   parseSlackPermalink,
-} from "../src/bun/slack-source-fetcher.ts";
+} from "../src/backend/slack-source-fetcher.ts";
 
 describe("slack-source-fetcher", () => {
   test("parses Slack permalinks", () => {

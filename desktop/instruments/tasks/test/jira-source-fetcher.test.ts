@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   fetchJiraSourceFromUrl,
   parseJiraIssueKeyFromUrl,
-} from "../src/bun/jira-source-fetcher.ts";
+} from "../src/backend/jira-source-fetcher.ts";
 
 const originalFetch = globalThis.fetch;
 

@@ -1,34 +1,23 @@
 {
-  "name": "@tango/instrument-tasks",
+  "name": "@tango/instrument-tasks-local",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
-  "scripts": {
-    "build:frontend": "bun build src/index.ts --outfile dist/index.js --format esm --target browser",
-    "build:backend": "bun build src/backend.ts --outfile dist/backend.js --format esm --target bun",
-    "build": "bun run build:frontend && bun run build:backend",
-    "check:portable": "bun run build && bun run scripts/verify-portable.mjs",
-    "build:external-local": "bun run build && bun run scripts/build-external-local.mjs",
-    "test": "bun test ./test"
-  },
-  "dependencies": {
-    "@tango/instrument-ui": "file:../ui"
-  },
   "tango": {
     "instrument": {
-      "id": "tasks",
-      "name": "Tasks",
-      "group": "Core",
+      "id": "tasks-local",
+      "name": "Tasks Local",
+      "group": "Local",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
       "hostApiVersion": "1.0.0",
       "launcher": {
         "sidebarShortcut": {
           "enabled": true,
-          "label": "Tasks",
+          "label": "Tasks Local",
           "icon": "task",
-          "order": 20
+          "order": 21
         }
       },
       "panels": {

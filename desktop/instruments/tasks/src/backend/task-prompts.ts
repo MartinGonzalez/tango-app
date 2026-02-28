@@ -1,4 +1,4 @@
-import type { TaskAction, TaskCardDetail, TaskSource } from "../shared/types.ts";
+import type { TaskAction, TaskCardDetail, TaskSource } from "./types.ts";
 
 export function buildTaskActionPrompt(task: TaskCardDetail, action: TaskAction): string {
   if (action === "improve") {
@@ -61,7 +61,7 @@ function renderTaskContext(
   opts: { includePlan: boolean }
 ): string {
   const sections: string[] = [];
-  sections.push(`# Task`);
+  sections.push("# Task");
   sections.push(`Title: ${task.title}`);
   sections.push(`Status: ${task.status}`);
   sections.push("");

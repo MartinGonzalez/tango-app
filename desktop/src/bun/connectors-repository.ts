@@ -10,6 +10,7 @@ import { KeychainStore } from "./keychain-store.ts";
 import type {
   ConnectorAuthSession,
   ConnectorAuthSessionStatus,
+  ConnectorCredential,
   ConnectorProvider,
   StageConnector,
 } from "../shared/types.ts";
@@ -397,6 +398,52 @@ export class ConnectorsRepository {
   async getJiraAccessToken(stagePath: string): Promise<string> {
     const auth = await this.getJiraAuthContext(stagePath);
     return auth.accessToken;
+  }
+
+  async getConnectorCredential(
+    stagePath: string,
+    provider: ConnectorProvider
+  ): Promise<ConnectorCredential> {
+    const normalizedStagePath = normalizeStagePath(stagePath);
+    if (!isConnectorProvider(provider)) {
+      throw new Error(`Unsupported connector provider: ${provider}`);
+    }
+
+    if (provider === SLACK_PROVIDER) {
+      const accessToken = await this.getSlackAccessToken(normalizedStagePath);
+      const record = this.#store.getStageConnectorRecord(normalizedStagePath, SLACK_PROVIDER);
+      if (!record || record.status !== "connected") {
+        throw new Error("Connect Slack in Connectors to fetch this source");
+      }
+      return {
+        provider: "slack",
+        accessToken,
+        expiresAt: record.tokenExpiresAt,
+        scopes: [...record.scopes],
+        metadata: {
+          teamId: record.externalStageId,
+          teamName: record.externalStageName,
+          userId: record.externalUserId,
+        },
+      };
+    }
+
+    const jiraAuth = await this.getJiraAuthContext(normalizedStagePath);
+    const record = this.#store.getStageConnectorRecord(normalizedStagePath, JIRA_PROVIDER);
+    if (!record || record.status !== "connected") {
+      throw new Error("Connect Jira in Connectors to fetch this source");
+    }
+    return {
+      provider: "jira",
+      accessToken: jiraAuth.accessToken,
+      expiresAt: record.tokenExpiresAt,
+      scopes: [...record.scopes],
+      metadata: {
+        cloudId: jiraAuth.cloudId,
+        cloudName: record.externalStageName,
+        userAccountId: record.externalUserId,
+      },
+    };
   }
 
   async handleOAuthCallback(payload: OAuthCallbackPayload): Promise<OAuthCallbackResult> {

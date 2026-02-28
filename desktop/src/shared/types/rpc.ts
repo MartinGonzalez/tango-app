@@ -17,6 +17,7 @@ import type {
   StageConnector,
   ConnectorProvider,
   ConnectorAuthSession,
+  ConnectorCredential,
 } from "./connectors.ts";
 import type {
   PullRequestSummary,
@@ -160,6 +161,13 @@ export type AppRPC = {
           provider: ConnectorProvider;
         };
         response: void;
+      };
+      getConnectorCredential: {
+        params: {
+          stagePath: string;
+          provider: ConnectorProvider;
+        };
+        response: ConnectorCredential;
       };
       getAssignedPullRequests: {
         params: { limit?: number };

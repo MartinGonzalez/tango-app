@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   fetchTaskSourceFromUrl,
   inferSourceKindFromUrl,
-} from "../src/bun/task-source-fetcher.ts";
+} from "../src/backend/task-source-fetcher.ts";
 
 let server: Bun.Server;
 let baseUrl = "";

@@ -1,5 +1,6 @@
 import type {
   ConnectorAuthSession,
+  ConnectorCredential,
   ConnectorProvider,
   StageConnector,
 } from "./connectors.ts";
@@ -79,6 +80,10 @@ export type ConnectorsAPI = {
   isAuthorized: (stagePath: string, provider: ConnectorProvider) => Promise<boolean>;
   connect: (stagePath: string, provider: ConnectorProvider) => Promise<ConnectorAuthSession>;
   disconnect: (stagePath: string, provider: ConnectorProvider) => Promise<void>;
+  getCredential: (
+    stagePath: string,
+    provider: ConnectorProvider
+  ) => Promise<ConnectorCredential>;
 };
 
 export type StageAPI = {
