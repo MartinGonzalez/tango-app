@@ -35,8 +35,8 @@
       },
       "panels": {
         "sidebar": true,
-        "first": false,
-        "second": true,
+        "first": true,
+        "second": false,
         "right": false
       },
       "permissions": [

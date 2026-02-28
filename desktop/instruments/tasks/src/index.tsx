@@ -1077,13 +1077,13 @@ export default defineReactInstrument({
   defaults: {
     visible: {
       sidebar: true,
-      first: false,
-      second: true,
+      first: true,
+      second: false,
       right: false,
     },
   },
   panels: {
     sidebar: TasksSidebarPanel,
-    second: TasksSecondPanel,
+    first: TasksSecondPanel,
   },
 });

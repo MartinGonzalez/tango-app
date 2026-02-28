@@ -1931,7 +1931,13 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
       },
     },
     registerShortcut: () => {},
-    emit: () => {},
+    emit: (event) => {
+      publishFrontendHostEvent("instrument.event", {
+        instrumentId: entry.id,
+        event: event.event,
+        payload: event.payload,
+      });
+    },
   };
 }
 
