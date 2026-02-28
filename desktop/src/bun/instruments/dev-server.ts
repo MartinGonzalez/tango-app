@@ -4,17 +4,60 @@
  * of the instrument in the running app.
  */
 
+import type { InstrumentRegistryEntry } from "../../../shared/types/instruments.ts";
+
 export type DevReloadRequest = {
   instrumentId: string;
   installPath: string;
 };
 
-export type DevReloadHandler = (request: DevReloadRequest) => Promise<{ ok: boolean; message: string }>;
+export type DevReloadResult = {
+  ok: boolean;
+  message: string;
+  entries?: InstrumentRegistryEntry[];
+};
+
+export type DevReloadHandler = (request: DevReloadRequest) => Promise<DevReloadResult>;
 
 let handler: DevReloadHandler | null = null;
 
 export function setDevReloadHandler(h: DevReloadHandler): void {
   handler = h;
+}
+
+/**
+ * Deps for the handler logic, making it testable without Electrobun/runtime.
+ */
+export type DevReloadHandlerDeps = {
+  get: (instrumentId: string) => InstrumentRegistryEntry | null;
+  installFromPath: (path: string) => Promise<InstrumentRegistryEntry>;
+  list: () => InstrumentRegistryEntry[];
+  sendDevReload: (msg: { instrumentId: string; entries?: InstrumentRegistryEntry[] }) => void;
+};
+
+/**
+ * Creates the dev-reload handler logic as a pure function for testability.
+ */
+export function createDevReloadHandler(deps: DevReloadHandlerDeps): DevReloadHandler {
+  return async ({ instrumentId, installPath }) => {
+    // Always re-read manifest via installFromPath so manifest changes
+    // (e.g. panels config) are picked up on every dev-reload.
+    const isReinstall = !!deps.get(instrumentId);
+    const verb = isReinstall ? "Reloaded" : "Auto-installed and reloaded";
+
+    try {
+      const entry = await deps.installFromPath(installPath);
+      entry.devMode = true;
+      const entries = deps.list();
+      deps.sendDevReload({ instrumentId, entries });
+      console.log(`[dev-reload] ${verb} '${instrumentId}' successfully`);
+      return { ok: true, message: `${verb} ${instrumentId}`, entries };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[dev-reload] Install failed for '${instrumentId}': ${message}`);
+      return { ok: false, message };
+    }
+  };
 }
 
 export async function handleDevReload(req: Request): Promise<Response> {
