@@ -1,5 +1,5 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -191,18 +191,38 @@ function resolveBundledInstrumentInstallPaths(): string[] {
       .filter(Boolean)
     : [];
 
-  const bundledNames = ["tasks", "hello-claude"];
-  const candidates = [
-    ...envPaths,
-    ...bundledNames.flatMap((name) => [
-      resolve(moduleDir, `../instruments/${name}`),
-      resolve(moduleDir, `../../instruments/${name}`),
-      resolve(moduleDir, `../../../instruments/${name}`),
-      resolve(cwd, `desktop/instruments/${name}`),
-      resolve(cwd, `instruments/${name}`),
-    ]),
+  // Scan all directories under instruments/ that contain a package.json
+  // with a tango.instrument manifest. No hardcoded instrument names.
+  const instrumentDirs = [
+    resolve(moduleDir, "../instruments"),
+    resolve(moduleDir, "../../instruments"),
+    resolve(moduleDir, "../../../instruments"),
+    resolve(cwd, "desktop/instruments"),
+    resolve(cwd, "instruments"),
   ];
 
+  const discovered: string[] = [];
+  const seen = new Set<string>();
+  for (const dir of instrumentDirs) {
+    if (!existsSync(dir)) continue;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const candidate = resolve(dir, name);
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      if (!isInstrumentDir(candidate)) continue;
+      discovered.push(candidate);
+    }
+  }
+
+  const candidates = [...envPaths, ...discovered];
   const deduped: string[] = [];
   for (const candidate of candidates) {
     if (!candidate || deduped.includes(candidate)) continue;
@@ -210,6 +230,18 @@ function resolveBundledInstrumentInstallPaths(): string[] {
     deduped.push(candidate);
   }
   return deduped;
+}
+
+function isInstrumentDir(dir: string): boolean {
+  const pkgPath = join(dir, "package.json");
+  if (!existsSync(pkgPath)) return false;
+  try {
+    const raw = readFileSync(pkgPath, "utf8");
+    const pkg = JSON.parse(raw);
+    return Boolean(pkg?.tango?.instrument?.id);
+  } catch {
+    return false;
+  }
 }
 
 // ── Auto-start watcher server if needed ──────────────────────────
