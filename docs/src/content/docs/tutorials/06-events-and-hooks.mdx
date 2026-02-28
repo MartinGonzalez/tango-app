@@ -1,0 +1,305 @@
+---
+title: "Tutorial 6: Events & Hooks"
+description: Subscribe to host events and emit custom events between panels.
+---
+
+Tango's event system lets instruments react to changes in the host app — new sessions starting, stream output, stage changes, tool approvals, and more.
+
+## useHostEvent
+
+The primary way to subscribe to events in React:
+
+```tsx
+import { useHostEvent } from "@tango/instrument-sdk/react";
+
+useHostEvent("snapshot.update", (snapshot) => {
+  console.log("Processes:", snapshot.processes.length);
+  console.log("Tasks:", snapshot.tasks.length);
+});
+```
+
+The hook automatically subscribes on mount and unsubscribes on unmount. The `handler` should be wrapped in `useCallback` to avoid unnecessary resubscriptions:
+
+```tsx
+import { useCallback } from "react";
+
+useHostEvent("session.ended", useCallback((payload) => {
+  console.log(`Session ${payload.sessionId} ended with code ${payload.exitCode}`);
+}, []));
+```
+
+## All host events
+
+### `snapshot.update`
+
+Fires periodically with the current state of all Claude processes and tasks.
+
+```tsx
+useHostEvent("snapshot.update", useCallback((snapshot) => {
+  // snapshot.processes — running Claude processes
+  // snapshot.tasks — active tasks
+  // snapshot.subagents — spawned subagents
+  // snapshot.eventCount — total events processed
+}, []));
+```
+
+### `session.stream`
+
+Fires for every stream event from a Claude session. This is the raw output stream.
+
+```tsx
+useHostEvent("session.stream", useCallback((payload) => {
+  const { sessionId, event } = payload;
+  // event is a ClaudeStreamEvent — contains assistant messages, tool calls, etc.
+}, []));
+```
+
+### `session.idResolved`
+
+Fires when a temporary session ID is replaced with the real one (happens right after session spawn).
+
+```tsx
+useHostEvent("session.idResolved", useCallback((payload) => {
+  console.log(`${payload.tempId} → ${payload.realId}`);
+}, []));
+```
+
+### `session.ended`
+
+Fires when a Claude session terminates.
+
+```tsx
+useHostEvent("session.ended", useCallback((payload) => {
+  console.log(`Session ${payload.sessionId} exited with code ${payload.exitCode}`);
+}, []));
+```
+
+### `tool.approval`
+
+Fires when Claude wants to use a tool and is waiting for user approval.
+
+```tsx
+useHostEvent("tool.approval", useCallback((approval) => {
+  // approval: ToolApprovalRequest
+  // Contains tool name, arguments, session info
+}, []));
+```
+
+### `instrument.event`
+
+Fires when any instrument emits a custom event. This is the inter-panel and inter-instrument communication channel.
+
+```tsx
+useHostEvent("instrument.event", useCallback((payload) => {
+  // payload.instrumentId — which instrument emitted this
+  // payload.event — event name (e.g. "item.selected")
+  // payload.payload — arbitrary data
+  if (payload.instrumentId !== api.instrumentId) return;
+  if (payload.event === "item.selected") {
+    // handle it
+  }
+}, [api]));
+```
+
+:::caution
+Always filter by `payload.instrumentId` — you'll receive events from all instruments, not just your own.
+:::
+
+### `stage.added`
+
+Fires when the user opens a new stage (project folder).
+
+```tsx
+useHostEvent("stage.added", useCallback((payload) => {
+  console.log(`New stage: ${payload.path}`);
+}, []));
+```
+
+### `stage.removed`
+
+Fires when a stage is removed.
+
+```tsx
+useHostEvent("stage.removed", useCallback((payload) => {
+  console.log(`Stage removed: ${payload.path}`);
+}, []));
+```
+
+### `connector.auth.changed`
+
+Fires when a connector's authorization state changes.
+
+```tsx
+useHostEvent("connector.auth.changed", useCallback((session) => {
+  // session: ConnectorAuthSession
+}, []));
+```
+
+### `pullRequest.agentReviewChanged`
+
+Fires when an agent-driven PR review changes status.
+
+```tsx
+useHostEvent("pullRequest.agentReviewChanged", useCallback((payload) => {
+  console.log(`PR #${payload.number} review: ${payload.status}`);
+  // status: "running" | "completed" | "failed" | "stale"
+}, []));
+```
+
+## Emitting custom events
+
+Use `api.emit()` to send events that other panels (or other instruments) can receive:
+
+```tsx
+const api = useInstrumentApi();
+
+// Emit a custom event
+api.emit({
+  event: "item.selected",
+  payload: { itemId: "abc-123" },
+});
+```
+
+The event is delivered as an `instrument.event` to all subscribers. The `instrumentId` field is added automatically.
+
+## Backend event emission
+
+Backend actions can also emit events:
+
+```ts
+// In backend.ts
+handler: async (ctx, input) => {
+  // ... do work ...
+  ctx.emit({
+    event: "processing.complete",
+    payload: { resultCount: 42 },
+  });
+  return { success: true };
+},
+```
+
+## Events API (non-React)
+
+If you're not using React, use the events API directly:
+
+```ts
+// Subscribe — returns an unsubscribe function
+const unsubscribe = api.events.subscribe("snapshot.update", (snapshot) => {
+  console.log(snapshot.processes.length, "processes");
+});
+
+// Later: unsubscribe
+unsubscribe();
+```
+
+## Practical example: Live session monitor
+
+Here's a complete instrument that monitors active sessions in real time:
+
+```tsx
+import { useCallback, useState } from "react";
+import { defineReactInstrument, useInstrumentApi, useHostEvent } from "@tango/instrument-sdk/react";
+import {
+  UIRoot, UIPanelHeader, UISection, UICard,
+  UIBadge, UIGroupList, UIGroupItem, UIEmptyState,
+} from "@tango/instrument-ui/react";
+
+type SessionLog = {
+  sessionId: string;
+  status: "active" | "ended";
+  exitCode?: number;
+};
+
+function SidebarPanel() {
+  const api = useInstrumentApi();
+  const [sessions, setSessions] = useState<Map<string, SessionLog>>(new Map());
+
+  // Track session starts from snapshots
+  useHostEvent("snapshot.update", useCallback((snapshot) => {
+    setSessions((prev) => {
+      const next = new Map(prev);
+      for (const task of snapshot.tasks) {
+        if (task.sessionId && !next.has(task.sessionId)) {
+          next.set(task.sessionId, {
+            sessionId: task.sessionId,
+            status: "active",
+          });
+        }
+      }
+      return next;
+    });
+  }, []));
+
+  // Track session ends
+  useHostEvent("session.ended", useCallback((payload) => {
+    setSessions((prev) => {
+      const next = new Map(prev);
+      next.set(payload.sessionId, {
+        sessionId: payload.sessionId,
+        status: "ended",
+        exitCode: payload.exitCode,
+      });
+      return next;
+    });
+  }, []));
+
+  const sessionList = Array.from(sessions.values());
+
+  return (
+    <UIRoot>
+      <UIPanelHeader
+        title="Session Monitor"
+        rightActions={
+          <UIBadge
+            label={`${sessionList.filter((s) => s.status === "active").length} active`}
+            tone="info"
+          />
+        }
+      />
+      <UISection>
+        {sessionList.length === 0 ? (
+          <UIEmptyState title="No sessions" description="Sessions will appear here as they start." />
+        ) : (
+          <UIGroupList>
+            {sessionList.map((session) => (
+              <UIGroupItem
+                key={session.sessionId}
+                title={session.sessionId.slice(0, 8)}
+                subtitle={session.status}
+                meta={
+                  <UIBadge
+                    label={session.status}
+                    tone={session.status === "active" ? "success" : "neutral"}
+                  />
+                }
+              />
+            ))}
+          </UIGroupList>
+        )}
+      </UISection>
+    </UIRoot>
+  );
+}
+
+export default defineReactInstrument({
+  defaults: { visible: { sidebar: true } },
+  panels: { sidebar: SidebarPanel },
+});
+```
+
+## Summary
+
+| Event | Fires when |
+|-------|-----------|
+| `snapshot.update` | Periodically, with all process/task state |
+| `session.stream` | Each stream chunk from a Claude session |
+| `session.idResolved` | Temp ID → real ID mapping is known |
+| `session.ended` | A session terminates |
+| `tool.approval` | Claude requests tool permission |
+| `instrument.event` | Any instrument emits a custom event |
+| `stage.added` | User opens a stage |
+| `stage.removed` | A stage is removed |
+| `connector.auth.changed` | Connector auth state changes |
+| `pullRequest.agentReviewChanged` | PR review status changes |
+
+You've now covered the full instrument development loop: UI, multiple panels, backend logic, storage, and events. Head to the [Reference](/reference/manifest/) section for complete API documentation.

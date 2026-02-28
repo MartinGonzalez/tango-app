@@ -4,6 +4,8 @@
  * responds Allow/Deny in the webview.
  */
 
+import { handleDevReload } from "./instruments/dev-server.ts";
+
 export type ToolApprovalRequest = {
   toolUseId: string;
   toolName: string;
@@ -142,6 +144,10 @@ export class ApprovalServer {
               headers: { "Content-Type": "application/json" },
             });
           }
+        }
+
+        if (req.method === "POST" && url.pathname === "/api/instruments/dev-reload") {
+          return handleDevReload(req);
         }
 
         return new Response("Not found", { status: 404 });

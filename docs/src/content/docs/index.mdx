@@ -1,0 +1,36 @@
+---
+title: Tango Instruments
+description: Build custom panels for the Tango desktop app.
+template: splash
+hero:
+  tagline: Extend Tango with custom instruments — sidebar panels, detail views, backend actions, and more.
+  actions:
+    - text: Get Started
+      link: /getting-started/installation/
+      icon: right-arrow
+      variant: primary
+    - text: Hello World Tutorial
+      link: /tutorials/01-hello-world/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What are Instruments?
+
+Instruments are plugins for the Tango desktop app. Each instrument can render panels in up to four slots (sidebar, first, second, right), run backend logic inside the host process, persist data with built-in storage, and react to host events like session streams and stage changes.
+
+<CardGrid>
+  <Card title="React-first" icon="seti:react">
+    Write panels as React components. The SDK provides hooks for API access, host events, backend actions, and settings.
+  </Card>
+  <Card title="Built-in UI kit" icon="seti:css">
+    Ship with `@tango/instrument-ui` — themed components that match Tango's look and feel out of the box.
+  </Card>
+  <Card title="Backend actions" icon="seti:typescript">
+    Define typed actions that run in the host Bun process. Call them from the frontend with a single hook.
+  </Card>
+  <Card title="Storage" icon="seti:db">
+    Three tiers: key-value properties, file storage, and full SQLite. No server setup required.
+  </Card>
+</CardGrid>

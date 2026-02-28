@@ -1,0 +1,148 @@
+---
+title: Project Structure
+description: What gets generated and what each file does.
+---
+
+After scaffolding, your instrument looks like this:
+
+```
+my-instrument/
+├── package.json          # Manifest + dependencies
+├── tsconfig.json         # TypeScript config
+├── .gitignore
+├── src/
+│   ├── index.tsx         # Frontend entry point
+│   └── backend.ts        # Backend entry point (optional)
+├── dist/                 # Build output (git-ignored)
+│   ├── index.js
+│   └── backend.js
+└── tango-env.d.ts        # Generated types (git-ignored)
+```
+
+## `package.json` — The manifest
+
+The `tango.instrument` field is the manifest that tells Tango how to load your instrument:
+
+```json
+{
+  "name": "tango-instrument-my-instrument",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tango-sdk dev",
+    "build": "tango-sdk build",
+    "sync": "tango-sdk sync",
+    "validate": "tango-sdk validate"
+  },
+  "dependencies": {
+    "@tango/instrument-sdk": "file:../sdk",
+    "@tango/instrument-ui": "file:../ui"
+  },
+  "tango": {
+    "instrument": {
+      "id": "my-instrument",
+      "name": "My Instrument",
+      "group": "Custom",
+      "runtime": "react",
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",
+      "hostApiVersion": "2.0.0",
+      "panels": {
+        "sidebar": true,
+        "first": false,
+        "second": true,
+        "right": false
+      },
+      "permissions": ["storage.properties"]
+    }
+  }
+}
+```
+
+### Required manifest fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique identifier for the instrument |
+| `name` | `string` | Display name shown in Tango UI |
+| `entrypoint` | `string` | Path to the built frontend bundle |
+| `panels` | `object` | Which panel slots are enabled |
+
+### Optional manifest fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `group` | `string` | Category for grouping in the UI |
+| `runtime` | `"react" \| "vanilla"` | Rendering runtime (default: `"react"`) |
+| `backendEntrypoint` | `string` | Path to the built backend bundle |
+| `hostApiVersion` | `string` | SDK version for compatibility |
+| `permissions` | `string[]` | Capabilities the instrument needs |
+| `settings` | `array` | User-configurable settings schema |
+| `launcher` | `object` | Sidebar shortcut configuration |
+
+See the [Manifest Reference](/reference/manifest/) for full details.
+
+## `src/index.tsx` — Frontend entry
+
+This is a React component that Tango renders inside a panel. It must default-export a `TangoInstrumentDefinition` created by `defineReactInstrument`:
+
+```tsx
+import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
+import { UIRoot, UIPanelHeader, UISection, UIEmptyState } from "@tango/instrument-ui/react";
+
+function SidebarPanel() {
+  const api = useInstrumentApi();
+  return (
+    <UIRoot>
+      <UIPanelHeader title="My Instrument" subtitle="sidebar panel" />
+      <UISection>
+        <UIEmptyState title="Welcome" description="Start building" />
+      </UISection>
+    </UIRoot>
+  );
+}
+
+export default defineReactInstrument({
+  defaults: {
+    visible: { sidebar: true, second: true },
+  },
+  panels: {
+    sidebar: SidebarPanel,
+  },
+});
+```
+
+## `src/backend.ts` — Backend entry (optional)
+
+Runs in the host Bun process. Define actions that the frontend can call:
+
+```ts
+import { defineBackend, type InstrumentBackendContext } from "@tango/instrument-sdk";
+
+export default defineBackend({
+  kind: "tango.instrument.backend.v2",
+  actions: {
+    hello: {
+      input: { type: "object", properties: { name: { type: "string" } } },
+      output: { type: "object", properties: { greeting: { type: "string" } }, required: ["greeting"] },
+      handler: async (ctx: InstrumentBackendContext, input?: { name?: string }) => {
+        return { greeting: `Hello, ${input?.name ?? "world"}!` };
+      },
+    },
+  },
+});
+```
+
+## `tango-env.d.ts` — Generated types
+
+Run `bun run sync` to generate this file. It provides type-safe access to your instrument's settings values. This file is regenerated on each sync and should be git-ignored.
+
+## `dist/` — Build output
+
+The `bun run build` command compiles:
+
+- `src/index.tsx` → `dist/index.js` (ESM, browser target)
+- `src/backend.ts` → `dist/backend.js` (ESM, bun target)
+
+Tango loads these files at runtime. You never need to touch `dist/` directly.

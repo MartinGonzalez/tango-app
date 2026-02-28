@@ -1,7 +1,7 @@
 import type {
   InstrumentBackendDefinition,
   TangoInstrumentDefinition,
-} from "../../../src/shared/types/instrument-sdk.ts";
+} from "./types/instrument-sdk.ts";
 
 export function defineInstrument(definition: TangoInstrumentDefinition): TangoInstrumentDefinition {
   return definition;
@@ -24,7 +24,9 @@ export type {
   InstrumentBackendHostAPI,
   InstrumentFrontendAPI,
   InstrumentSettingsAPI,
+  PullRequestAgentReviewStatus,
   SessionsAPI,
+  SessionStartParams,
   ShortcutRegistration,
   StageAPI,
   StorageAPI,
@@ -32,16 +34,18 @@ export type {
   TangoPanelComponent,
   TangoPanelRenderResult,
   TangoPanelSlot,
-} from "../../../src/shared/types/instrument-sdk.ts";
+} from "./types/instrument-sdk.ts";
 
 export type {
   InstrumentEvent,
+  InstrumentInstallSource,
   InstrumentLauncherConfig,
   InstrumentManifest,
   InstrumentPanelConfig,
   InstrumentPermission,
   InstrumentRegistryEntry,
+  InstrumentRegistryFile,
   InstrumentRuntime,
   InstrumentSettingField,
   InstrumentStatus,
-} from "../../../src/shared/types/instruments.ts";
+} from "./types/instruments.ts";

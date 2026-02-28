@@ -1,0 +1,43 @@
+{
+  "name": "@tango/instrument-hello-claude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "bun build src/index.tsx --outfile dist/index.js --format esm --target browser"
+  },
+  "dependencies": {
+    "@tango/instrument-sdk": "file:../sdk",
+    "@tango/instrument-ui": "file:../ui"
+  },
+  "tango": {
+    "instrument": {
+      "id": "hello-claude",
+      "name": "Hello Claude",
+      "group": "Examples",
+      "runtime": "react",
+      "entrypoint": "./dist/index.js",
+      "hostApiVersion": "2.0.0",
+      "launcher": {
+        "sidebarShortcut": {
+          "enabled": true,
+          "label": "Hello",
+          "icon": "chat",
+          "order": 90
+        }
+      },
+      "panels": {
+        "sidebar": true,
+        "first": false,
+        "second": false,
+        "right": false
+      },
+      "permissions": [
+        "storage.properties",
+        "sessions",
+        "stages.read"
+      ]
+    }
+  }
+}

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build:frontend": "bun build src/index.ts --outfile dist/index.js --format esm --target browser",
+    "build:frontend": "bun build src/index.tsx --outfile dist/index.js --format esm --target browser",
     "build:backend": "bun build src/backend.ts --outfile dist/backend.js --format esm --target bun",
     "build": "bun run build:frontend && bun run build:backend",
     "check:portable": "bun run build && bun run scripts/verify-portable.mjs",
@@ -21,7 +21,7 @@
       "id": "tasks",
       "name": "Tasks",
       "group": "Core",
-      "runtime": "vanilla",
+      "runtime": "react",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
       "hostApiVersion": "2.0.0",

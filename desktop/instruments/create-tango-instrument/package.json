@@ -1,0 +1,12 @@
+{
+  "name": "create-tango-instrument",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "create-tango-instrument": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts"
+  }
+}

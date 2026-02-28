@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { InstrumentSettingField } from "../../../../src/shared/types/instruments.ts";
+import type { InstrumentSettingField } from "../types/instruments.ts";
 
 type PackageJsonLike = {
   tango?: {

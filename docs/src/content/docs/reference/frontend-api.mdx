@@ -1,0 +1,275 @@
+---
+title: Frontend API Reference
+description: Complete InstrumentFrontendAPI type documentation.
+---
+
+The `InstrumentFrontendAPI` is the main object available in every panel. Access it via `useInstrumentApi()` in React or from the `props.api` argument in vanilla panels.
+
+## InstrumentFrontendAPI
+
+```ts
+type InstrumentFrontendAPI = {
+  instrumentId: string;
+  permissions: InstrumentPermission[];
+  storage: StorageAPI;
+  sessions: SessionsAPI;
+  connectors: ConnectorsAPI;
+  stages: StageAPI;
+  events: HostEventsAPI;
+  actions: InstrumentActionsAPI;
+  settings: InstrumentSettingsAPI;
+  registerShortcut: (shortcut: ShortcutRegistration) => void;
+  emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
+};
+```
+
+---
+
+## `instrumentId`
+
+- **Type**: `string`
+- The unique ID from your manifest. Use this to filter `instrument.event` payloads.
+
+## `permissions`
+
+- **Type**: `InstrumentPermission[]`
+- The permissions granted to this instrument.
+
+---
+
+## `storage: StorageAPI`
+
+Scoped storage for the instrument. See [Storage tutorial](/tutorials/05-storage/) for usage patterns.
+
+```ts
+type StorageAPI = {
+  getProperty: <T = unknown>(key: string) => Promise<T | null>;
+  setProperty: (key: string, value: unknown) => Promise<void>;
+  deleteProperty: (key: string) => Promise<void>;
+  readFile: (path: string, encoding?: "utf8" | "base64") => Promise<string>;
+  writeFile: (path: string, content: string, encoding?: "utf8" | "base64") => Promise<void>;
+  deleteFile: (path: string) => Promise<void>;
+  listFiles: (dir?: string) => Promise<string[]>;
+  sqlQuery: <T extends Record<string, unknown> = Record<string, unknown>>(
+    sql: string, params?: unknown[], db?: string
+  ) => Promise<T[]>;
+  sqlExecute: (
+    sql: string, params?: unknown[], db?: string
+  ) => Promise<{ changes: number; lastInsertRowid: number | null }>;
+};
+```
+
+### `getProperty<T>(key)`
+
+Returns the stored value or `null` if not found. Permission: `storage.properties`.
+
+### `setProperty(key, value)`
+
+Stores a JSON-serializable value. Permission: `storage.properties`.
+
+### `deleteProperty(key)`
+
+Removes a stored property. Permission: `storage.properties`.
+
+### `readFile(path, encoding?)`
+
+Reads a file as `utf8` (default) or `base64`. Permission: `storage.files`.
+
+### `writeFile(path, content, encoding?)`
+
+Writes a file. Creates parent directories automatically. Permission: `storage.files`.
+
+### `deleteFile(path)`
+
+Deletes a file. Permission: `storage.files`.
+
+### `listFiles(dir?)`
+
+Lists all files, optionally filtered by directory prefix. Permission: `storage.files`.
+
+### `sqlQuery<T>(sql, params?, db?)`
+
+Executes a SELECT query. Returns an array of row objects. Permission: `storage.db`.
+
+### `sqlExecute(sql, params?, db?)`
+
+Executes a write query (INSERT, UPDATE, DELETE, CREATE TABLE). Returns `{ changes, lastInsertRowid }`. Permission: `storage.db`.
+
+---
+
+## `sessions: SessionsAPI`
+
+Start and manage Claude sessions. Permission: `sessions`.
+
+```ts
+type SessionsAPI = {
+  start: (params: SessionStartParams) => Promise<{ sessionId: string }>;
+  sendFollowUp: (params: {
+    sessionId: string;
+    text: string;
+    fullAccess?: boolean;
+    selectedFiles?: string[];
+  }) => Promise<void>;
+  kill: (sessionId: string) => Promise<void>;
+  list: () => Promise<SessionInfo[]>;
+  focus: (params: { sessionId: string; cwd?: string | null }) => Promise<void>;
+};
+```
+
+### `start(params)`
+
+Spawns a new Claude session.
+
+```ts
+type SessionStartParams = {
+  prompt: string;             // Initial prompt
+  cwd: string;                // Working directory
+  fullAccess?: boolean;       // Bypass tool permissions
+  sessionId?: string;         // Resume existing session
+  selectedFiles?: string[];   // Files to include as context
+  model?: string;             // Model override
+  tools?: string[];           // Allowed tools
+};
+```
+
+### `sendFollowUp(params)`
+
+Sends a follow-up message to a running session.
+
+### `kill(sessionId)`
+
+Terminates a running session.
+
+### `list()`
+
+Returns all known sessions.
+
+### `focus(params)`
+
+Brings a session into focus in the Tango UI.
+
+---
+
+## `connectors: ConnectorsAPI`
+
+Manage external service connections (GitHub, Jira, etc.).
+
+```ts
+type ConnectorsAPI = {
+  listStageConnectors: (stagePath: string) => Promise<StageConnector[]>;
+  isAuthorized: (stagePath: string, provider: ConnectorProvider) => Promise<boolean>;
+  connect: (stagePath: string, provider: ConnectorProvider) => Promise<ConnectorAuthSession>;
+  disconnect: (stagePath: string, provider: ConnectorProvider) => Promise<void>;
+  getCredential: (stagePath: string, provider: ConnectorProvider) => Promise<ConnectorCredential>;
+};
+```
+
+Requires appropriate `connectors.*` permissions.
+
+---
+
+## `stages: StageAPI`
+
+Read the list of open stages (project folders). Permission: `stages.read`.
+
+```ts
+type StageAPI = {
+  list: () => Promise<string[]>;
+  active: () => Promise<string | null>;
+};
+```
+
+### `list()`
+
+Returns all open stage paths.
+
+### `active()`
+
+Returns the currently active stage path, or `null`.
+
+---
+
+## `events: HostEventsAPI`
+
+Subscribe to host events. No permission required.
+
+```ts
+type HostEventsAPI = {
+  subscribe<E extends keyof HostEventMap>(
+    event: E,
+    handler: (payload: HostEventMap[E]) => void | Promise<void>
+  ): () => void;
+};
+```
+
+Returns an unsubscribe function. In React, prefer `useHostEvent` which handles cleanup automatically.
+
+---
+
+## `actions: InstrumentActionsAPI`
+
+Call backend actions. No permission required (the backend checks permissions via `ctx.permissions`).
+
+```ts
+type InstrumentActionsAPI = {
+  call: <TInput = Record<string, unknown>, TOutput = unknown>(
+    action: string,
+    input?: TInput
+  ) => Promise<TOutput>;
+};
+```
+
+---
+
+## `settings: InstrumentSettingsAPI`
+
+Read and write instrument settings.
+
+```ts
+type InstrumentSettingsAPI = {
+  getSchema: () => Promise<InstrumentSettingField[]>;
+  getValues: <T extends Record<string, unknown> = Record<string, unknown>>() => Promise<T>;
+  setValue: (key: string, value: unknown) => Promise<Record<string, unknown>>;
+};
+```
+
+### `getSchema()`
+
+Returns the settings schema from the manifest.
+
+### `getValues<T>()`
+
+Returns all current setting values as a typed object.
+
+### `setValue(key, value)`
+
+Updates a single setting and returns all settings.
+
+---
+
+## `registerShortcut(shortcut)`
+
+Registers a keyboard shortcut for this instrument.
+
+```ts
+type ShortcutRegistration = {
+  key: string;              // Key combo (e.g. "Cmd+Shift+T")
+  description?: string;     // Shown in shortcuts panel
+  action: () => void | Promise<void>;
+};
+```
+
+---
+
+## `emit(event)`
+
+Emits a custom event. The `instrumentId` is added automatically.
+
+```ts
+api.emit({
+  event: "item.selected",     // Event name
+  payload: { itemId: "123" }, // Arbitrary data (optional)
+});
+```
+
+Received by all `instrument.event` subscribers across all panels and instruments.

@@ -1,0 +1,236 @@
+---
+title: "Tutorial 5: Storage"
+description: Persist data with key-value properties, files, and SQLite.
+---
+
+The SDK provides three storage tiers. Each is available on both the frontend (`api.storage`) and the backend (`ctx.host.storage`). All data is scoped per-instrument — instruments cannot access each other's storage.
+
+## Tier 1: Key-value properties
+
+The simplest option. Store and retrieve JSON-serializable values by key.
+
+**Permission required**: `storage.properties`
+
+```tsx
+// Write
+await api.storage.setProperty("lastOpenedTab", "settings");
+await api.storage.setProperty("counter", 42);
+await api.storage.setProperty("config", { theme: "dark", fontSize: 14 });
+
+// Read
+const tab = await api.storage.getProperty<string>("lastOpenedTab");       // "settings"
+const count = await api.storage.getProperty<number>("counter");           // 42
+const config = await api.storage.getProperty<{ theme: string }>("config"); // { theme: "dark", ... }
+
+// Delete
+await api.storage.deleteProperty("counter");
+
+// Returns null for missing keys
+const missing = await api.storage.getProperty("nonexistent"); // null
+```
+
+### When to use properties
+
+- UI state that should survive reloads (selected tab, scroll position, collapsed sections)
+- Small configuration values
+- Cross-panel state synchronization (as seen in [Tutorial 3](/tutorials/03-multiple-panels/))
+
+## Tier 2: File storage
+
+Read and write files in a sandboxed directory. Useful for larger blobs, exports, or imported data.
+
+**Permission required**: `storage.files`
+
+```tsx
+// Write a text file
+await api.storage.writeFile("notes/meeting.md", "# Meeting Notes\n\n- Item 1\n- Item 2");
+
+// Read it back
+const content = await api.storage.readFile("notes/meeting.md"); // string
+
+// Write binary data (base64)
+await api.storage.writeFile("images/logo.png", base64String, "base64");
+
+// Read binary data
+const b64 = await api.storage.readFile("images/logo.png", "base64");
+
+// List files in a directory
+const files = await api.storage.listFiles("notes/"); // ["notes/meeting.md"]
+
+// List all files
+const allFiles = await api.storage.listFiles(); // ["notes/meeting.md", "images/logo.png"]
+
+// Delete a file
+await api.storage.deleteFile("notes/meeting.md");
+```
+
+### When to use files
+
+- Markdown documents, JSON exports, CSV data
+- Binary content (images, PDFs)
+- Anything too large for a property value
+- Data you want to organize in a directory structure
+
+## Tier 3: SQLite
+
+Full relational database. Each instrument gets its own SQLite database (or multiple named databases).
+
+**Permission required**: `storage.db`
+
+### Create tables
+
+```tsx
+await api.storage.sqlExecute(`
+  CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT DEFAULT 'todo',
+    created_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+```
+
+### Insert data
+
+```tsx
+await api.storage.sqlExecute(
+  "INSERT INTO tasks (id, title, status) VALUES (?, ?, ?)",
+  ["task-1", "Build docs", "in_progress"]
+);
+```
+
+### Query data
+
+```tsx
+type Task = { id: string; title: string; status: string; created_at: string };
+
+const tasks = await api.storage.sqlQuery<Task>(
+  "SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC",
+  ["todo"]
+);
+// tasks: Task[]
+```
+
+### Update and delete
+
+```tsx
+const result = await api.storage.sqlExecute(
+  "UPDATE tasks SET status = ? WHERE id = ?",
+  ["done", "task-1"]
+);
+// result: { changes: 1, lastInsertRowid: null }
+
+await api.storage.sqlExecute("DELETE FROM tasks WHERE id = ?", ["task-1"]);
+```
+
+### Multiple databases
+
+Pass a database name as the third argument:
+
+```tsx
+// Uses a separate "analytics" database
+await api.storage.sqlExecute(
+  "CREATE TABLE IF NOT EXISTS events (id TEXT, type TEXT, timestamp TEXT)",
+  [],
+  "analytics"
+);
+
+await api.storage.sqlQuery("SELECT * FROM events", [], "analytics");
+```
+
+### When to use SQLite
+
+- Structured data with relationships
+- Data you need to query/filter/sort
+- Large datasets (thousands of records)
+- When you need transactions or constraints
+
+## Complete example
+
+Here's a sidebar that uses all three tiers:
+
+```tsx
+import { useEffect, useState } from "react";
+import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
+import {
+  UIRoot, UIPanelHeader, UISection, UICard,
+  UIButton, UIInput, UIBadge,
+} from "@tango/instrument-ui/react";
+
+type Note = { id: string; title: string; created_at: string };
+
+function SidebarPanel() {
+  const api = useInstrumentApi();
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [title, setTitle] = useState("");
+  const [viewCount, setViewCount] = useState(0);
+
+  useEffect(() => {
+    // Initialize SQLite table
+    api.storage.sqlExecute(`
+      CREATE TABLE IF NOT EXISTS notes (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).then(() => loadNotes());
+
+    // Track page views with properties
+    api.storage.getProperty<number>("viewCount").then((count) => {
+      const next = (count ?? 0) + 1;
+      setViewCount(next);
+      api.storage.setProperty("viewCount", next);
+    });
+  }, [api]);
+
+  const loadNotes = async () => {
+    const rows = await api.storage.sqlQuery<Note>("SELECT * FROM notes ORDER BY created_at DESC");
+    setNotes(rows);
+  };
+
+  const addNote = async () => {
+    if (!title.trim()) return;
+    const id = crypto.randomUUID();
+    await api.storage.sqlExecute(
+      "INSERT INTO notes (id, title) VALUES (?, ?)",
+      [id, title]
+    );
+    // Also save as a markdown file
+    await api.storage.writeFile(`notes/${id}.md`, `# ${title}\n\nCreated: ${new Date().toISOString()}`);
+    setTitle("");
+    await loadNotes();
+  };
+
+  return (
+    <UIRoot>
+      <UIPanelHeader
+        title="Notes"
+        rightActions={<UIBadge label={`${viewCount} views`} tone="neutral" />}
+      />
+      <UISection>
+        <UICard>
+          <UIInput value={title} placeholder="New note title" onInput={setTitle} />
+          <UIButton label="Add Note" variant="primary" onClick={addNote} />
+        </UICard>
+      </UISection>
+      <UISection title={`${notes.length} notes`}>
+        {notes.map((note) => (
+          <UICard key={note.id}>
+            <strong>{note.title}</strong>
+            <small>{note.created_at}</small>
+          </UICard>
+        ))}
+      </UISection>
+    </UIRoot>
+  );
+}
+
+export default defineReactInstrument({
+  defaults: { visible: { sidebar: true } },
+  panels: { sidebar: SidebarPanel },
+});
+```
+
+## Next steps
+
+You can persist data, but you're not yet reacting to what's happening in Tango. In the [next tutorial](/tutorials/06-events-and-hooks/) you'll subscribe to host events like session streams and stage changes.

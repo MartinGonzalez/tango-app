@@ -359,6 +359,144 @@ export function UISelectionList(props: {
   );
 }
 
+export function UIGroup(props: {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  expanded?: boolean;
+  active?: boolean;
+  animate?: boolean;
+  meta?: React.ReactNode;
+  actions?: React.ReactNode;
+  onToggle?: (nextExpanded: boolean) => void;
+  children?: React.ReactNode;
+}): JSX.Element {
+  const expanded = props.expanded ?? true;
+  const hasToggle = typeof props.onToggle === "function";
+
+  const titleNode =
+    typeof props.title === "string" ? (
+      <span className="tui-group-title">{props.title}</span>
+    ) : (
+      props.title
+    );
+  const subtitleNode =
+    typeof props.subtitle === "string" ? (
+      <span className="tui-group-subtitle">{props.subtitle}</span>
+    ) : (
+      props.subtitle ?? null
+    );
+
+  const handleToggle = () => {
+    props.onToggle?.(!expanded);
+  };
+
+  const headerClassParts = ["tui-group-header"];
+  if (!expanded) headerClassParts.push("tui-group-header-collapsed");
+  if (hasToggle) headerClassParts.push("tui-group-header-clickable");
+
+  const groupClassParts = ["tui-group"];
+  if (expanded) groupClassParts.push("tui-group-expanded");
+  if (props.active) groupClassParts.push("tui-group-active");
+
+  return (
+    <div className={groupClassParts.join(" ")}>
+      <div
+        className={headerClassParts.join(" ")}
+        role={hasToggle ? "button" : undefined}
+        tabIndex={hasToggle ? 0 : undefined}
+        onClick={hasToggle ? handleToggle : undefined}
+        onKeyDown={
+          hasToggle
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleToggle();
+                }
+              }
+            : undefined
+        }
+      >
+        <div className="tui-group-meta">
+          <div className="tui-group-title-row">
+            {titleNode}
+            {props.meta}
+          </div>
+          {subtitleNode}
+        </div>
+        <div
+          className="tui-group-actions"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {props.actions}
+          {hasToggle ? (
+            <span
+              className={`tui-group-caret${expanded ? " tui-group-caret-expanded" : ""}`}
+              aria-hidden="true"
+            >
+              ▾
+            </span>
+          ) : null}
+        </div>
+      </div>
+      <div className={`tui-collapsible${!expanded ? " is-collapsed" : ""}`}>
+        <div className="tui-collapsible-inner">
+          <div className="tui-group-body">{props.children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function UIGroupList(props: {
+  children?: React.ReactNode;
+}): JSX.Element {
+  return <div className="tui-group-list">{props.children}</div>;
+}
+
+export function UIGroupEmpty(props: {
+  text: string;
+}): JSX.Element {
+  return <div className="tui-group-empty">{props.text}</div>;
+}
+
+export function UIGroupItem(props: {
+  title: string;
+  subtitle?: string;
+  meta?: React.ReactNode;
+  active?: boolean;
+  onClick?: () => void;
+}): JSX.Element {
+  const className = `tui-group-item${props.active ? " tui-group-item-active" : ""}`;
+  const main = (
+    <div className="tui-group-item-main">
+      <span className="tui-group-item-title">{props.title}</span>
+      {props.subtitle ? (
+        <span className="tui-group-item-subtitle">{props.subtitle}</span>
+      ) : null}
+    </div>
+  );
+
+  const metaNode = props.meta ? (
+    <span className="tui-group-item-meta">{props.meta}</span>
+  ) : null;
+
+  if (props.onClick) {
+    return (
+      <button type="button" className={className} onClick={props.onClick}>
+        {main}
+        {metaNode}
+      </button>
+    );
+  }
+
+  return (
+    <div className={className}>
+      {main}
+      {metaNode}
+    </div>
+  );
+}
+
 export type {
   UIGroupItemMeta,
   UIGroupSubtitle,

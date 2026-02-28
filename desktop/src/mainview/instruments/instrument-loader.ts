@@ -64,3 +64,13 @@ function createBlobModuleHref(code: string, sourcePath: string): string {
   const blob = new Blob([`${code}${footer}`], { type: "text/javascript" });
   return URL.createObjectURL(blob);
 }
+
+/**
+ * Re-imports an instrument module with cache busting.
+ * Used by the dev-reload flow when `tango-sdk dev` rebuilds an instrument.
+ */
+export async function reloadInstrumentModule(
+  entry: InstrumentRegistryEntry
+): Promise<TangoInstrumentDefinition> {
+  return loadInstrumentDefinition(entry);
+}

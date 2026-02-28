@@ -1,0 +1,387 @@
+---
+title: UI Components Reference
+description: All components from @tango/instrument-ui/react with complete prop types.
+---
+
+All components are imported from `@tango/instrument-ui/react`. They use CSS classes prefixed with `tui-` and inherit the Tango theme automatically when wrapped in `UIRoot`.
+
+```tsx
+import { UIRoot, UIPanelHeader, UISection, UICard, UIButton } from "@tango/instrument-ui/react";
+```
+
+---
+
+## UIRoot
+
+Required wrapper for every panel. Injects the Tango UI stylesheet.
+
+```ts
+props: {
+  className?: string;
+  children?: React.ReactNode;
+}
+```
+
+---
+
+## UIPanelHeader
+
+Standard panel header with title, optional subtitle, back button, and right-side actions.
+
+```ts
+props: {
+  title: string;
+  subtitle?: string;
+  onBack?: () => void;
+  rightActions?: React.ReactNode;
+}
+```
+
+When `onBack` is provided, a back arrow button appears to the left of the title.
+
+---
+
+## UISection
+
+Groups related content with optional title and description.
+
+```ts
+props: {
+  title?: string;
+  description?: string;
+  children?: React.ReactNode;
+}
+```
+
+---
+
+## UICard
+
+Bordered container for content blocks.
+
+```ts
+props: {
+  className?: string;
+  children?: React.ReactNode;
+}
+```
+
+---
+
+## UIButton
+
+Action trigger button.
+
+```ts
+props: {
+  label: string;
+  variant?: "primary" | "secondary" | "danger" | "ghost";  // default: "secondary"
+  size?: "sm" | "md";                                        // default: "md"
+  disabled?: boolean;
+  onClick?: () => void;
+}
+```
+
+| Variant | Use case |
+|---------|----------|
+| `primary` | Main action (submit, save, create) |
+| `secondary` | Secondary actions |
+| `danger` | Destructive actions (delete, remove) |
+| `ghost` | Subtle actions (inline, toolbar) |
+
+---
+
+## UIInput
+
+Single-line text input. The `onInput` callback receives the string value directly.
+
+```ts
+props: {
+  value?: string;
+  placeholder?: string;
+  onInput?: (value: string) => void;
+}
+```
+
+:::note
+Uses `onInput` (not `onChange`). The callback receives a `string`, not a React event object.
+:::
+
+---
+
+## UITextarea
+
+Multi-line text input.
+
+```ts
+props: {
+  value?: string;
+  placeholder?: string;
+  rows?: number;            // default: 6
+  onInput?: (value: string) => void;
+}
+```
+
+---
+
+## UISelect
+
+Dropdown selection.
+
+```ts
+props: {
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  onChange?: (value: string) => void;
+}
+```
+
+---
+
+## UIToggle
+
+On/off switch with label.
+
+```ts
+props: {
+  label: string;
+  checked?: boolean;
+  onChange?: (checked: boolean) => void;
+}
+```
+
+---
+
+## UICheckbox
+
+Checkbox with label.
+
+```ts
+props: {
+  label: string;
+  checked?: boolean;
+  onChange?: (checked: boolean) => void;
+}
+```
+
+---
+
+## UIRadioGroup
+
+Radio button group.
+
+```ts
+props: {
+  name: string;
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  onChange?: (value: string) => void;
+}
+```
+
+---
+
+## UISegmentedControl
+
+Segmented button strip.
+
+```ts
+props: {
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  onChange?: (value: string) => void;
+}
+```
+
+---
+
+## UITabs
+
+Tab navigation with content panels.
+
+```ts
+props: {
+  tabs: Array<{
+    value: string;
+    label: string;
+    content: React.ReactNode;
+  }>;
+  initialValue?: string;
+}
+```
+
+If no `initialValue` is provided, the first tab is selected.
+
+---
+
+## UIBadge
+
+Colored label for status or metadata.
+
+```ts
+props: {
+  label: string;
+  tone?: "neutral" | "info" | "success" | "warning" | "danger";  // default: "neutral"
+}
+```
+
+---
+
+## UIEmptyState
+
+Placeholder for empty views.
+
+```ts
+props: {
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+}
+```
+
+---
+
+## UIList
+
+Container for `UIListItem` components.
+
+```ts
+props: {
+  children?: React.ReactNode;
+}
+```
+
+---
+
+## UIListItem
+
+Clickable list item with title, subtitle, and active state.
+
+```ts
+props: {
+  title: string;
+  subtitle?: string;
+  active?: boolean;
+  onClick?: () => void;
+}
+```
+
+Renders as a `<button>` when `onClick` is provided, otherwise a `<div>`.
+
+---
+
+## UISelectionList
+
+List with single or multi-select support.
+
+```ts
+props: {
+  items: Array<{ value: string; title: string; subtitle?: string }>;
+  selected: string[];
+  multiple?: boolean;
+  onChange?: (next: string[]) => void;
+}
+```
+
+---
+
+## UIGroup
+
+Collapsible section with header, metadata, and actions.
+
+```ts
+props: {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  expanded?: boolean;          // default: true
+  active?: boolean;
+  animate?: boolean;
+  meta?: React.ReactNode;
+  actions?: React.ReactNode;
+  onToggle?: (nextExpanded: boolean) => void;
+  children?: React.ReactNode;
+}
+```
+
+When `onToggle` is provided, the header becomes clickable and shows a caret icon. The group body collapses/expands based on the `expanded` prop.
+
+---
+
+## UIGroupList
+
+Container for `UIGroupItem` components inside a `UIGroup`.
+
+```ts
+props: {
+  children?: React.ReactNode;
+}
+```
+
+---
+
+## UIGroupItem
+
+Item inside a `UIGroupList`. Supports title, subtitle, metadata, active state, and click.
+
+```ts
+props: {
+  title: string;
+  subtitle?: string;
+  meta?: React.ReactNode;
+  active?: boolean;
+  onClick?: () => void;
+}
+```
+
+Renders as a `<button>` when `onClick` is provided, otherwise a `<div>`.
+
+---
+
+## UIGroupEmpty
+
+Placeholder text for an empty group.
+
+```ts
+props: {
+  text: string;
+}
+```
+
+---
+
+## UIColorToken
+
+Alias for `UIBadge`. Displays a colored token.
+
+```ts
+props: {
+  label: string;
+  tone?: "neutral" | "info" | "success" | "warning" | "danger";
+}
+```
+
+---
+
+## UIStatusTone
+
+Alias for `UIBadge`. Displays a status indicator.
+
+```ts
+props: {
+  label: string;
+  tone?: "neutral" | "info" | "success" | "warning" | "danger";
+}
+```
+
+---
+
+## CSS utility classes
+
+The UI kit provides utility classes you can use directly:
+
+| Class | Description |
+|-------|-------------|
+| `tui-root` | Root container (applied by `UIRoot`) |
+| `tui-row` | Horizontal flex row with gap |
+| `tui-col` | Vertical flex column with gap |
+| `tui-spread` | Space-between flex row |

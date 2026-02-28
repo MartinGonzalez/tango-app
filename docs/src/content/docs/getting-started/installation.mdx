@@ -1,0 +1,80 @@
+---
+title: Installation
+description: Set up your environment and scaffold your first instrument.
+---
+
+## Prerequisites
+
+- **Bun** v1.0+ — [bun.sh](https://bun.sh)
+- **Tango** desktop app running locally
+
+## Scaffold a new instrument
+
+The fastest way to start is with the scaffolder:
+
+```bash
+bunx create-tango-instrument my-instrument
+```
+
+The interactive prompt asks for:
+
+| Option | Description |
+|--------|-------------|
+| **Name** | Human-readable name shown in Tango (e.g. "My Instrument") |
+| **Panels** | Which slots to enable: `sidebar`, `first`, `second`, `right` |
+| **Backend** | Whether to include a backend entry point for server-side actions |
+
+## Install dependencies
+
+```bash
+cd my-instrument
+bun install
+```
+
+This installs two workspace packages:
+
+- `@tango/instrument-sdk` — core API, React bindings, CLI tools
+- `@tango/instrument-ui` — pre-built UI components
+
+## Start development
+
+```bash
+bun run dev
+```
+
+This runs `tango-sdk dev` which:
+
+1. Builds your frontend (and backend if present) with Bun
+2. Watches for file changes and rebuilds automatically
+3. Notifies the running Tango app to hot-reload your instrument
+
+## See it in Tango
+
+Open Tango. Your instrument appears in the sidebar (if you enabled the sidebar panel). Click it to see your panels render.
+
+If Tango was already open before you ran `bun run dev`, the instrument reloads automatically on each save.
+
+## Manual build
+
+To produce a one-off build without watching:
+
+```bash
+bun run build
+```
+
+Output lands in `dist/` — `index.js` for the frontend, `backend.js` for the backend (if present).
+
+## Validate
+
+Check that your manifest and file structure are correct:
+
+```bash
+bun run validate
+```
+
+This verifies:
+- Required fields in `package.json > tango.instrument`
+- At least one panel slot is enabled
+- Source entry point files exist
+- Permissions are valid
+- Settings schema is well-formed

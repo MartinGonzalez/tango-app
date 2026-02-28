@@ -1,0 +1,221 @@
+---
+title: Hooks Reference
+description: All React hooks from @tango/instrument-sdk/react.
+---
+
+All hooks are imported from `@tango/instrument-sdk/react`.
+
+```tsx
+import {
+  useInstrumentApi,
+  useHostEvent,
+  useInstrumentAction,
+  useInstrumentSettings,
+  usePanelVisibility,
+} from "@tango/instrument-sdk/react";
+```
+
+---
+
+## useInstrumentApi
+
+Returns the `InstrumentFrontendAPI` for the current panel. Must be used inside a component rendered by `defineReactInstrument`.
+
+```ts
+function useInstrumentApi(): InstrumentFrontendAPI
+```
+
+**Throws** if used outside of `InstrumentApiProvider` (which `defineReactInstrument` sets up automatically).
+
+```tsx
+function MyPanel() {
+  const api = useInstrumentApi();
+  // api.instrumentId, api.storage, api.sessions, etc.
+}
+```
+
+---
+
+## useHostEvent
+
+Subscribes to a host event. Automatically unsubscribes on unmount.
+
+```ts
+function useHostEvent<E extends keyof HostEventMap>(
+  event: E,
+  handler: (payload: HostEventMap[E]) => void | Promise<void>
+): void
+```
+
+**Parameters**:
+- `event` — Event name from `HostEventMap`
+- `handler` — Callback receiving the typed payload
+
+**Important**: Wrap the handler in `useCallback` to avoid resubscribing on every render:
+
+```tsx
+useHostEvent("session.ended", useCallback((payload) => {
+  console.log(`Session ${payload.sessionId} ended`);
+}, []));
+```
+
+See [Events & Hooks tutorial](/tutorials/06-events-and-hooks/) for the full event list.
+
+---
+
+## useInstrumentAction
+
+Creates a stable, typed function for calling a backend action.
+
+```ts
+function useInstrumentAction<TInput, TOutput>(
+  name: string
+): (input?: TInput) => Promise<TOutput>
+```
+
+**Parameters**:
+- `name` — Action name (must match a key in your backend's `actions` map)
+
+**Returns**: An async function that calls the action and returns the result.
+
+```tsx
+type GreetInput = { name: string };
+type GreetOutput = { greeting: string };
+
+function MyPanel() {
+  const greet = useInstrumentAction<GreetInput, GreetOutput>("greet");
+
+  const handleClick = async () => {
+    const result = await greet({ name: "Alice" });
+    console.log(result.greeting); // "Hello, Alice!"
+  };
+}
+```
+
+The returned function is stable across re-renders (uses `useCallback` internally with `[api, name]` deps).
+
+---
+
+## useInstrumentSettings
+
+Loads and manages instrument settings with schema and values.
+
+```ts
+function useInstrumentSettings<T extends Record<string, unknown>>(): {
+  schema: InstrumentSettingField[];
+  values: T;
+  loading: boolean;
+  error: string | null;
+  reload: () => Promise<void>;
+  setValue: (key: string, value: unknown) => Promise<T>;
+}
+```
+
+**Returns**:
+- `schema` — Setting field definitions from the manifest
+- `values` — Current setting values
+- `loading` — `true` during initial load
+- `error` — Error message if loading failed, else `null`
+- `reload()` — Refetch schema and values
+- `setValue(key, value)` — Update a setting and return updated values
+
+```tsx
+function SettingsPanel() {
+  const { schema, values, loading, setValue } = useInstrumentSettings<{
+    theme: string;
+    notificationsEnabled: boolean;
+  }>();
+
+  if (loading) return <p>Loading...</p>;
+
+  return (
+    <div>
+      <p>Theme: {values.theme}</p>
+      <UIToggle
+        label="Notifications"
+        checked={values.notificationsEnabled}
+        onChange={(checked) => setValue("notificationsEnabled", checked)}
+      />
+    </div>
+  );
+}
+```
+
+---
+
+## usePanelVisibility
+
+Returns the current visibility state of all panel slots.
+
+```ts
+function usePanelVisibility(): Partial<Record<TangoPanelSlot, boolean>>
+```
+
+**Returns**: An object mapping panel slot names to their visibility.
+
+```tsx
+function MyPanel() {
+  const visibility = usePanelVisibility();
+
+  return (
+    <div>
+      <p>Sidebar visible: {visibility.sidebar ? "yes" : "no"}</p>
+      <p>Second panel visible: {visibility.second ? "yes" : "no"}</p>
+    </div>
+  );
+}
+```
+
+---
+
+## useInstrumentUIStyles
+
+Ensures the Tango UI stylesheet is loaded. Called automatically by `UIRoot`, so you rarely need this directly.
+
+```ts
+function useInstrumentUIStyles(): void
+```
+
+Import from `@tango/instrument-ui/react`:
+
+```tsx
+import { useInstrumentUIStyles } from "@tango/instrument-ui/react";
+```
+
+---
+
+## Helper functions
+
+### defineReactInstrument
+
+Not a hook, but the main entry point for React instruments. Wraps panel components with `InstrumentApiProvider` and handles mounting.
+
+```ts
+function defineReactInstrument(definition: {
+  panels: {
+    sidebar?: React.ComponentType<{ api: InstrumentFrontendAPI }> | null;
+    first?: React.ComponentType<{ api: InstrumentFrontendAPI }> | null;
+    second?: React.ComponentType<{ api: InstrumentFrontendAPI }> | null;
+    right?: React.ComponentType<{ api: InstrumentFrontendAPI }> | null;
+  };
+  defaults?: {
+    visible?: Partial<Record<TangoPanelSlot, boolean>>;
+  };
+  lifecycle?: {
+    onStart?: (api: InstrumentFrontendAPI) => void | Promise<void>;
+    onStop?: () => void | Promise<void>;
+  };
+}): TangoInstrumentDefinition
+```
+
+Must be the default export of your frontend entry file.
+
+### reactPanel
+
+Lower-level helper that wraps a single React component as a `TangoPanelComponent`. Useful when you need more control over individual panels.
+
+```ts
+function reactPanel(
+  Component: React.ComponentType<{ api: InstrumentFrontendAPI }>
+): TangoPanelComponent
+```
