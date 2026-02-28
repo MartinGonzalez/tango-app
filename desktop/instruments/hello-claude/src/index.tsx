@@ -13,6 +13,7 @@ import {
   UITextarea,
   UIBadge,
   UIEmptyState,
+  UIToggle,
 } from "@tango/instrument-ui/react";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +59,98 @@ function extractAssistantText(event: StreamEvent): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// ChatPanel
+// Shared state between panels (same JS module context)
+// ---------------------------------------------------------------------------
+
+let sharedUseQuery = false;
+let sharedOnQueryToggle: ((v: boolean) => void) | null = null;
+let sharedOnClear: (() => void) | null = null;
+let sharedOnOpenSession: (() => void) | null = null;
+let sharedGetSessionId: (() => string | null) | null = null;
+let sharedGetLoading: (() => boolean) | null = null;
+let sharedGetMessageCount: (() => number) | null = null;
+
+// ---------------------------------------------------------------------------
+// SidebarPanel — lightweight controls
+// ---------------------------------------------------------------------------
+
+function SidebarPanel() {
+  const [useQuery, setUseQuery] = useState(sharedUseQuery);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [messageCount, setMessageCount] = useState(0);
+
+  // Sync from ChatPanel on mount + periodically
+  useEffect(() => {
+    const sync = () => {
+      setSessionId(sharedGetSessionId?.() ?? null);
+      setLoading(sharedGetLoading?.() ?? false);
+      setMessageCount(sharedGetMessageCount?.() ?? 0);
+    };
+    sync();
+    const id = setInterval(sync, 300);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleToggle = (checked: boolean) => {
+    sharedUseQuery = checked;
+    setUseQuery(checked);
+    sharedOnQueryToggle?.(checked);
+  };
+
+  return (
+    <UIRoot>
+      <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 12 }}>
+        <UIPanelHeader title="Hello Claude" />
+
+        <UISection>
+          <div className="tui-col" style={{ gap: 8 }}>
+            <UIToggle
+              label="Query mode"
+              checked={useQuery}
+              onChange={handleToggle}
+            />
+            <UIBadge
+              label={
+                useQuery
+                  ? "query mode"
+                  : sessionId
+                    ? `session: ${sessionId.slice(0, 8)}...`
+                    : "no session"
+              }
+              tone={useQuery ? "warning" : sessionId ? "info" : "neutral"}
+            />
+          </div>
+        </UISection>
+
+        <UISection>
+          <div className="tui-col" style={{ gap: 6 }}>
+            {loading && <UIBadge label="streaming..." tone="info" />}
+            {!useQuery && sessionId && (
+              <UIButton
+                label="Open Session"
+                variant="ghost"
+                size="sm"
+                onClick={() => sharedOnOpenSession?.()}
+              />
+            )}
+            {messageCount > 0 && (
+              <UIButton
+                label="Clear"
+                variant="ghost"
+                size="sm"
+                onClick={() => sharedOnClear?.()}
+              />
+            )}
+          </div>
+        </UISection>
+      </div>
+    </UIRoot>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ChatPanel — full chat UI (renders in first panel)
 // ---------------------------------------------------------------------------
 
 function ChatPanel() {
@@ -68,7 +160,45 @@ function ChatPanel() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [stagePath, setStagePath] = useState<string | null>(null);
+  const [useQuery, setUseQuery] = useState(sharedUseQuery);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Refs for cross-panel sharing (avoids stale closures)
+  const sessionIdRef = useRef<string | null>(null);
+  const loadingRef = useRef(false);
+  const messageCountRef = useRef(0);
+  const stagePathRef = useRef<string | null>(null);
+
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+  useEffect(() => { messageCountRef.current = messages.length; }, [messages]);
+  useEffect(() => { stagePathRef.current = stagePath; }, [stagePath]);
+
+  useEffect(() => {
+    sharedGetSessionId = () => sessionIdRef.current;
+    sharedGetLoading = () => loadingRef.current;
+    sharedGetMessageCount = () => messageCountRef.current;
+    sharedOnQueryToggle = (v) => setUseQuery(v);
+    sharedOnClear = () => {
+      setMessages([]);
+      setSessionId(null);
+      setLoading(false);
+      api.storage.deleteProperty("lastMessages");
+    };
+    sharedOnOpenSession = () => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      api.sessions.focus({ sessionId: sid, cwd: stagePathRef.current ?? undefined });
+    };
+    return () => {
+      sharedGetSessionId = null;
+      sharedGetLoading = null;
+      sharedGetMessageCount = null;
+      sharedOnQueryToggle = null;
+      sharedOnClear = null;
+      sharedOnOpenSession = null;
+    };
+  }, [api]);
 
   // Load active stage on mount
   useEffect(() => {
@@ -88,11 +218,6 @@ function ChatPanel() {
   }, [messages]);
 
   // Track session ID resolution (tempId → realId)
-  const sessionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    sessionIdRef.current = sessionId;
-  }, [sessionId]);
-
   useHostEvent(
     "session.idResolved",
     useCallback(
@@ -117,7 +242,6 @@ function ChatPanel() {
         if (text) {
           setMessages((prev) => {
             const last = prev[prev.length - 1];
-            // Append to existing assistant message or create new one
             if (last?.role === "assistant") {
               const updated = [...prev];
               updated[updated.length - 1] = { ...last, text: last.text + text };
@@ -129,12 +253,12 @@ function ChatPanel() {
 
         if (event.type === "result") {
           setLoading(false);
-          const resultEvent = event as StreamEvent & { duration_ms: number; num_turns: number };
+          const resultEvent = event as StreamEvent & { duration_ms: number; num_turns: number; total_cost_usd: number };
           setMessages((prev) => [
             ...prev,
             {
               role: "status",
-              text: `Done in ${(resultEvent.duration_ms / 1000).toFixed(1)}s (${resultEvent.num_turns} turn${resultEvent.num_turns === 1 ? "" : "s"})`,
+              text: `Done in ${(resultEvent.duration_ms / 1000).toFixed(1)}s — ${resultEvent.num_turns} turn${resultEvent.num_turns === 1 ? "" : "s"} — $${resultEvent.total_cost_usd.toFixed(4)}`,
             },
           ]);
         }
@@ -180,15 +304,37 @@ function ChatPanel() {
     setMessages((prev) => [...prev, { role: "user", text }]);
     setLoading(true);
 
-    const cwd = stagePath ?? process.cwd?.() ?? "/tmp";
+    const cwd = stagePath ?? "/tmp";
 
-    if (sessionId) {
-      // Follow-up in the existing session
-      await api.sessions.sendFollowUp({ sessionId, text });
+    if (useQuery) {
+      // Query mode: fire-and-forget, no session
+      try {
+        const result = await api.sessions.query({ prompt: text, cwd });
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: result.text },
+          {
+            role: "status",
+            text: `Done in ${(result.durationMs / 1000).toFixed(1)}s — $${result.costUsd.toFixed(4)}`,
+          },
+        ]);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMessages((prev) => [
+          ...prev,
+          { role: "status", text: `Error: ${msg}` },
+        ]);
+      } finally {
+        setLoading(false);
+      }
     } else {
-      // Start a new session
-      const result = await api.sessions.start({ prompt: text, cwd });
-      setSessionId(result.sessionId);
+      // Session mode: start or follow up
+      if (sessionId) {
+        await api.sessions.sendFollowUp({ sessionId, text });
+      } else {
+        const result = await api.sessions.start({ prompt: text, cwd });
+        setSessionId(result.sessionId);
+      }
     }
   };
 
@@ -211,30 +357,32 @@ function ChatPanel() {
     }
   };
 
+  const buttonLabel = useQuery ? "Send" : sessionId ? "Follow up" : "Send";
+
   return (
     <UIRoot>
       <div
         style={{
-          height: "100%",
+          position: "absolute",
+          inset: 0,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          boxSizing: "border-box",
         }}
       >
         <div style={{ padding: "10px 10px 0" }}>
           <UIPanelHeader
             title="Hello Claude"
-            subtitle={sessionId ? `session: ${sessionId.slice(0, 8)}...` : "no active session"}
+            subtitle={
+              useQuery
+                ? "query mode — each prompt is independent"
+                : sessionId
+                  ? `session: ${sessionId.slice(0, 8)}...`
+                  : "no active session"
+            }
             rightActions={
               <div className="tui-row">
-                {loading && <UIBadge label="streaming..." tone="info" />}
-                {sessionId && (
-                  <UIButton label="Open Session" variant="ghost" size="sm" onClick={openSession} />
-                )}
-                {messages.length > 0 && (
-                  <UIButton label="Clear" variant="ghost" size="sm" onClick={clear} />
-                )}
+                {loading && <UIBadge label={useQuery ? "querying..." : "streaming..."} tone="info" />}
               </div>
             }
           />
@@ -253,7 +401,11 @@ function ChatPanel() {
             <UISection>
               <UIEmptyState
                 title="Ask Claude anything"
-                description="Type a prompt below to start a session. Responses stream in real time."
+                description={
+                  useQuery
+                    ? "Query mode: each prompt is independent. No session, no streaming."
+                    : "Session mode: start a tracked session with streaming responses."
+                }
               />
             </UISection>
           ) : (
@@ -281,7 +433,7 @@ function ChatPanel() {
               </div>
               <div className="tui-row">
                 <UIButton
-                  label={sessionId ? "Follow up" : "Send"}
+                  label={buttonLabel}
                   variant="primary"
                   disabled={loading || !prompt.trim()}
                   onClick={send}
@@ -291,6 +443,9 @@ function ChatPanel() {
                     label={stagePath.split("/").pop() ?? stagePath}
                     tone="neutral"
                   />
+                )}
+                {useQuery && (
+                  <UIBadge label="query" tone="warning" />
                 )}
               </div>
             </div>
@@ -350,9 +505,10 @@ function MessageBubble({ message }: { message: Message }) {
 
 export default defineReactInstrument({
   defaults: {
-    visible: { sidebar: true },
+    visible: { sidebar: true, first: true },
   },
   panels: {
-    sidebar: ChatPanel,
+    sidebar: SidebarPanel,
+    first: ChatPanel,
   },
 });

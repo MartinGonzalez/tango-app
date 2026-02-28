@@ -1491,10 +1491,9 @@ function init(): void {
 
     const hideDiffPanel = isPluginsMode
       || isConnectorsMode
-      || (isInstrumentsMode && !isRuntimeInstrumentMode)
-      || (isRuntimeInstrumentMode && !runtimeShowsSecond && !runtimeShowsRight);
+      || (isInstrumentsMode && !isRuntimeInstrumentMode);
     const hideChatPanel = (isInstrumentsMode && !isRuntimeInstrumentMode)
-      || (isRuntimeInstrumentMode && !runtimeShowsFirst && !hideDiffPanel);
+      || (isRuntimeInstrumentMode && !runtimeShowsFirst);
     if (hideChatPanel && hideDiffPanel) {
       panelLayout.showPanel("stages");
       qs("#btn-toggle-stages")?.classList.add("active");
@@ -1566,6 +1565,17 @@ function init(): void {
       clearCommitDiffSelection(state.activeStage);
       void loadDiff(state.activeStage, state.diffScope);
       ensureBranchHistory(state.activeStage);
+    }
+
+    // Refresh session history for expanded stages when returning from instruments
+    if (
+      viewModeChanged
+      && prevViewMode === "instruments"
+      && state.viewMode === "stages"
+    ) {
+      for (const stagePath of state.expandedStages) {
+        loadSessionHistory(stagePath);
+      }
     }
 
     prevViewMode = state.viewMode;

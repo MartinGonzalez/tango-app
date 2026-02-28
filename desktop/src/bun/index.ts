@@ -1796,6 +1796,7 @@ async function queryClaudeSession(params: {
 
   const chunks: string[] = [];
   let costUsd = 0;
+  let sessionId: string | null = null;
 
   if (proc.stdout && typeof proc.stdout !== "number") {
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
@@ -1815,6 +1816,10 @@ async function queryClaudeSession(params: {
           if (!trimmed) continue;
           try {
             const event = JSON.parse(trimmed);
+            // Capture session_id from any event that carries it
+            if (!sessionId && event.session_id) {
+              sessionId = String(event.session_id);
+            }
             if (event.type === "assistant" && event.message?.content) {
               for (const block of event.message.content) {
                 if (block.type === "text" && block.text) {
@@ -1851,6 +1856,26 @@ async function queryClaudeSession(params: {
     throw new Error(
       stderrText.trim() || `querySession failed with exit code ${exitCode}`
     );
+  }
+
+  // Clean up transcript file — query sessions are fire-and-forget
+  if (sessionId) {
+    const resolvedCwd = params.cwd;
+    const variants = getStagePathVariantsSync(resolvedCwd);
+    for (const variant of variants) {
+      for (const encode of [encodeClaudeProjectPath, encodeClaudeProjectPathLegacy]) {
+        const transcriptPath = join(
+          homedir(), ".claude", "projects", encode(variant), `${sessionId}.jsonl`
+        );
+        try {
+          if (await Bun.file(transcriptPath).exists()) {
+            await unlink(transcriptPath);
+          }
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    }
   }
 
   return {

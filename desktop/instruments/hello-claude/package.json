@@ -29,7 +29,7 @@
       },
       "panels": {
         "sidebar": true,
-        "first": false,
+        "first": true,
         "second": false,
         "right": false
       },
