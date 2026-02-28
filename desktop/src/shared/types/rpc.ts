@@ -63,6 +63,19 @@ export type AppRPC = {
         };
         response: void;
       };
+      querySession: {
+        params: {
+          prompt: string;
+          cwd: string;
+          model?: string;
+          tools?: string[];
+        };
+        response: {
+          text: string;
+          durationMs: number;
+          costUsd: number;
+        };
+      };
       respondPermission: {
         params: { sessionId: string; toolUseId: string; allow: boolean };
         response: void;

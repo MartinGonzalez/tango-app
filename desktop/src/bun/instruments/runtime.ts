@@ -46,6 +46,16 @@ type HostApi = {
     }) => Promise<void>;
     kill: (sessionId: string) => Promise<void>;
     list: () => Promise<SessionInfo[]>;
+    query?: (params: {
+      prompt: string;
+      cwd?: string;
+      model?: string;
+      tools?: string[];
+    }) => Promise<{
+      text: string;
+      durationMs: number;
+      costUsd: number;
+    }>;
   };
   connectors: {
     listStageConnectors: (stagePath: string) => Promise<StageConnector[]>;
@@ -530,6 +540,13 @@ export class InstrumentRuntime {
           list: async () => {
             requirePermission(entry, "sessions");
             return this.#hostApi.sessions.list();
+          },
+          query: async (params) => {
+            requirePermission(entry, "sessions");
+            if (!this.#hostApi.sessions.query) {
+              throw new Error("sessions.query is not available");
+            }
+            return this.#hostApi.sessions.query(params);
           },
           focus: async () => {
             // Backend has no UI surface to focus sessions.

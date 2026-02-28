@@ -1477,7 +1477,8 @@ function init(): void {
     pluginsPreview.setVisible(isPluginsMode);
     prView.setVisible(isPRMode);
     connectorsView.setVisible(isConnectorsMode);
-    diffView.element.hidden = isRuntimeInstrumentMode;
+    diffView.element.hidden = isRuntimeInstrumentMode
+      || (isInstrumentsMode && !isRuntimeInstrumentMode);
 
     if (state.activeStage && state.activeStage !== prevConnectorsStage) {
       prevConnectorsStage = state.activeStage;
@@ -1488,12 +1489,12 @@ function init(): void {
 
     syncConnectorAuthPollTimer(state);
 
-    const hideChatPanel = (isInstrumentsMode && !isRuntimeInstrumentMode)
-      || (isRuntimeInstrumentMode && !runtimeShowsFirst);
     const hideDiffPanel = isPluginsMode
       || isConnectorsMode
       || (isInstrumentsMode && !isRuntimeInstrumentMode)
-      || (isRuntimeInstrumentMode && !(runtimeShowsSecond || runtimeShowsRight));
+      || (isRuntimeInstrumentMode && !runtimeShowsSecond && !runtimeShowsRight);
+    const hideChatPanel = (isInstrumentsMode && !isRuntimeInstrumentMode)
+      || (isRuntimeInstrumentMode && !runtimeShowsFirst && !hideDiffPanel);
     if (hideChatPanel && hideDiffPanel) {
       panelLayout.showPanel("stages");
       qs("#btn-toggle-stages")?.classList.add("active");
@@ -1880,6 +1881,15 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
       },
       list: async () => {
         return (rpc as any).request.getSessions({});
+      },
+      query: async (params) => {
+        const resolvedCwd = params.cwd || appState.get().activeStage || "/";
+        return (rpc as any).request.querySession({
+          prompt: params.prompt,
+          cwd: resolvedCwd,
+          model: params.model,
+          tools: params.tools,
+        });
       },
       focus: async ({ sessionId, cwd }) => {
         const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;

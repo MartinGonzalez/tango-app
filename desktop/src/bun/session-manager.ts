@@ -341,7 +341,7 @@ const FALLBACK_CLAUDE_PATHS = [
   join(homedir(), "bin", "claude"),
 ];
 
-function resolveClaudeBinary(): string {
+export function resolveClaudeBinary(): string {
   const envBin = process.env.CLAUDE_BIN?.trim();
   if (envBin) {
     return envBin;
@@ -362,7 +362,7 @@ function resolveClaudeBinary(): string {
   );
 }
 
-function buildSpawnPath(currentPath: string | undefined, claudeBin: string): string {
+export function buildSpawnPath(currentPath: string | undefined, claudeBin: string): string {
   const entries = String(currentPath ?? "")
     .split(":")
     .map((part) => part.trim())

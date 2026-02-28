@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WatcherClient } from "./watcher-client.ts";
-import { SessionManager } from "./session-manager.ts";
+import { SessionManager, resolveClaudeBinary, buildSpawnPath } from "./session-manager.ts";
 import { readTranscript } from "./transcript-reader.ts";
 import {
   getDiff,
@@ -142,6 +142,10 @@ const instrumentRuntime = new InstrumentRuntime({
         if (!latestSnapshot) return [];
         return buildSessionList(latestSnapshot);
       },
+      query: async ({ prompt, cwd, model, tools }) => {
+        const resolvedCwd = cwd || process.cwd();
+        return queryClaudeSession({ prompt, cwd: resolvedCwd, model, tools });
+      },
     },
     connectors: {
       listStageConnectors: async (stagePath) => connectors.listStageConnectors(stagePath),
@@ -187,13 +191,16 @@ function resolveBundledInstrumentInstallPaths(): string[] {
       .filter(Boolean)
     : [];
 
+  const bundledNames = ["tasks", "hello-claude"];
   const candidates = [
     ...envPaths,
-    resolve(moduleDir, "../instruments/tasks"),
-    resolve(moduleDir, "../../instruments/tasks"),
-    resolve(moduleDir, "../../../instruments/tasks"),
-    resolve(cwd, "desktop/instruments/tasks"),
-    resolve(cwd, "instruments/tasks"),
+    ...bundledNames.flatMap((name) => [
+      resolve(moduleDir, `../instruments/${name}`),
+      resolve(moduleDir, `../../instruments/${name}`),
+      resolve(moduleDir, `../../../instruments/${name}`),
+      resolve(cwd, `desktop/instruments/${name}`),
+      resolve(cwd, `instruments/${name}`),
+    ]),
   ];
 
   const deduped: string[] = [];
@@ -465,6 +472,20 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           approvals.setSessionFullAccess(sessionId, fullAccess);
         }
         await sessions.sendMessage(sessionId, text, selectedFiles ?? []);
+      },
+
+      querySession: async ({
+        prompt,
+        cwd,
+        model,
+        tools,
+      }: {
+        prompt: string;
+        cwd: string;
+        model?: string;
+        tools?: string[];
+      }) => {
+        return queryClaudeSession({ prompt, cwd, model, tools });
       },
 
       respondPermission: async ({
@@ -1725,6 +1746,118 @@ function isDocumentPlaceholder(rawJson: string | null): boolean {
   } catch {
     return true;
   }
+}
+
+// ── Query helper (fire-and-forget, invisible to UI) ─────────────
+
+async function queryClaudeSession(params: {
+  prompt: string;
+  cwd: string;
+  model?: string;
+  tools?: string[];
+}): Promise<{ text: string; durationMs: number; costUsd: number }> {
+  const startTime = Date.now();
+  const claudeBin = resolveClaudeBinary();
+  const args = [
+    "-p",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--dangerously-skip-permissions",
+  ];
+
+  if (params.model && params.model.trim()) {
+    args.push("--model", params.model.trim());
+  }
+
+  if (Array.isArray(params.tools)) {
+    if (params.tools.length === 0) {
+      args.push("--tools", "");
+    } else {
+      args.push("--tools", params.tools.join(","));
+    }
+  }
+
+  const proc = Bun.spawn([claudeBin, ...args], {
+    cwd: params.cwd,
+    env: {
+      ...process.env,
+      PATH: buildSpawnPath(process.env.PATH, claudeBin),
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const stdin = proc.stdin;
+  if (stdin && typeof stdin !== "number") {
+    (stdin as any).write(params.prompt + "\n");
+    (stdin as any).end();
+  }
+
+  const chunks: string[] = [];
+  let costUsd = 0;
+
+  if (proc.stdout && typeof proc.stdout !== "number") {
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const event = JSON.parse(trimmed);
+            if (event.type === "assistant" && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === "text" && block.text) {
+                  chunks.push(block.text);
+                }
+              }
+            }
+            if (event.type === "result") {
+              if (event.cost_usd != null) {
+                costUsd = Number(event.cost_usd);
+              }
+              if (event.result && chunks.length === 0) {
+                chunks.push(String(event.result));
+              }
+            }
+          } catch {
+            // skip malformed lines
+          }
+        }
+      }
+    } catch {
+      // stream read error
+    }
+  }
+
+  const exitCode = await proc.exited;
+  if (exitCode !== 0 && chunks.length === 0) {
+    let stderrText = "";
+    try {
+      if (proc.stderr && typeof proc.stderr !== "number") {
+        stderrText = await new Response(proc.stderr as ReadableStream).text();
+      }
+    } catch {}
+    throw new Error(
+      stderrText.trim() || `querySession failed with exit code ${exitCode}`
+    );
+  }
+
+  return {
+    text: chunks.join(""),
+    durationMs: Date.now() - startTime,
+    costUsd,
+  };
 }
 
 // ── Window ───────────────────────────────────────────────────────
