@@ -5,10 +5,10 @@ This is a tiny Tango instrument used in the docs.
 ## Files
 
 - `package.json`: instrument manifest (`tango.instrument`)
-- `dist/index.js`: frontend lifecycle (`activate`, `deactivate`)
-  - mounts sidebar + second panel
-  - uses `ctx.invoke(...)`, `ctx.sessions.start(...)`, `ctx.events.subscribe(...)`
-- `dist/backend.js`: backend `invoke` handler (`ping`)
+- `dist/index.js`: declarative frontend export (`kind: "tango.instrument.v2"`)
+  - defines `sidebar + second` panels
+  - uses `api.actions.call(...)`, `api.sessions.start(...)`, `api.events.subscribe(...)`
+- `dist/backend.js`: backend actions export (`kind: "tango.instrument.backend.v2"`)
 
 ## Install locally
 

@@ -2,32 +2,26 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
+  ActionSchema,
   ConnectorCredential,
   ConnectorProvider,
+  HostEventMap,
   InstrumentBackendContext,
-  InstrumentBackendModule,
+  InstrumentBackendDefinition,
   InstrumentEvent,
   InstrumentRegistryEntry,
+  InstrumentSettingField,
   SessionInfo,
   StageConnector,
-  HostEventMap,
 } from "../../shared/types.ts";
 import { loadInstrumentManifest } from "./loader.ts";
 import { requirePermission } from "./permissions.ts";
 import { InstrumentRegistry } from "./registry.ts";
 import { InstrumentStorage } from "./storage.ts";
 
-type InvokeHandler = (
-  ctx: InstrumentBackendContext,
-  method: string,
-  params: Record<string, unknown> | undefined
-) => Promise<unknown>;
-
 type LoadedBackendModule = {
-  activate?: InstrumentBackendModule["activate"];
-  deactivate?: InstrumentBackendModule["deactivate"];
-  invoke?: InstrumentBackendModule["invoke"];
-  absoluteEntrypoint: string;
+  definition: InstrumentBackendDefinition | null;
+  absoluteEntrypoint: string | null;
   activated: boolean;
 };
 
@@ -97,7 +91,6 @@ export class InstrumentRuntime {
   #registry: InstrumentRegistry;
   #storage: InstrumentStorage;
   #bundledInstallPaths: string[];
-  #invokeHandlers: Record<string, InvokeHandler>;
   #onEvent: ((event: InstrumentEvent) => void) | null;
   #hostApi: HostApi;
   #backendModuleCache = new Map<string, LoadedBackendModule>();
@@ -107,7 +100,6 @@ export class InstrumentRuntime {
     registry?: InstrumentRegistry;
     storage?: InstrumentStorage;
     bundledInstallPaths?: string[];
-    invokeHandlers?: Record<string, InvokeHandler>;
     onEvent?: (event: InstrumentEvent) => void;
     hostApi?: HostApi;
   }) {
@@ -116,7 +108,6 @@ export class InstrumentRuntime {
     this.#bundledInstallPaths = (opts?.bundledInstallPaths ?? []).map((value) =>
       resolve(String(value))
     );
-    this.#invokeHandlers = opts?.invokeHandlers ?? {};
     this.#onEvent = opts?.onEvent ?? null;
     this.#hostApi = opts?.hostApi ?? {
       sessions: {
@@ -192,6 +183,7 @@ export class InstrumentRuntime {
       source: "local",
       installPath: loaded.installPath,
       manifestPath: loaded.manifestPath,
+      runtime: loaded.manifest.runtime ?? "vanilla",
       entrypoint: loaded.manifest.entrypoint,
       ...(loaded.manifest.backendEntrypoint
         ? { backendEntrypoint: loaded.manifest.backendEntrypoint }
@@ -199,6 +191,7 @@ export class InstrumentRuntime {
       hostApiVersion: loaded.manifest.hostApiVersion,
       panels: loaded.manifest.panels,
       permissions: loaded.manifest.permissions,
+      settings: loaded.manifest.settings ?? [],
       launcher: loaded.manifest.launcher,
       enabled: true,
       status: "active",
@@ -290,26 +283,45 @@ export class InstrumentRuntime {
     });
   }
 
-  async invoke(
+  async callAction(
     instrumentId: string,
-    method: string,
-    params?: Record<string, unknown>
+    action: string,
+    input?: unknown
   ): Promise<unknown> {
     const entry = this.#requireUsableEntry(instrumentId);
-    const ctx = this.#buildContext(entry);
-    const handler = this.#invokeHandlers[entry.id];
-    if (handler) {
-      return handler(ctx, method, params);
-    }
-
     const module = await this.#loadBackendModule(entry);
     if (!module.activated) {
       await this.#activateBackend(entry);
     }
-    if (typeof module.invoke !== "function") {
-      throw new Error(`Instrument '${entry.id}' backend does not implement invoke()`);
+    if (!module.definition) {
+      throw new Error(`Instrument '${entry.id}' does not define a backend module`);
     }
-    return module.invoke(ctx, method, params);
+
+    const actionName = String(action ?? "").trim();
+    if (!actionName) {
+      throw new Error("Instrument action is required");
+    }
+    const selected = module.definition.actions[actionName];
+    if (!selected) {
+      throw new Error(`Instrument '${entry.id}' does not implement action '${actionName}'`);
+    }
+
+    if (selected.input) {
+      const error = validateSchema(input, selected.input, "input");
+      if (error) {
+        throw new Error(`Invalid action input for '${actionName}': ${error}`);
+      }
+    }
+
+    const ctx = this.#buildContext(entry);
+    const result = await selected.handler(ctx, input as never);
+    if (selected.output) {
+      const error = validateSchema(result, selected.output, "output");
+      if (error) {
+        throw new Error(`Invalid action output for '${actionName}': ${error}`);
+      }
+    }
+    return result;
   }
 
   async getFrontendSource(
@@ -319,6 +331,43 @@ export class InstrumentRuntime {
     const sourcePath = resolve(entry.installPath, entry.entrypoint);
     const code = await readFile(sourcePath, "utf8");
     return { code, sourcePath };
+  }
+
+  async getSettingsSchema(instrumentId: string): Promise<InstrumentSettingField[]> {
+    const entry = this.#requireUsableEntry(instrumentId);
+    return entry.settings.slice();
+  }
+
+  async getSettingsValues(instrumentId: string): Promise<Record<string, unknown>> {
+    const entry = this.#requireUsableEntry(instrumentId);
+    return this.#readSettingsValues(entry);
+  }
+
+  async setSettingValue(
+    instrumentId: string,
+    key: string,
+    value: unknown
+  ): Promise<Record<string, unknown>> {
+    const entry = this.#requireUsableEntry(instrumentId);
+    const field = entry.settings.find((item) => item.key === key) ?? null;
+    if (!field) {
+      throw new Error(`Unknown setting '${key}' for instrument '${entry.id}'`);
+    }
+
+    const normalized = normalizeSettingValue(field, value);
+    if (field.secret) {
+      if (normalized == null || normalized === "") {
+        await this.#storage.deleteSettingSecret(entry.id, field.key);
+      } else {
+        await this.#storage.setSettingSecret(entry.id, field.key, String(normalized));
+      }
+    } else if (normalized == null) {
+      await this.#storage.deleteSettingProperty(entry.id, field.key);
+    } else {
+      await this.#storage.setSettingProperty(entry.id, field.key, normalized);
+    }
+
+    return this.#readSettingsValues(entry);
   }
 
   async getProperty(instrumentId: string, key: string): Promise<unknown | null> {
@@ -442,11 +491,6 @@ export class InstrumentRuntime {
       };
     };
 
-    const startSession: InstrumentBackendContext["host"]["sessions"]["start"] = async (params) => {
-      requirePermission(entry, "sessions");
-      return this.#hostApi.sessions.start(params);
-    };
-
     return {
       instrumentId: entry.id,
       permissions: entry.permissions,
@@ -471,8 +515,10 @@ export class InstrumentRuntime {
           sqlExecute: async (sql, params, db) => this.sqlExecute(entry.id, sql, params, db),
         },
         sessions: {
-          start: startSession,
-          spawn: startSession,
+          start: async (params) => {
+            requirePermission(entry, "sessions");
+            return this.#hostApi.sessions.start(params);
+          },
           sendFollowUp: async (params) => {
             requirePermission(entry, "sessions");
             await this.#hostApi.sessions.sendFollowUp(params);
@@ -525,6 +571,11 @@ export class InstrumentRuntime {
         events: {
           subscribe,
         },
+        settings: {
+          getSchema: async () => this.getSettingsSchema(entry.id),
+          getValues: async () => this.getSettingsValues(entry.id),
+          setValue: async (key, value) => this.setSettingValue(entry.id, key, value),
+        },
       },
     };
   }
@@ -564,6 +615,7 @@ export class InstrumentRuntime {
         source: "bundled",
         installPath: loaded.installPath,
         manifestPath: loaded.manifestPath,
+        runtime: loaded.manifest.runtime ?? "vanilla",
         entrypoint: loaded.manifest.entrypoint,
         ...(loaded.manifest.backendEntrypoint
           ? { backendEntrypoint: loaded.manifest.backendEntrypoint }
@@ -571,6 +623,7 @@ export class InstrumentRuntime {
         hostApiVersion: loaded.manifest.hostApiVersion,
         panels: loaded.manifest.panels,
         permissions: loaded.manifest.permissions,
+        settings: loaded.manifest.settings ?? [],
         launcher: loaded.manifest.launcher,
         enabled: existing?.enabled ?? true,
         status,
@@ -587,20 +640,22 @@ export class InstrumentRuntime {
     if (!entry.enabled || entry.status === "disabled" || entry.status === "blocked") return;
     const module = await this.#loadBackendModule(entry);
     if (module.activated) return;
-    if (!module.activate) {
+    if (!module.definition) {
       module.activated = true;
       return;
     }
-    const ctx = this.#buildContext(entry);
-    await module.activate(ctx);
+    if (module.definition.onStart) {
+      const ctx = this.#buildContext(entry);
+      await module.definition.onStart(ctx);
+    }
     module.activated = true;
   }
 
   async #deactivateBackend(instrumentId: string): Promise<void> {
     const module = this.#backendModuleCache.get(instrumentId);
-    if (module?.activated && module.deactivate) {
+    if (module?.activated && module.definition?.onStop) {
       try {
-        await module.deactivate();
+        await module.definition.onStop();
       } catch (err) {
         console.warn(`Failed to deactivate backend instrument '${instrumentId}':`, err);
       }
@@ -615,38 +670,45 @@ export class InstrumentRuntime {
     entry: InstrumentRegistryEntry
   ): Promise<LoadedBackendModule> {
     const cached = this.#backendModuleCache.get(entry.id);
-    const absoluteEntrypoint = resolve(
-      entry.installPath,
-      entry.backendEntrypoint ?? entry.entrypoint
-    );
-    if (cached && cached.absoluteEntrypoint === absoluteEntrypoint) {
+    const backendPath = entry.backendEntrypoint
+      ? resolve(entry.installPath, entry.backendEntrypoint)
+      : null;
+    if (cached && cached.absoluteEntrypoint === backendPath) {
       return cached;
     }
 
-    const href = pathToFileURL(absoluteEntrypoint).href;
-    const imported = await import(`${href}?t=${Date.now()}`);
-    const moduleLike = (imported.default ?? imported) as Partial<InstrumentBackendModule>;
-    if (!moduleLike || (
-      typeof moduleLike.invoke !== "function"
-      && typeof moduleLike.activate !== "function"
-      && typeof moduleLike.deactivate !== "function"
-    )) {
-      throw new Error(
-        `Instrument backend module '${entry.id}' must export at least one of activate(), deactivate(), invoke()`
-      );
+    if (!backendPath) {
+      const loaded: LoadedBackendModule = {
+        definition: null,
+        absoluteEntrypoint: null,
+        activated: false,
+      };
+      this.#backendModuleCache.set(entry.id, loaded);
+      return loaded;
     }
 
+    const href = pathToFileURL(backendPath).href;
+    const imported = await import(`${href}?t=${Date.now()}`);
+    const moduleLike = (imported.default ?? imported) as Partial<InstrumentBackendDefinition>;
+    if (!moduleLike || moduleLike.kind !== "tango.instrument.backend.v2") {
+      throw new Error(
+        `Instrument backend module '${entry.id}' must export kind='tango.instrument.backend.v2'`
+      );
+    }
+    if (!moduleLike.actions || typeof moduleLike.actions !== "object") {
+      throw new Error(`Instrument backend module '${entry.id}' must export actions`);
+    }
+
+    const definition: InstrumentBackendDefinition = {
+      kind: "tango.instrument.backend.v2",
+      actions: moduleLike.actions,
+      onStart: moduleLike.onStart,
+      onStop: moduleLike.onStop,
+    };
+
     const loaded: LoadedBackendModule = {
-      invoke: moduleLike.invoke
-        ? moduleLike.invoke.bind(moduleLike)
-        : undefined,
-      activate: moduleLike.activate
-        ? moduleLike.activate.bind(moduleLike)
-        : undefined,
-      deactivate: moduleLike.deactivate
-        ? moduleLike.deactivate.bind(moduleLike)
-        : undefined,
-      absoluteEntrypoint,
+      definition,
+      absoluteEntrypoint: backendPath,
       activated: false,
     };
 
@@ -661,4 +723,120 @@ export class InstrumentRuntime {
     const permission = EVENT_PERMISSION_MAP[event];
     requirePermission(entry, permission);
   }
+
+  async #readSettingsValues(entry: InstrumentRegistryEntry): Promise<Record<string, unknown>> {
+    const values: Record<string, unknown> = {};
+    for (const field of entry.settings) {
+      if (field.secret) {
+        const secret = await this.#storage.getSettingSecret(entry.id, field.key);
+        values[field.key] = secret ?? ("default" in field ? field.default : null);
+        continue;
+      }
+      const prop = await this.#storage.getSettingProperty(entry.id, field.key);
+      if (prop == null) {
+        values[field.key] = "default" in field ? field.default : null;
+      } else {
+        values[field.key] = prop;
+      }
+    }
+    return values;
+  }
+}
+
+function validateSchema(
+  value: unknown,
+  schema: ActionSchema,
+  path: string
+): string | null {
+  if (schema.type === "any") return null;
+  if (schema.type === "null") {
+    return value == null ? null : `${path} must be null`;
+  }
+  if (schema.type === "string") {
+    return typeof value === "string" ? null : `${path} must be string`;
+  }
+  if (schema.type === "number") {
+    return typeof value === "number" && Number.isFinite(value)
+      ? null
+      : `${path} must be number`;
+  }
+  if (schema.type === "boolean") {
+    return typeof value === "boolean" ? null : `${path} must be boolean`;
+  }
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return `${path} must be array`;
+    if (!schema.items) return null;
+    for (let i = 0; i < value.length; i += 1) {
+      const error = validateSchema(value[i], schema.items, `${path}[${i}]`);
+      if (error) return error;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return `${path} must be object`;
+  }
+
+  const obj = value as Record<string, unknown>;
+  const properties = schema.properties ?? {};
+  const required = new Set(schema.required ?? []);
+  for (const key of required) {
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) {
+      return `${path}.${key} is required`;
+    }
+  }
+
+  for (const [key, val] of Object.entries(obj)) {
+    const subSchema = properties[key];
+    if (!subSchema) {
+      if (schema.additionalProperties === false) {
+        return `${path}.${key} is not allowed`;
+      }
+      continue;
+    }
+    const error = validateSchema(val, subSchema, `${path}.${key}`);
+    if (error) return error;
+  }
+  return null;
+}
+
+function normalizeSettingValue(
+  field: InstrumentSettingField,
+  value: unknown
+): unknown {
+  if (value == null || value === "") {
+    if (field.required) {
+      throw new Error(`Setting '${field.key}' is required`);
+    }
+    return null;
+  }
+
+  if (field.type === "string") {
+    return String(value);
+  }
+  if (field.type === "number") {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      throw new Error(`Setting '${field.key}' must be a number`);
+    }
+    if (typeof field.min === "number" && n < field.min) {
+      throw new Error(`Setting '${field.key}' must be >= ${field.min}`);
+    }
+    if (typeof field.max === "number" && n > field.max) {
+      throw new Error(`Setting '${field.key}' must be <= ${field.max}`);
+    }
+    return n;
+  }
+  if (field.type === "boolean") {
+    if (typeof value === "boolean") return value;
+    if (value === "true" || value === "1") return true;
+    if (value === "false" || value === "0") return false;
+    throw new Error(`Setting '${field.key}' must be a boolean`);
+  }
+
+  const selected = String(value);
+  const exists = field.options.some((option) => option.value === selected);
+  if (!exists) {
+    throw new Error(`Invalid value for setting '${field.key}'`);
+  }
+  return selected;
 }

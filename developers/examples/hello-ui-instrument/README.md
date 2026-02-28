@@ -12,6 +12,9 @@ developers/examples/hello-ui-instrument
   dist/backend.js
 ```
 
+- frontend: `defineInstrument(...)` v2
+- backend: `actions.ping` in `tango.instrument.backend.v2`
+
 ## Build frontend bundle
 
 ```bash

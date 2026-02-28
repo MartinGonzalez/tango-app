@@ -461,4 +461,205 @@ export const UI_STYLES = `
   color: var(--tui-text-secondary);
   margin-top: 4px;
 }
+
+.tui-root .tui-toggle,
+.tui-root .tui-checkbox,
+.tui-root .tui-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--tui-text);
+  font-size: 12px;
+}
+
+.tui-root .tui-toggle input,
+.tui-root .tui-checkbox input,
+.tui-root .tui-radio input {
+  margin: 0;
+}
+
+.tui-root .tui-toggle {
+  position: relative;
+}
+
+.tui-root .tui-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.tui-root .tui-toggle-slider {
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--tui-border);
+  background: var(--tui-bg-secondary);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  transition: all 120ms ease;
+}
+
+.tui-root .tui-toggle-slider::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--tui-text-secondary);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.tui-root .tui-toggle input:checked + .tui-toggle-slider {
+  border-color: rgba(217, 119, 87, 0.45);
+  background: rgba(217, 119, 87, 0.15);
+}
+
+.tui-root .tui-toggle input:checked + .tui-toggle-slider::after {
+  transform: translateX(14px);
+  background: var(--tui-primary);
+}
+
+.tui-root .tui-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tui-root .tui-segmented {
+  display: inline-flex;
+  border: 1px solid var(--tui-border);
+  border-radius: 8px;
+  padding: 2px;
+  background: var(--tui-bg-secondary);
+  gap: 2px;
+}
+
+.tui-root .tui-segmented-item {
+  border: 0;
+  background: transparent;
+  color: var(--tui-text-secondary);
+  border-radius: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.tui-root .tui-segmented-item.is-active {
+  background: rgba(217, 119, 87, 0.12);
+  color: var(--tui-text);
+}
+
+.tui-root .tui-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tui-root .tui-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tui-root .tui-tabs-trigger {
+  border: 1px solid var(--tui-border);
+  border-radius: 8px;
+  background: var(--tui-bg-secondary);
+  color: var(--tui-text-secondary);
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.tui-root .tui-tabs-trigger.is-active {
+  border-color: rgba(217, 119, 87, 0.45);
+  color: var(--tui-text);
+}
+
+.tui-root .tui-tabs-panel {
+  border: 1px solid var(--tui-border);
+  border-radius: 8px;
+  background: var(--tui-bg-card);
+  padding: 10px;
+}
+
+.tui-root .tui-dropdown {
+  position: relative;
+}
+
+.tui-root .tui-dropdown-trigger {
+  list-style: none;
+  border: 1px solid var(--tui-border);
+  border-radius: 8px;
+  background: var(--tui-bg-secondary);
+  color: var(--tui-text);
+  min-height: 30px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.tui-root .tui-dropdown-menu {
+  margin-top: 6px;
+  border: 1px solid var(--tui-border);
+  border-radius: 8px;
+  background: var(--tui-bg-card);
+  overflow: hidden;
+  min-width: 180px;
+}
+
+.tui-root .tui-dropdown-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--tui-text);
+  text-align: left;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.tui-root .tui-dropdown-item:hover {
+  background: var(--tui-bg-hover);
+}
+
+.tui-root .tui-dropdown-item.is-danger {
+  color: #fecaca;
+}
+
+.tui-root .tui-selection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tui-root .tui-selection-item {
+  width: 100%;
+  border: 1px solid var(--tui-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tui-text-secondary);
+  text-align: left;
+  padding: 8px 10px;
+}
+
+.tui-root .tui-selection-item:hover {
+  background: var(--tui-bg-hover);
+}
+
+.tui-root .tui-selection-item.is-active {
+  border-color: rgba(217, 119, 87, 0.4);
+  color: var(--tui-text);
+  background: rgba(217, 119, 87, 0.12);
+}
+
+.tui-root .tui-selection-title {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tui-root .tui-selection-subtitle {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--tui-text-secondary);
+}
 `;

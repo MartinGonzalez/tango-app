@@ -1,28 +1,28 @@
 import type {
-  InstrumentFrontendModule,
   InstrumentRegistryEntry,
+  TangoInstrumentDefinition,
 } from "../../shared/types.ts";
 
 export type LoadInstrumentFrontendSource = (
   instrumentId: string
 ) => Promise<{ code: string; sourcePath: string }>;
 
-export async function loadInstrumentFrontend(
+export async function loadInstrumentDefinition(
   entry: InstrumentRegistryEntry,
   loadSource?: LoadInstrumentFrontendSource
-): Promise<InstrumentFrontendModule> {
+): Promise<TangoInstrumentDefinition> {
   const imported = await importInstrumentFrontendModule(entry, loadSource);
-  const moduleLike = (imported.default ?? imported) as Partial<InstrumentFrontendModule>;
-  if (!moduleLike || typeof moduleLike.activate !== "function") {
+  const moduleLike = (imported.default ?? imported) as Partial<TangoInstrumentDefinition>;
+  if (!moduleLike || moduleLike.kind !== "tango.instrument.v2" || !moduleLike.panels) {
     throw new Error(
-      `Instrument frontend module '${entry.id}' must export activate(ctx)`
+      `Instrument frontend module '${entry.id}' must export default defineInstrument(...) with kind='tango.instrument.v2'`
     );
   }
   return {
-    activate: moduleLike.activate.bind(moduleLike),
-    deactivate: moduleLike.deactivate
-      ? moduleLike.deactivate.bind(moduleLike)
-      : undefined,
+    kind: "tango.instrument.v2",
+    panels: moduleLike.panels,
+    defaults: moduleLike.defaults,
+    lifecycle: moduleLike.lifecycle,
   };
 }
 

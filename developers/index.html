@@ -61,10 +61,10 @@
             the current branch and how to create a new instrument project outside this repository.
           </p>
           <div class="callout">
-            <strong>Current status (v1):</strong>
+            <strong>Current status (v2):</strong>
             <p>
-              Runtime, manifest, permissions, registry and storage are active. Tasks is the first migrated pilot
-              instrument. Publishing/marketplace is intentionally out of scope for now.
+              Manifest-driven runtime, declarative panel contract, typed backend actions, settings schema, and
+              `instrument-ui` are active. Tasks runs as a decoupled pilot instrument.
             </p>
           </div>
         </section>
@@ -104,8 +104,11 @@
           <ol>
             <li>Create a standalone JS project (outside this repo is fine).</li>
             <li>Add <code>package.json</code> with <code>tango.instrument</code>.</li>
-            <li>Add UI primitives package: <code>@tango/instrument-ui</code>.</li>
-            <li>Create JS entrypoints (<code>dist/index.js</code> and optional <code>dist/backend.js</code>).</li>
+            <li>Add SDK dependencies: <code>@tango/instrument-sdk</code> and optionally <code>@tango/instrument-ui</code>.</li>
+            <li>Create entrypoints (<code>dist/index.js</code> and optional <code>dist/backend.js</code>).</li>
+            <li>Frontend must export <code>defineInstrument(...)</code> with <code>kind: "tango.instrument.v2"</code>.</li>
+            <li>Backend should export <code>kind: "tango.instrument.backend.v2"</code> and <code>actions</code>.</li>
+            <li>Run <code>tango-sdk sync</code> to generate <code>tango-env.d.ts</code> from manifest settings.</li>
             <li>Install from Tango UI via local path.</li>
             <li>Enable instrument and activate it from the Instruments launcher (hot-mount, no restart).</li>
           </ol>
@@ -131,9 +134,10 @@
       "id": "hello",
       "name": "Hello",
       "group": "Examples",
+      "runtime": "vanilla",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
-      "hostApiVersion": "1.0.0",
+      "hostApiVersion": "2.0.0",
       "launcher": {
         "sidebarShortcut": {
           "enabled": true,
@@ -147,59 +151,38 @@
   }
 }</code></pre>
           <h3>dist/index.js (frontend)</h3>
-          <pre><code>let outputEl = null;
+          <pre><code>import { defineInstrument } from "@tango/instrument-sdk";
 
-export function activate(ctx) {
-  const sidebar = document.createElement("div");
-  sidebar.textContent = "Hello Instrument Sidebar";
-
-  const panel = document.createElement("div");
-  const pingBtn = document.createElement("button");
-  pingBtn.textContent = "Ping backend";
-  outputEl = document.createElement("pre");
-  outputEl.textContent = "No backend call yet.";
-
-  pingBtn.addEventListener("click", async () => {
-    const result = await ctx.invoke("ping", { source: "hello-ui" });
-    outputEl.textContent = JSON.stringify(result, null, 2);
-  });
-
-  ctx.events.subscribe("session.ended", ({ sessionId, exitCode }) => {
-    outputEl.textContent = `Session ended: ${sessionId} (${exitCode})`;
-  });
-
-  // Canonical API
-  await ctx.sessions.start({
-    cwd: await ctx.stages.active(),
-    prompt: "hello from instrument",
-    fullAccess: true,
-  });
-
-  panel.append("Hello from Tango Instrument");
-  panel.append(pingBtn);
-  panel.append(outputEl);
-
-  ctx.panels.mount("sidebar", sidebar);
-  ctx.panels.mount("second", panel);
-  ctx.panels.setVisible("sidebar", true);
-  ctx.panels.setVisible("second", true);
-}
-
-export function deactivate() {
-  outputEl = null;
-}</code></pre>
-          <h3>dist/backend.js (backend)</h3>
-          <pre><code>export async function invoke(ctx, method, params) {
-  if (method === "ping") {
-    return {
-      ok: true,
-      instrumentId: ctx.instrumentId,
-      timestamp: new Date().toISOString(),
-      params: params ?? null,
-    };
+export default defineInstrument({
+  kind: "tango.instrument.v2",
+  defaults: {
+    visible: { sidebar: true, second: true }
+  },
+  panels: {
+    sidebar: () => ({ node: renderSidebar() }),
+    second: ({ api }) => ({
+      node: renderPanel(api),
+      visible: true
+    })
+  },
+  lifecycle: {
+    onStop: () => cleanup()
   }
-  throw new Error(`Unknown method: ${method}`);
-}</code></pre>
+});</code></pre>
+          <h3>dist/backend.js (backend)</h3>
+          <pre><code>export default {
+  kind: "tango.instrument.backend.v2",
+  actions: {
+    ping: {
+      handler: (ctx, input) => ({
+        ok: true,
+        instrumentId: ctx.instrumentId,
+        timestamp: new Date().toISOString(),
+        input: input ?? null
+      })
+    }
+  }
+};</code></pre>
         </section>
 
         <section id="scaffold" data-title="Create Project">
@@ -211,7 +194,7 @@ export function deactivate() {
     index.js
     backend.js</code></pre>
           <p class="muted">
-            Runtime v1 loads JavaScript directly from the install path.
+            Runtime v2 still loads JavaScript directly from install path (trusted runtime).
           </p>
         </section>
 
@@ -228,7 +211,8 @@ export function deactivate() {
       "group": "Community",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
-      "hostApiVersion": "1.0.0",
+      "runtime": "vanilla",
+      "hostApiVersion": "2.0.0",
       "panels": {
         "sidebar": true,
         "first": false,
@@ -241,9 +225,25 @@ export function deactivate() {
         "storage.properties",
         "sessions",
         "connectors.read",
+        "connectors.credentials.read",
         "connectors.connect",
         "stages.read",
         "stages.observe"
+      ],
+      "settings": [
+        {
+          "key": "defaultStage",
+          "title": "Default Stage",
+          "type": "string",
+          "required": false,
+          "default": ""
+        },
+        {
+          "key": "apiToken",
+          "title": "API Token",
+          "type": "string",
+          "secret": true
+        }
       ]
     }
   }
@@ -257,57 +257,70 @@ export function deactivate() {
 
         <section id="frontend-lifecycle" data-title="Frontend Lifecycle">
           <h2>Frontend Lifecycle</h2>
-          <p>Instrument frontend module contract:</p>
-          <pre><code>export async function activate(ctx) {
-  const root = document.createElement("div");
-  root.textContent = "Hello from instrument";
-  ctx.panels.mount("second", root);
-  ctx.panels.setVisible("sidebar", true);
-  ctx.panels.setVisible("second", true);
-}
+          <p>Frontend module contract is declarative in v2:</p>
+          <pre><code>import { defineInstrument } from "@tango/instrument-sdk";
 
-export async function deactivate() {
-  // Optional cleanup
-}</code></pre>
+export default defineInstrument({
+  kind: "tango.instrument.v2",
+  panels: {
+    sidebar: ({ api }) => ({ node: renderSidebar(api) }),
+    second: ({ api }) => ({ node: renderSecond(api), visible: true })
+  },
+  defaults: {
+    visible: { sidebar: true, second: true }
+  },
+  lifecycle: {
+    onStart: async (api) => { /* optional boot */ },
+    onStop: async () => { /* optional cleanup */ }
+  }
+});</code></pre>
           <p>
-            Use <code>ctx.panels</code> to mount/unmount in <code>sidebar</code>, <code>first</code>,
-            <code>second</code>, or <code>right</code>.
-          </p>
-          <p class="muted">
-            Current runtime slice for docs/demo supports <code>sidebar</code> and <code>second</code>.
+            Return panel nodes for <code>sidebar</code>, <code>first</code>, <code>second</code>, and
+            <code>right</code>. The host manages mounting and unmounting.
           </p>
         </section>
 
         <section id="backend-lifecycle" data-title="Backend Lifecycle">
           <h2>Backend Lifecycle</h2>
-          <p>Backend module contract:</p>
-          <pre><code>export async function invoke(ctx, method, params) {
-  switch (method) {
-    case "health":
-      return { ok: true, instrumentId: ctx.instrumentId };
-    case "echo":
-      return { params };
-    default:
-      throw new Error(`Unknown method: ${method}`);
+          <p>Backend contract is actions-based in v2:</p>
+          <pre><code>export default {
+  kind: "tango.instrument.backend.v2",
+  onStart: async (ctx) => {},
+  onStop: async () => {},
+  actions: {
+    health: {
+      handler: async (ctx) => ({ ok: true, instrumentId: ctx.instrumentId })
+    },
+    echo: {
+      input: { type: "object" },
+      handler: async (_ctx, input) => ({ input })
+    }
   }
-}</code></pre>
+};</code></pre>
           <p>
-            The host calls this through <code>instrumentInvoke</code>. Keep methods explicit and versioned.
+            Frontend calls backend actions through <code>api.actions.call(name, input)</code>.
           </p>
         </section>
 
         <section id="sdk" data-title="SDK Surface">
-          <h2>SDK Surface (v1)</h2>
+          <h2>SDK Surface (v2)</h2>
           <ul>
-            <li><code>panels</code>: mount/unmount and visibility per panel slot.</li>
             <li><code>storage</code>: properties, files, and SQL scoped under <code>~/.tango/instruments/&lt;id&gt;/</code>.</li>
             <li><code>sessions</code>: <code>start</code> / <code>spawn</code> (alias), send/kill/list/focus Claude sessions.</li>
             <li><code>connectors</code>: list/connect/disconnect provider auth by stage.</li>
             <li><code>stages</code>: list stages and get active stage.</li>
             <li><code>events</code>: subscribe to host hooks (<code>session.*</code>, <code>snapshot.update</code>, <code>stage.*</code>, etc.).</li>
-            <li><code>invoke</code>: call backend handlers through <code>instrumentInvoke</code>.</li>
+            <li><code>actions.call</code>: typed backend action invocation.</li>
+            <li><code>settings</code>: schema + values + secret-aware writes.</li>
             <li><code>emit</code>: publish <code>instrumentEvent</code> to frontend host.</li>
+            <li><code>@tango/instrument-sdk/react</code>: <code>defineReactInstrument</code> and hooks (<code>useInstrumentApi</code>, <code>useHostEvent</code>, <code>useInstrumentAction</code>).</li>
           </ul>
+          <h3>Generate settings types</h3>
+          <pre><code># inside your instrument folder
+tango-sdk sync
+
+# output
+tango-env.d.ts</code></pre>
         </section>
 
         <section id="instrument-ui" data-title="Instrument UI">
@@ -315,6 +328,9 @@ export async function deactivate() {
           <p>
             <code>@tango/instrument-ui</code> provides vanilla DOM helpers with scoped classes
             (<code>.tui-*</code>) and Tango token fallbacks.
+          </p>
+          <p class="muted">
+            React wrappers are also available via <code>@tango/instrument-ui/react</code>.
           </p>
           <h3>Dependency</h3>
           <pre><code>{
@@ -324,6 +340,9 @@ export async function deactivate() {
 }</code></pre>
           <h3>Frontend usage</h3>
           <pre><code>import {
+  defineInstrument,
+} from "@tango/instrument-sdk";
+import {
   ensureInstrumentUI,
   createRoot,
   panelHeader,
@@ -333,7 +352,11 @@ export async function deactivate() {
   listItem,
 } from "@tango/instrument-ui";
 
-export function activate(ctx) {
+export default defineInstrument({
+  kind: "tango.instrument.v2",
+  defaults: { visible: { sidebar: true, second: true } },
+  panels: {
+    sidebar: () => {
   ensureInstrumentUI();
 
   const sidebar = createRoot();
@@ -343,15 +366,15 @@ export function activate(ctx) {
       items: [listItem({ title: "Action", onClick: () => {} })],
     })
   );
-
-  const second = createRoot();
-  second.append(card({ content: button({ label: "Run", variant: "primary" }) }));
-
-  ctx.panels.mount("sidebar", sidebar);
-  ctx.panels.mount("second", second);
-  ctx.panels.setVisible("sidebar", true);
-  ctx.panels.setVisible("second", true);
-}</code></pre>
+      return { node: sidebar };
+    },
+    second: () => {
+      const second = createRoot();
+      second.append(card({ content: button({ label: "Run", variant: "primary" }) }));
+      return { node: second };
+    }
+  }
+});</code></pre>
           <p class="muted">
             Build frontend entrypoints as a bundled single-file module for runtime loading.
           </p>
@@ -365,6 +388,7 @@ storage.db
 storage.properties
 sessions
 connectors.read
+connectors.credentials.read
 connectors.connect
 stages.read
 stages.observe</code></pre>

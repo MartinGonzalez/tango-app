@@ -27,7 +27,7 @@ import type {
   PullRequestAgentReviewDocument,
   PullRequestAgentReviewStatus,
 } from "./pull-requests.ts";
-import type { InstrumentRegistryEntry } from "./instruments.ts";
+import type { InstrumentRegistryEntry, InstrumentSettingField } from "./instruments.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { ClaudeStreamEvent } from "./stream.ts";
 
@@ -299,6 +299,22 @@ export type AppRPC = {
         params: { instrumentId: string; deleteData?: boolean };
         response: { removed: boolean; dataDeleted: boolean };
       };
+      getInstrumentSettingsSchema: {
+        params: { instrumentId: string };
+        response: InstrumentSettingField[];
+      };
+      getInstrumentSettingsValues: {
+        params: { instrumentId: string };
+        response: { values: Record<string, unknown> };
+      };
+      setInstrumentSettingValue: {
+        params: {
+          instrumentId: string;
+          key: string;
+          value: unknown;
+        };
+        response: { values: Record<string, unknown> };
+      };
       instrumentStorageGetProperty: {
         params: { instrumentId: string; key: string };
         response: { value: unknown | null };
@@ -350,11 +366,11 @@ export type AppRPC = {
         };
         response: { changes: number; lastInsertRowid: number | null };
       };
-      instrumentInvoke: {
+      instrumentCallAction: {
         params: {
           instrumentId: string;
-          method: string;
-          params?: Record<string, unknown>;
+          action: string;
+          input?: unknown;
         };
         response: { result: unknown };
       };

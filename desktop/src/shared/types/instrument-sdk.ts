@@ -4,20 +4,14 @@ import type {
   ConnectorProvider,
   StageConnector,
 } from "./connectors.ts";
+import type { InstrumentEvent, InstrumentPermission, InstrumentSettingField } from "./instruments.ts";
+import type { PullRequestAgentReviewStatus } from "./pull-requests.ts";
 import type { SessionInfo } from "./sessions.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { ClaudeStreamEvent } from "./stream.ts";
 import type { ToolApprovalRequest } from "./tools.ts";
-import type { PullRequestAgentReviewStatus } from "./pull-requests.ts";
-import type { InstrumentEvent, InstrumentPermission } from "./instruments.ts";
 
-export type InstrumentPanelSlot = "sidebar" | "first" | "second" | "right";
-
-export type PanelAPI = {
-  mount: (slot: InstrumentPanelSlot, node: HTMLElement) => void;
-  unmount: (slot: InstrumentPanelSlot) => void;
-  setVisible: (slot: InstrumentPanelSlot, visible: boolean) => void;
-};
+export type TangoPanelSlot = "sidebar" | "first" | "second" | "right";
 
 export type StorageAPI = {
   getProperty: <T = unknown>(key: string) => Promise<T | null>;
@@ -39,28 +33,20 @@ export type StorageAPI = {
   ) => Promise<{ changes: number; lastInsertRowid: number | null }>;
 };
 
+export type SessionStartParams = {
+  prompt: string;
+  cwd: string;
+  fullAccess?: boolean;
+  sessionId?: string;
+  selectedFiles?: string[];
+  model?: string;
+  tools?: string[];
+};
+
 export type SessionsAPI = {
-  start: (params: {
-    prompt: string;
-    cwd: string;
-    fullAccess?: boolean;
-    sessionId?: string;
-    selectedFiles?: string[];
-    model?: string;
-    tools?: string[];
-  }) => Promise<{ sessionId: string }>;
-  /**
-   * @deprecated Use sessions.start().
-   */
-  spawn: (params: {
-    prompt: string;
-    cwd: string;
-    fullAccess?: boolean;
-    sessionId?: string;
-    selectedFiles?: string[];
-    model?: string;
-    tools?: string[];
-  }) => Promise<{ sessionId: string }>;
+  start: (params: SessionStartParams) => Promise<{ sessionId: string }>;
+  // Deprecated alias kept for one internal release.
+  spawn?: (params: SessionStartParams) => Promise<{ sessionId: string }>;
   sendFollowUp: (params: {
     sessionId: string;
     text: string;
@@ -139,47 +125,101 @@ export type ShortcutRegistration = {
   action: () => void | Promise<void>;
 };
 
-export type InstrumentContext = {
+export type InstrumentActionsAPI = {
+  call: <TInput = Record<string, unknown>, TOutput = unknown>(
+    action: string,
+    input?: TInput
+  ) => Promise<TOutput>;
+};
+
+export type InstrumentSettingsAPI = {
+  getSchema: () => Promise<InstrumentSettingField[]>;
+  getValues: <T extends Record<string, unknown> = Record<string, unknown>>() => Promise<T>;
+  setValue: (key: string, value: unknown) => Promise<Record<string, unknown>>;
+};
+
+export type InstrumentFrontendAPI = {
   instrumentId: string;
   permissions: InstrumentPermission[];
-  panels: PanelAPI;
   storage: StorageAPI;
   sessions: SessionsAPI;
   connectors: ConnectorsAPI;
   stages: StageAPI;
   events: HostEventsAPI;
-  invoke: <T = unknown>(
-    method: string,
-    params?: Record<string, unknown>
-  ) => Promise<T>;
+  actions: InstrumentActionsAPI;
+  settings: InstrumentSettingsAPI;
   registerShortcut: (shortcut: ShortcutRegistration) => void;
   emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
 };
 
-export type InstrumentFrontendModule = {
-  activate: (ctx: InstrumentContext) => Promise<void> | void;
-  deactivate?: () => Promise<void> | void;
+export type TangoPanelRenderResult =
+  | HTMLElement
+  | {
+      node: HTMLElement;
+      visible?: boolean;
+      onUnmount?: () => void | Promise<void>;
+    };
+
+export type TangoPanelComponent = (
+  props: { api: InstrumentFrontendAPI }
+) => TangoPanelRenderResult | null | Promise<TangoPanelRenderResult | null>;
+
+export type TangoInstrumentDefinition = {
+  kind: "tango.instrument.v2";
+  panels: {
+    sidebar?: TangoPanelComponent | null;
+    first?: TangoPanelComponent | null;
+    second?: TangoPanelComponent | null;
+    right?: TangoPanelComponent | null;
+  };
+  defaults?: {
+    visible?: Partial<Record<TangoPanelSlot, boolean>>;
+  };
+  lifecycle?: {
+    onStart?: (api: InstrumentFrontendAPI) => void | Promise<void>;
+    onStop?: () => void | Promise<void>;
+  };
+};
+
+export type ActionSchema =
+  | { type: "any" }
+  | { type: "null" }
+  | { type: "string" }
+  | { type: "number" }
+  | { type: "boolean" }
+  | { type: "array"; items?: ActionSchema }
+  | {
+      type: "object";
+      properties?: Record<string, ActionSchema>;
+      required?: string[];
+      additionalProperties?: boolean;
+    };
+
+export type InstrumentBackendAction<I = unknown, O = unknown> = {
+  input?: ActionSchema;
+  output?: ActionSchema;
+  handler: (ctx: InstrumentBackendContext, input: I) => Promise<O> | O;
+};
+
+export type InstrumentBackendHostAPI = {
+  storage: StorageAPI;
+  sessions: SessionsAPI;
+  connectors: ConnectorsAPI;
+  stages: StageAPI;
+  events: HostEventsAPI;
+  settings: InstrumentSettingsAPI;
 };
 
 export type InstrumentBackendContext = {
   instrumentId: string;
   permissions: InstrumentPermission[];
   emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
-  host: {
-    storage: StorageAPI;
-    sessions: SessionsAPI;
-    connectors: ConnectorsAPI;
-    stages: StageAPI;
-    events: HostEventsAPI;
-  };
+  host: InstrumentBackendHostAPI;
 };
 
-export type InstrumentBackendModule = {
-  activate?: (ctx: InstrumentBackendContext) => Promise<void> | void;
-  deactivate?: () => Promise<void> | void;
-  invoke?: (
-    ctx: InstrumentBackendContext,
-    method: string,
-    params: Record<string, unknown> | undefined
-  ) => Promise<unknown> | unknown;
+export type InstrumentBackendDefinition = {
+  kind: "tango.instrument.backend.v2";
+  actions: Record<string, InstrumentBackendAction<any, any>>;
+  onStart?: (ctx: InstrumentBackendContext) => Promise<void> | void;
+  onStop?: () => Promise<void> | void;
 };

@@ -9,12 +9,48 @@ export type InstrumentPermission =
   | "stages.read"
   | "stages.observe";
 
+export type InstrumentRuntime = "react" | "vanilla";
+
 export type InstrumentPanelConfig = {
   sidebar: boolean;
   first: boolean;
   second: boolean;
   right: boolean;
 };
+
+type InstrumentSettingFieldBase = {
+  key: string;
+  title: string;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+};
+
+export type InstrumentSettingField =
+  | (InstrumentSettingFieldBase & {
+      type: "string";
+      default?: string;
+      placeholder?: string;
+    })
+  | (InstrumentSettingFieldBase & {
+      type: "number";
+      default?: number;
+      min?: number;
+      max?: number;
+      step?: number;
+    })
+  | (InstrumentSettingFieldBase & {
+      type: "boolean";
+      default?: boolean;
+    })
+  | (InstrumentSettingFieldBase & {
+      type: "select";
+      default?: string;
+      options: Array<{
+        label: string;
+        value: string;
+      }>;
+    });
 
 export type InstrumentLauncherConfig = {
   sidebarShortcut?: {
@@ -29,11 +65,13 @@ export type InstrumentManifest = {
   id: string;
   name: string;
   group: string;
+  runtime?: InstrumentRuntime;
   entrypoint: string;
   backendEntrypoint?: string;
   hostApiVersion: string;
   panels: InstrumentPanelConfig;
   permissions: InstrumentPermission[];
+  settings?: InstrumentSettingField[];
   launcher?: InstrumentLauncherConfig;
 };
 
@@ -52,11 +90,13 @@ export type InstrumentRegistryEntry = {
   source: InstrumentInstallSource;
   installPath: string;
   manifestPath: string;
+  runtime: InstrumentRuntime;
   entrypoint: string;
   backendEntrypoint?: string;
   hostApiVersion: string;
   panels: InstrumentPanelConfig;
   permissions: InstrumentPermission[];
+  settings: InstrumentSettingField[];
   launcher?: InstrumentLauncherConfig;
   enabled: boolean;
   status: InstrumentStatus;

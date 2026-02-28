@@ -1,9 +1,11 @@
 import { TaskRepository } from "./backend/task-repository.ts";
 import { TasksStore } from "./backend/tasks-store.ts";
+import {
+  defineBackend,
+  type InstrumentBackendContext,
+} from "@tango/instrument-sdk";
 import type {
-  BackendConnectorsAPI,
   ConnectorProvider,
-  StorageAPI,
   TaskAction,
   TaskSourceKind,
 } from "./backend/types.ts";
@@ -28,33 +30,6 @@ type SessionEndedPayload = {
   exitCode: number;
 };
 
-type BackendContext = {
-  instrumentId: string;
-  emit: (event: { event: string; payload?: unknown }) => void;
-  host: {
-    storage: StorageAPI;
-    connectors: BackendConnectorsAPI;
-    sessions: {
-      start: (params: {
-        prompt: string;
-        cwd: string;
-        fullAccess?: boolean;
-        sessionId?: string;
-        selectedFiles?: string[];
-        model?: string;
-        tools?: string[];
-      }) => Promise<{ sessionId: string }>;
-      kill: (sessionId: string) => Promise<void>;
-    };
-    events: {
-      subscribe: <T>(
-        event: string,
-        handler: (payload: T) => void | Promise<void>
-      ) => () => void;
-    };
-  };
-};
-
 type TaskRunBinding = {
   runId: string;
   taskId: string;
@@ -66,7 +41,7 @@ let repository: TaskRepository | null = null;
 let unsubscribers: Array<() => void> = [];
 const taskRunsBySession = new Map<string, TaskRunBinding>();
 
-async function ensureRuntime(ctx: BackendContext): Promise<TaskRepository> {
+async function ensureRuntime(ctx: InstrumentBackendContext): Promise<TaskRepository> {
   if (!repository) {
     const store = new TasksStore(ctx.host.storage, "tasks");
     repository = new TaskRepository(store, ctx.host.connectors);
@@ -74,7 +49,11 @@ async function ensureRuntime(ctx: BackendContext): Promise<TaskRepository> {
   return repository;
 }
 
-function notifyTasksChanged(ctx: BackendContext, stagePath: string, taskId: string | null = null): void {
+function notifyTasksChanged(
+  ctx: InstrumentBackendContext,
+  stagePath: string,
+  taskId: string | null = null
+): void {
   if (!stagePath) return;
   ctx.emit({
     event: "tasks.changed",
@@ -86,7 +65,7 @@ function notifyTasksChanged(ctx: BackendContext, stagePath: string, taskId: stri
 }
 
 async function runTaskActionInternal(
-  ctx: BackendContext,
+  ctx: InstrumentBackendContext,
   taskId: string,
   action: TaskAction
 ): Promise<{ runId: string; sessionId: string | null }> {
@@ -155,7 +134,7 @@ async function remapTaskRunSession(tempId: string, realId: string): Promise<void
 }
 
 async function finalizeTaskRunFromResult(
-  ctx: BackendContext,
+  ctx: InstrumentBackendContext,
   sessionId: string,
   taskRun: TaskRunBinding,
   event: Record<string, unknown>
@@ -187,7 +166,7 @@ async function finalizeTaskRunFromResult(
 }
 
 async function finalizeTaskRunFromExit(
-  ctx: BackendContext,
+  ctx: InstrumentBackendContext,
   sessionId: string,
   exitCode: number
 ): Promise<void> {
@@ -207,7 +186,7 @@ async function finalizeTaskRunFromExit(
   }
 }
 
-function installEventHooks(ctx: BackendContext): void {
+function installEventHooks(ctx: InstrumentBackendContext): void {
   const unsubSessionResolved = ctx.host.events.subscribe<SessionResolvedPayload>("session.idResolved", ({ tempId, realId }) => {
     void remapTaskRunSession(tempId, realId);
   });
@@ -228,12 +207,12 @@ function installEventHooks(ctx: BackendContext): void {
   unsubscribers = [unsubSessionResolved, unsubSessionStream, unsubSessionEnded];
 }
 
-export async function activate(ctx: BackendContext): Promise<void> {
+async function onStart(ctx: InstrumentBackendContext): Promise<void> {
   await ensureRuntime(ctx);
   installEventHooks(ctx);
 }
 
-export async function deactivate(): Promise<void> {
+async function onStop(): Promise<void> {
   for (const unsubscribe of unsubscribers) {
     try {
       unsubscribe();
@@ -249,150 +228,254 @@ export async function deactivate(): Promise<void> {
   }
 }
 
-export async function invoke(
-  ctx: BackendContext,
-  method: string,
-  params?: Record<string, unknown>
+async function listStageTasksAction(
+  ctx: InstrumentBackendContext,
+  input?: { stagePath?: string }
 ): Promise<unknown> {
   const repo = await ensureRuntime(ctx);
-  const payload = params ?? {};
-
-  switch (method) {
-    case "listStageTasks": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      if (!stagePath) return [];
-      return repo.listStageTasks(stagePath);
-    }
-    case "getTaskDetail": {
-      const taskId = String(payload.taskId ?? "").trim();
-      if (!taskId) return null;
-      return repo.getTaskDetail(taskId);
-    }
-    case "createTask": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      const title = payload.title == null ? undefined : String(payload.title);
-      const notes = payload.notes == null ? undefined : String(payload.notes);
-      if (!stagePath) throw new Error("stagePath is required");
-      const task = await repo.createTask(stagePath, title, notes);
-      notifyTasksChanged(ctx, task.stagePath, task.id);
-      return task;
-    }
-    case "updateTask": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const patch = (payload.patch ?? {}) as Record<string, unknown>;
-      if (!taskId) return null;
-      const task = await repo.updateTask(taskId, patch);
-      if (task) {
-        notifyTasksChanged(ctx, task.stagePath, task.id);
-      }
-      return task;
-    }
-    case "deleteTask": {
-      const taskId = String(payload.taskId ?? "").trim();
-      if (!taskId) return { deleted: false };
-      const stagePath = (await repo.getTaskDetail(taskId))?.stagePath ?? null;
-      await repo.deleteTask(taskId);
-      if (stagePath) {
-        notifyTasksChanged(ctx, stagePath, null);
-      }
-      return { deleted: true };
-    }
-    case "addTaskSource": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const kind = String(payload.kind ?? "").trim() as TaskSourceKind;
-      const url = payload.url == null ? null : String(payload.url);
-      const content = payload.content == null ? null : String(payload.content);
-      if (!taskId) throw new Error("taskId is required");
-      let source = await repo.addTaskSource(taskId, kind, url, content);
-      if (source.url) {
-        const fetched = await repo.fetchTaskSource(source.id);
-        if (fetched) source = fetched;
-      }
-      const task = await repo.getTaskDetail(taskId);
-      if (task) {
-        notifyTasksChanged(ctx, task.stagePath, task.id);
-      }
-      return source;
-    }
-    case "updateTaskSource": {
-      const sourceId = String(payload.sourceId ?? "").trim();
-      const patch = (payload.patch ?? {}) as Record<string, unknown>;
-      if (!sourceId) return null;
-      let source = await repo.updateTaskSource(sourceId, patch);
-      if (source && patch.url !== undefined && patch.url !== null && String(patch.url).trim()) {
-        const fetched = await repo.fetchTaskSource(source.id);
-        if (fetched) source = fetched;
-      }
-      if (source) {
-        const task = await repo.getTaskDetail(source.taskId);
-        if (task) {
-          notifyTasksChanged(ctx, task.stagePath, task.id);
-        }
-      }
-      return source;
-    }
-    case "removeTaskSource": {
-      const sourceId = String(payload.sourceId ?? "").trim();
-      if (!sourceId) return { removed: false };
-      const source = await repo.getTaskSource(sourceId);
-      await repo.removeTaskSource(sourceId);
-      if (source) {
-        const task = await repo.getTaskDetail(source.taskId);
-        if (task) {
-          notifyTasksChanged(ctx, task.stagePath, task.id);
-        }
-      }
-      return { removed: true };
-    }
-    case "fetchTaskSource": {
-      const sourceId = String(payload.sourceId ?? "").trim();
-      if (!sourceId) return null;
-      const source = await repo.fetchTaskSource(sourceId);
-      if (source) {
-        const task = await repo.getTaskDetail(source.taskId);
-        if (task) {
-          notifyTasksChanged(ctx, task.stagePath, task.id);
-        }
-      }
-      return source;
-    }
-    case "runTaskAction": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const action = String(payload.action ?? "").trim();
-      if (!taskId) throw new Error("taskId is required");
-      if (action !== "improve" && action !== "plan" && action !== "execute") {
-        throw new Error(`Unsupported task action '${action}'`);
-      }
-      return runTaskActionInternal(ctx, taskId, action);
-    }
-    case "getTaskRuns": {
-      const taskId = String(payload.taskId ?? "").trim();
-      const limit = Number(payload.limit ?? 20);
-      return repo.getTaskRuns(taskId, Number.isFinite(limit) ? limit : 20);
-    }
-    case "listStageConnectors": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      if (!stagePath) return [];
-      return ctx.host.connectors.listStageConnectors(stagePath);
-    }
-    case "startConnectorAuth": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      const provider = String(payload.provider ?? "").trim() as ConnectorProvider;
-      return ctx.host.connectors.connect(stagePath, provider);
-    }
-    case "disconnectStageConnector": {
-      const stagePath = String(payload.stagePath ?? "").trim();
-      const provider = String(payload.provider ?? "").trim() as ConnectorProvider;
-      await ctx.host.connectors.disconnect(stagePath, provider);
-      return null;
-    }
-    default:
-      throw new Error(`Unsupported Tasks instrument method '${method}'`);
-  }
+  const stagePath = String(input?.stagePath ?? "").trim();
+  if (!stagePath) return [];
+  return repo.listStageTasks(stagePath);
 }
 
-export default {
-  activate,
-  deactivate,
-  invoke,
-};
+async function getTaskDetailAction(
+  ctx: InstrumentBackendContext,
+  input?: { taskId?: string }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const taskId = String(input?.taskId ?? "").trim();
+  if (!taskId) return null;
+  return repo.getTaskDetail(taskId);
+}
+
+async function createTaskAction(
+  ctx: InstrumentBackendContext,
+  input?: { stagePath?: string; title?: string | null; notes?: string | null }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const stagePath = String(input?.stagePath ?? "").trim();
+  const title = input?.title == null ? undefined : String(input.title);
+  const notes = input?.notes == null ? undefined : String(input.notes);
+  if (!stagePath) throw new Error("stagePath is required");
+  const task = await repo.createTask(stagePath, title, notes);
+  notifyTasksChanged(ctx, task.stagePath, task.id);
+  return task;
+}
+
+async function updateTaskAction(
+  ctx: InstrumentBackendContext,
+  input?: { taskId?: string; patch?: Record<string, unknown> }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const taskId = String(input?.taskId ?? "").trim();
+  const patch = (input?.patch ?? {}) as Record<string, unknown>;
+  if (!taskId) return null;
+  const task = await repo.updateTask(taskId, patch);
+  if (task) {
+    notifyTasksChanged(ctx, task.stagePath, task.id);
+  }
+  return task;
+}
+
+async function deleteTaskAction(
+  ctx: InstrumentBackendContext,
+  input?: { taskId?: string }
+): Promise<{ deleted: boolean }> {
+  const repo = await ensureRuntime(ctx);
+  const taskId = String(input?.taskId ?? "").trim();
+  if (!taskId) return { deleted: false };
+  const stagePath = (await repo.getTaskDetail(taskId))?.stagePath ?? null;
+  await repo.deleteTask(taskId);
+  if (stagePath) {
+    notifyTasksChanged(ctx, stagePath, null);
+  }
+  return { deleted: true };
+}
+
+async function addTaskSourceAction(
+  ctx: InstrumentBackendContext,
+  input?: {
+    taskId?: string;
+    kind?: string;
+    url?: string | null;
+    content?: string | null;
+  }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const taskId = String(input?.taskId ?? "").trim();
+  const kind = String(input?.kind ?? "").trim() as TaskSourceKind;
+  const url = input?.url == null ? null : String(input.url);
+  const content = input?.content == null ? null : String(input.content);
+  if (!taskId) throw new Error("taskId is required");
+  let source = await repo.addTaskSource(taskId, kind, url, content);
+  if (source.url) {
+    const fetched = await repo.fetchTaskSource(source.id);
+    if (fetched) source = fetched;
+  }
+  const task = await repo.getTaskDetail(taskId);
+  if (task) {
+    notifyTasksChanged(ctx, task.stagePath, task.id);
+  }
+  return source;
+}
+
+async function updateTaskSourceAction(
+  ctx: InstrumentBackendContext,
+  input?: {
+    sourceId?: string;
+    patch?: Record<string, unknown>;
+  }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const sourceId = String(input?.sourceId ?? "").trim();
+  const patch = (input?.patch ?? {}) as Record<string, unknown>;
+  if (!sourceId) return null;
+  let source = await repo.updateTaskSource(sourceId, patch);
+  if (source && patch.url !== undefined && patch.url !== null && String(patch.url).trim()) {
+    const fetched = await repo.fetchTaskSource(source.id);
+    if (fetched) source = fetched;
+  }
+  if (source) {
+    const task = await repo.getTaskDetail(source.taskId);
+    if (task) {
+      notifyTasksChanged(ctx, task.stagePath, task.id);
+    }
+  }
+  return source;
+}
+
+async function removeTaskSourceAction(
+  ctx: InstrumentBackendContext,
+  input?: { sourceId?: string }
+): Promise<{ removed: boolean }> {
+  const repo = await ensureRuntime(ctx);
+  const sourceId = String(input?.sourceId ?? "").trim();
+  if (!sourceId) return { removed: false };
+  const source = await repo.getTaskSource(sourceId);
+  await repo.removeTaskSource(sourceId);
+  if (source) {
+    const task = await repo.getTaskDetail(source.taskId);
+    if (task) {
+      notifyTasksChanged(ctx, task.stagePath, task.id);
+    }
+  }
+  return { removed: true };
+}
+
+async function fetchTaskSourceAction(
+  ctx: InstrumentBackendContext,
+  input?: { sourceId?: string }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const sourceId = String(input?.sourceId ?? "").trim();
+  if (!sourceId) return null;
+  const source = await repo.fetchTaskSource(sourceId);
+  if (source) {
+    const task = await repo.getTaskDetail(source.taskId);
+    if (task) {
+      notifyTasksChanged(ctx, task.stagePath, task.id);
+    }
+  }
+  return source;
+}
+
+async function runTaskActionAction(
+  ctx: InstrumentBackendContext,
+  input?: { taskId?: string; action?: string }
+): Promise<{ runId: string; sessionId: string | null }> {
+  const taskId = String(input?.taskId ?? "").trim();
+  const action = String(input?.action ?? "").trim();
+  if (!taskId) throw new Error("taskId is required");
+  if (action !== "improve" && action !== "plan" && action !== "execute") {
+    throw new Error(`Unsupported task action '${action}'`);
+  }
+  return runTaskActionInternal(ctx, taskId, action);
+}
+
+async function getTaskRunsAction(
+  ctx: InstrumentBackendContext,
+  input?: { taskId?: string; limit?: number }
+): Promise<unknown> {
+  const repo = await ensureRuntime(ctx);
+  const taskId = String(input?.taskId ?? "").trim();
+  const limit = Number(input?.limit ?? 20);
+  return repo.getTaskRuns(taskId, Number.isFinite(limit) ? limit : 20);
+}
+
+async function listStageConnectorsAction(
+  ctx: InstrumentBackendContext,
+  input?: { stagePath?: string }
+): Promise<unknown> {
+  const stagePath = String(input?.stagePath ?? "").trim();
+  if (!stagePath) return [];
+  return ctx.host.connectors.listStageConnectors(stagePath);
+}
+
+async function startConnectorAuthAction(
+  ctx: InstrumentBackendContext,
+  input?: { stagePath?: string; provider?: string }
+): Promise<unknown> {
+  const stagePath = String(input?.stagePath ?? "").trim();
+  const provider = String(input?.provider ?? "").trim() as ConnectorProvider;
+  return ctx.host.connectors.connect(stagePath, provider);
+}
+
+async function disconnectStageConnectorAction(
+  ctx: InstrumentBackendContext,
+  input?: { stagePath?: string; provider?: string }
+): Promise<null> {
+  const stagePath = String(input?.stagePath ?? "").trim();
+  const provider = String(input?.provider ?? "").trim() as ConnectorProvider;
+  await ctx.host.connectors.disconnect(stagePath, provider);
+  return null;
+}
+
+export default defineBackend({
+  kind: "tango.instrument.backend.v2",
+  onStart,
+  onStop,
+  actions: {
+    listStageTasks: {
+      handler: listStageTasksAction,
+    },
+    getTaskDetail: {
+      handler: getTaskDetailAction,
+    },
+    createTask: {
+      handler: createTaskAction,
+    },
+    updateTask: {
+      handler: updateTaskAction,
+    },
+    deleteTask: {
+      handler: deleteTaskAction,
+    },
+    addTaskSource: {
+      handler: addTaskSourceAction,
+    },
+    updateTaskSource: {
+      handler: updateTaskSourceAction,
+    },
+    removeTaskSource: {
+      handler: removeTaskSourceAction,
+    },
+    fetchTaskSource: {
+      handler: fetchTaskSourceAction,
+    },
+    runTaskAction: {
+      handler: runTaskActionAction,
+    },
+    getTaskRuns: {
+      handler: getTaskRunsAction,
+    },
+    listStageConnectors: {
+      handler: listStageConnectorsAction,
+    },
+    startConnectorAuth: {
+      handler: startConnectorAuthAction,
+    },
+    disconnectStageConnector: {
+      handler: disconnectStageConnectorAction,
+    },
+  },
+});

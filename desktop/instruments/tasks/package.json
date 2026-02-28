@@ -13,6 +13,7 @@
     "test": "bun test ./test"
   },
   "dependencies": {
+    "@tango/instrument-sdk": "file:../sdk",
     "@tango/instrument-ui": "file:../ui"
   },
   "tango": {
@@ -20,9 +21,10 @@
       "id": "tasks",
       "name": "Tasks",
       "group": "Core",
+      "runtime": "vanilla",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
-      "hostApiVersion": "1.0.0",
+      "hostApiVersion": "2.0.0",
       "launcher": {
         "sidebarShortcut": {
           "enabled": true,

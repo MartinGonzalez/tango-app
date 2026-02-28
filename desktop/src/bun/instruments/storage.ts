@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { Database } from "bun:sqlite";
+import { KeychainStore } from "../keychain-store.ts";
 
 type SqlResult = {
   changes: number;
@@ -9,8 +10,15 @@ type SqlResult = {
 };
 
 const INSTRUMENTS_HOME = join(homedir(), ".tango", "instruments");
+const SETTINGS_KEYCHAIN_SERVICE = "dev.tango.app.instruments.settings";
 
 export class InstrumentStorage {
+  #keychain: KeychainStore;
+
+  constructor(opts?: { keychain?: KeychainStore }) {
+    this.#keychain = opts?.keychain ?? new KeychainStore();
+  }
+
   instrumentRoot(instrumentId: string): string {
     return join(INSTRUMENTS_HOME, instrumentId);
   }
@@ -30,6 +38,53 @@ export class InstrumentStorage {
   async deleteInstrumentData(instrumentId: string): Promise<void> {
     const root = this.instrumentRoot(instrumentId);
     await rm(root, { recursive: true, force: true });
+  }
+
+  async getSettingProperty(
+    instrumentId: string,
+    key: string
+  ): Promise<unknown | null> {
+    return this.getProperty(instrumentId, `settings.${key}`);
+  }
+
+  async setSettingProperty(
+    instrumentId: string,
+    key: string,
+    value: unknown
+  ): Promise<void> {
+    await this.setProperty(instrumentId, `settings.${key}`, value);
+  }
+
+  async deleteSettingProperty(
+    instrumentId: string,
+    key: string
+  ): Promise<void> {
+    await this.deleteProperty(instrumentId, `settings.${key}`);
+  }
+
+  async getSettingSecret(
+    instrumentId: string,
+    key: string
+  ): Promise<string | null> {
+    const account = this.#settingSecretAccount(instrumentId, key);
+    return this.#keychain.getSecret(SETTINGS_KEYCHAIN_SERVICE, account);
+  }
+
+  async setSettingSecret(
+    instrumentId: string,
+    key: string,
+    value: string
+  ): Promise<void> {
+    const account = this.#settingSecretAccount(instrumentId, key);
+    await this.#keychain.setSecret(SETTINGS_KEYCHAIN_SERVICE, account, value);
+  }
+
+  async deleteSettingSecret(
+    instrumentId: string,
+    key: string
+  ): Promise<void> {
+    const account = this.#settingSecretAccount(instrumentId, key);
+    await this.#keychain.deleteSecret(SETTINGS_KEYCHAIN_SERVICE, account);
   }
 
   async getProperty(
@@ -188,6 +243,12 @@ export class InstrumentStorage {
       throw new Error("Invalid instrument file path");
     }
     return absolute;
+  }
+
+  #settingSecretAccount(instrumentId: string, key: string): string {
+    const safeInstrument = String(instrumentId ?? "").trim();
+    const safeKey = String(key ?? "").trim();
+    return `instrument:${safeInstrument}:setting:${safeKey}`;
   }
 }
 

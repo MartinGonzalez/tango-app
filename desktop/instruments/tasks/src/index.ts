@@ -15,6 +15,10 @@ import {
   select,
   textarea,
 } from "@tango/instrument-ui";
+import {
+  defineInstrument,
+  type InstrumentFrontendAPI,
+} from "@tango/instrument-sdk";
 
 type TaskStatus =
   | "todo"
@@ -62,28 +66,6 @@ type InstrumentEventPayload = {
 
 type StageRemovedPayload = { path: string };
 
-type TasksContext = {
-  instrumentId: string;
-  invoke: <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>;
-  stages: {
-    list: () => Promise<string[]>;
-  };
-  sessions: {
-    focus: (params: { sessionId: string; cwd?: string }) => Promise<void>;
-  };
-  panels: {
-    mount: (slot: "sidebar" | "second", node: HTMLElement) => void;
-    unmount: (slot: "sidebar" | "second") => void;
-    setVisible: (slot: "sidebar" | "second", visible: boolean) => void;
-  };
-  events: {
-    subscribe: <T>(
-      event: string,
-      handler: (payload: T) => void | Promise<void>,
-    ) => () => void;
-  };
-};
-
 type RuntimeState = {
   active: boolean;
   loading: boolean;
@@ -97,7 +79,13 @@ type RuntimeState = {
   error: string | null;
 };
 
-let runtime: { deactivate: () => void } | null = null;
+type RuntimeMount = {
+  sidebarNode: HTMLElement;
+  secondNode: HTMLElement;
+  deactivate: () => void;
+};
+
+let runtime: RuntimeMount | null = null;
 
 function stageNameFromPath(stagePath: string): string {
   const normalized = String(stagePath ?? "").replace(/\\/g, "/");
@@ -152,7 +140,7 @@ function toneForStatus(status: string | null | undefined): "neutral" | "info" | 
   }
 }
 
-function createRuntime(ctx: TasksContext): { deactivate: () => void } {
+function createRuntime(ctx: InstrumentFrontendAPI): RuntimeMount {
   ensureInstrumentUI();
   const sidebarRoot = createRoot({ className: "tasks-ui-sidebar" });
   const secondRoot = createRoot({ className: "tasks-ui-main" });
@@ -212,14 +200,14 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
 
   async function loadTaskDetail(taskId: string): Promise<void> {
     if (!state.active || !taskId) return;
-    const detail = await callAndCapture(() => ctx.invoke<TaskDetail | null>("getTaskDetail", { taskId }));
+    const detail = await callAndCapture(() => ctx.actions.call<TaskDetail | null>("getTaskDetail", { taskId }));
     state.selectedTaskDetail = detail ?? null;
     state.selectedTaskId = detail?.id ?? null;
   }
 
   async function loadStageTasks(stagePath: string): Promise<void> {
     if (!stagePath) return;
-    const tasks = await callAndCapture(() => ctx.invoke<TaskSummary[]>("listStageTasks", { stagePath }));
+    const tasks = await callAndCapture(() => ctx.actions.call<TaskSummary[]>("listStageTasks", { stagePath }));
     state.tasksByStage[stagePath] = Array.isArray(tasks) ? tasks : [];
   }
 
@@ -243,7 +231,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
 
       const map: Record<string, TaskSummary[]> = {};
       for (const stagePath of state.stages) {
-        const tasks = await ctx.invoke<TaskSummary[]>("listStageTasks", { stagePath });
+        const tasks = await ctx.actions.call<TaskSummary[]>("listStageTasks", { stagePath });
         map[stagePath] = Array.isArray(tasks) ? tasks : [];
       }
       state.tasksByStage = map;
@@ -273,7 +261,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
     if (!stagePath) return;
     state.expandedStagePaths.add(stagePath);
     state.collapsedStagePaths.delete(stagePath);
-    await callAndCapture(() => ctx.invoke("createTask", {
+    await callAndCapture(() => ctx.actions.call("createTask", {
       stagePath,
       title: "Untitled task",
       notes: "",
@@ -289,7 +277,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
 
   async function saveTask(patch: Record<string, unknown>): Promise<void> {
     if (!state.selectedTaskId) return;
-    await callAndCapture(() => ctx.invoke("updateTask", {
+    await callAndCapture(() => ctx.actions.call("updateTask", {
       taskId: state.selectedTaskId,
       patch,
     }));
@@ -307,7 +295,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
     const taskId = state.selectedTaskId;
     const stagePath = state.selectedTaskDetail?.stagePath;
     if (!taskId) return;
-    await callAndCapture(() => ctx.invoke("deleteTask", { taskId }));
+    await callAndCapture(() => ctx.actions.call("deleteTask", { taskId }));
     state.selectedTaskId = null;
     state.selectedTaskDetail = null;
 
@@ -324,7 +312,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
 
   async function runAction(action: "improve" | "plan" | "execute"): Promise<void> {
     if (!state.selectedTaskId) return;
-    await callAndCapture(() => ctx.invoke("runTaskAction", {
+    await callAndCapture(() => ctx.actions.call("runTaskAction", {
       taskId: state.selectedTaskId,
       action,
     }));
@@ -536,7 +524,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
       label: "Add source",
       variant: "secondary",
       onClick: () => {
-        void callAndCapture(() => ctx.invoke("addTaskSource", {
+        void callAndCapture(() => ctx.actions.call("addTaskSource", {
           taskId: detail.id,
           kind: sourceKind.value,
           url: sourceUrl.value || null,
@@ -553,7 +541,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
         variant: "secondary",
         size: "sm",
         onClick: () => {
-          void callAndCapture(() => ctx.invoke("fetchTaskSource", {
+          void callAndCapture(() => ctx.actions.call("fetchTaskSource", {
             sourceId: source.id,
           })).then(async () => {
             await refreshSelectedTask(detail.id);
@@ -566,7 +554,7 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
         variant: "danger",
         size: "sm",
         onClick: () => {
-          void callAndCapture(() => ctx.invoke("removeTaskSource", {
+          void callAndCapture(() => ctx.actions.call("removeTaskSource", {
             sourceId: source.id,
           })).then(async () => {
             await refreshSelectedTask(detail.id);
@@ -720,11 +708,6 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
     renderMain();
   }
 
-  ctx.panels.mount("sidebar", sidebarRoot);
-  ctx.panels.mount("second", secondRoot);
-  ctx.panels.setVisible("sidebar", true);
-  ctx.panels.setVisible("second", true);
-
   unsubscribers.push(
     ctx.events.subscribe<InstrumentEventPayload>("instrument.event", async ({ instrumentId, event, payload }) => {
       if (instrumentId !== ctx.instrumentId || event !== "tasks.changed") return;
@@ -764,6 +747,8 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
   void loadAll();
 
   return {
+    sidebarNode: sidebarRoot,
+    secondNode: secondRoot,
     deactivate: () => {
       state.active = false;
       for (const unsubscribe of unsubscribers) {
@@ -773,23 +758,49 @@ function createRuntime(ctx: TasksContext): { deactivate: () => void } {
           // no-op
         }
       }
-      ctx.panels.unmount("sidebar");
-      ctx.panels.unmount("second");
+      sidebarRoot.replaceChildren();
+      secondRoot.replaceChildren();
     },
   };
 }
 
-export async function activate(ctx: TasksContext): Promise<void> {
-  runtime?.deactivate();
-  runtime = createRuntime(ctx);
+function ensureRuntime(api: InstrumentFrontendAPI): RuntimeMount {
+  if (!runtime) {
+    runtime = createRuntime(api);
+  }
+  return runtime;
 }
 
-export async function deactivate(): Promise<void> {
-  runtime?.deactivate();
-  runtime = null;
-}
-
-export default {
-  activate,
-  deactivate,
-};
+export default defineInstrument({
+  kind: "tango.instrument.v2",
+  defaults: {
+    visible: {
+      sidebar: true,
+      first: false,
+      second: true,
+      right: false,
+    },
+  },
+  panels: {
+    sidebar: ({ api }) => {
+      const mounted = ensureRuntime(api);
+      return {
+        node: mounted.sidebarNode,
+        visible: true,
+      };
+    },
+    second: ({ api }) => {
+      const mounted = ensureRuntime(api);
+      return {
+        node: mounted.secondNode,
+        visible: true,
+      };
+    },
+  },
+  lifecycle: {
+    onStop: () => {
+      runtime?.deactivate();
+      runtime = null;
+    },
+  },
+});

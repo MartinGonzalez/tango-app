@@ -6,8 +6,9 @@ export type UIButtonSize = "sm" | "md";
 export type UIGroupTitle = string | HTMLElement;
 export type UIGroupSubtitle = string | HTMLElement;
 export type UIGroupItemMeta = string | HTMLElement;
+export type UITone = "neutral" | "info" | "success" | "warning" | "danger";
 
-type BadgeTone = "neutral" | "info" | "success" | "warning" | "danger";
+type BadgeTone = UITone;
 
 function normalizeContent(content?: HTMLElement | HTMLElement[]): HTMLElement[] {
   if (!content) return [];
@@ -367,4 +368,176 @@ export function listItem(opts: {
   });
   appendChildren(node, content);
   return node;
+}
+
+export function toggle(opts: {
+  label: string;
+  checked?: boolean;
+  onChange?: (checked: boolean) => void;
+}): HTMLElement {
+  const inputNode = el("input", {
+    type: "checkbox",
+    checked: Boolean(opts.checked),
+  }) as HTMLInputElement;
+  if (opts.onChange) {
+    inputNode.addEventListener("change", () => {
+      opts.onChange?.(inputNode.checked);
+    });
+  }
+  return el("label", { className: "tui-toggle" }, [
+    inputNode,
+    el("span", { className: "tui-toggle-slider" }),
+    el("span", { className: "tui-toggle-label", text: opts.label }),
+  ]);
+}
+
+export function checkbox(opts: {
+  label: string;
+  checked?: boolean;
+  onChange?: (checked: boolean) => void;
+}): HTMLElement {
+  const inputNode = el("input", {
+    type: "checkbox",
+    checked: Boolean(opts.checked),
+  }) as HTMLInputElement;
+  if (opts.onChange) {
+    inputNode.addEventListener("change", () => {
+      opts.onChange?.(inputNode.checked);
+    });
+  }
+  return el("label", { className: "tui-checkbox" }, [
+    inputNode,
+    el("span", { text: opts.label }),
+  ]);
+}
+
+export function radioGroup(opts: {
+  name: string;
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  onChange?: (value: string) => void;
+}): HTMLElement {
+  return el("div", { className: "tui-radio-group" }, opts.options.map((option) => {
+    const inputNode = el("input", {
+      type: "radio",
+      name: opts.name,
+      checked: opts.value === option.value,
+    }) as HTMLInputElement;
+    if (opts.onChange) {
+      inputNode.addEventListener("change", () => {
+        if (inputNode.checked) {
+          opts.onChange?.(option.value);
+        }
+      });
+    }
+    return el("label", { className: "tui-radio" }, [
+      inputNode,
+      el("span", { text: option.label }),
+    ]);
+  }));
+}
+
+export function segmentedControl(opts: {
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  onChange?: (value: string) => void;
+}): HTMLElement {
+  return el("div", { className: "tui-segmented" }, opts.options.map((option) =>
+    el("button", {
+      className: `tui-segmented-item${opts.value === option.value ? " is-active" : ""}`,
+      type: "button",
+      text: option.label,
+      onClick: () => {
+        opts.onChange?.(option.value);
+      },
+    })
+  ));
+}
+
+export function tabs(opts: {
+  tabs: Array<{ value: string; label: string; content: HTMLElement }>;
+  value?: string;
+  onChange?: (value: string) => void;
+}): HTMLElement {
+  const currentValue = opts.value ?? opts.tabs[0]?.value ?? "";
+  const selected = opts.tabs.find((item) => item.value === currentValue) ?? opts.tabs[0] ?? null;
+  return el("div", { className: "tui-tabs" }, [
+    el("div", { className: "tui-tabs-list" }, opts.tabs.map((tab) =>
+      el("button", {
+        className: `tui-tabs-trigger${tab.value === currentValue ? " is-active" : ""}`,
+        type: "button",
+        text: tab.label,
+        onClick: () => {
+          opts.onChange?.(tab.value);
+        },
+      })
+    )),
+    el("div", { className: "tui-tabs-panel" }, selected ? [selected.content] : []),
+  ]);
+}
+
+export function dropdownMenu(opts: {
+  label: string;
+  items: Array<{ id: string; label: string; danger?: boolean }>;
+  onSelect?: (id: string) => void;
+}): HTMLElement {
+  const details = el("details", { className: "tui-dropdown" });
+  const summary = el("summary", { className: "tui-dropdown-trigger", text: opts.label });
+  const menu = el("div", { className: "tui-dropdown-menu" }, opts.items.map((item) =>
+    el("button", {
+      type: "button",
+      className: `tui-dropdown-item${item.danger ? " is-danger" : ""}`,
+      text: item.label,
+      onClick: () => {
+        details.removeAttribute("open");
+        opts.onSelect?.(item.id);
+      },
+    })
+  ));
+  details.append(summary, menu);
+  return details;
+}
+
+export function colorToken(opts: { label: string; tone?: BadgeTone }): HTMLElement {
+  return badge({
+    label: opts.label,
+    tone: opts.tone ?? "neutral",
+  });
+}
+
+export function statusTone(opts: { label: string; tone?: BadgeTone }): HTMLElement {
+  return badge({
+    label: opts.label,
+    tone: opts.tone ?? "neutral",
+  });
+}
+
+export function selectionList(opts: {
+  items: Array<{ value: string; title: string; subtitle?: string }>;
+  selected: string[];
+  multiple?: boolean;
+  onChange?: (next: string[]) => void;
+}): HTMLElement {
+  return el("div", { className: "tui-selection-list" }, opts.items.map((item) => {
+    const active = opts.selected.includes(item.value);
+    return el("button", {
+      type: "button",
+      className: `tui-selection-item${active ? " is-active" : ""}`,
+      onClick: () => {
+        if (opts.multiple) {
+          const next = active
+            ? opts.selected.filter((value) => value !== item.value)
+            : [...opts.selected, item.value];
+          opts.onChange?.(next);
+        } else {
+          opts.onChange?.([item.value]);
+        }
+      },
+    }, [
+      el("span", { className: "tui-selection-title", text: item.title }),
+      item.subtitle
+        ? el("span", { className: "tui-selection-subtitle", text: item.subtitle })
+        : null,
+    ]);
+  }));
 }

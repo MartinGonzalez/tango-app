@@ -1123,6 +1123,52 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return instrumentRuntime.remove(id, { deleteData: Boolean(deleteData) });
       },
 
+      getInstrumentSettingsSchema: async ({
+        instrumentId,
+      }: {
+        instrumentId: string;
+      }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) {
+          throw new Error("instrumentId is required");
+        }
+        return instrumentRuntime.getSettingsSchema(id);
+      },
+
+      getInstrumentSettingsValues: async ({
+        instrumentId,
+      }: {
+        instrumentId: string;
+      }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) {
+          throw new Error("instrumentId is required");
+        }
+        const values = await instrumentRuntime.getSettingsValues(id);
+        return { values };
+      },
+
+      setInstrumentSettingValue: async ({
+        instrumentId,
+        key,
+        value,
+      }: {
+        instrumentId: string;
+        key: string;
+        value: unknown;
+      }) => {
+        const id = String(instrumentId ?? "").trim();
+        const normalizedKey = String(key ?? "").trim();
+        if (!id) {
+          throw new Error("instrumentId is required");
+        }
+        if (!normalizedKey) {
+          throw new Error("setting key is required");
+        }
+        const values = await instrumentRuntime.setSettingValue(id, normalizedKey, value);
+        return { values };
+      },
+
       instrumentStorageGetProperty: async ({
         instrumentId,
         key,
@@ -1242,16 +1288,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return instrumentRuntime.sqlExecute(instrumentId, sql, params, db);
       },
 
-      instrumentInvoke: async ({
+      instrumentCallAction: async ({
         instrumentId,
-        method,
-        params,
+        action,
+        input,
       }: {
         instrumentId: string;
-        method: string;
-        params?: Record<string, unknown>;
+        action: string;
+        input?: unknown;
       }) => {
-        const result = await instrumentRuntime.invoke(instrumentId, method, params);
+        const result = await instrumentRuntime.callAction(instrumentId, action, input);
         return { result };
       },
 

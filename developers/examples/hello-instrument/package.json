@@ -8,9 +8,10 @@
       "id": "hello",
       "name": "Hello",
       "group": "Examples",
+      "runtime": "vanilla",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
-      "hostApiVersion": "1.0.0",
+      "hostApiVersion": "2.0.0",
       "launcher": {
         "sidebarShortcut": {
           "enabled": true,

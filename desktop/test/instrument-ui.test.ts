@@ -6,14 +6,18 @@ import {
 import {
   badge,
   button,
+  dropdownMenu,
   createRoot,
   ensureInstrumentUI,
+  segmentedControl,
   group,
   groupEmpty,
   groupItem,
   groupList,
   listItem,
+  selectionList,
   select,
+  toggle,
 } from "../instruments/ui/src/index.ts";
 
 describe("instrument-ui", () => {
@@ -167,10 +171,99 @@ describe("instrument-ui", () => {
     expect(activeNode.className).toContain("tui-group-item-active");
   });
 
+  test("toggle emits checked state", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let checked = false;
+    const node = toggle({
+      label: "Enabled",
+      onChange: (value) => {
+        checked = value;
+      },
+    });
+    const input = node.querySelector("input") as HTMLInputElement;
+    input.checked = true;
+    input.dispatchEvent(new Event("change"));
+    expect(checked).toBe(true);
+  });
+
+  test("segmentedControl emits option value on click", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let selected = "";
+    const node = segmentedControl({
+      value: "a",
+      options: [
+        { value: "a", label: "A" },
+        { value: "b", label: "B" },
+      ],
+      onChange: (value) => {
+        selected = value;
+      },
+    });
+    const buttonNode = node.querySelectorAll("button")[1] as HTMLButtonElement;
+    buttonNode.click();
+    expect(selected).toBe("b");
+  });
+
+  test("selectionList emits single selection", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let selected: string[] = [];
+    const node = selectionList({
+      items: [
+        { value: "a", title: "A" },
+        { value: "b", title: "B" },
+      ],
+      selected: [],
+      onChange: (next) => {
+        selected = next;
+      },
+    });
+    const buttonNode = node.querySelectorAll("button")[1] as HTMLButtonElement;
+    buttonNode.click();
+    expect(selected).toEqual(["b"]);
+  });
+
+  test("dropdownMenu emits selected item id", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let picked = "";
+    const node = dropdownMenu({
+      label: "More",
+      items: [
+        { id: "copy", label: "Copy" },
+        { id: "delete", label: "Delete", danger: true },
+      ],
+      onSelect: (id) => {
+        picked = id;
+      },
+    });
+    const buttonNode = node.querySelectorAll(".tui-dropdown-item")[1] as HTMLButtonElement;
+    buttonNode.click();
+    expect(picked).toBe("delete");
+  });
+
   test("styles stay scoped to tui selectors", () => {
-    expect(UI_STYLES.includes("button {")).toBe(false);
-    expect(UI_STYLES.includes("input {")).toBe(false);
-    expect(UI_STYLES.includes("body {")).toBe(false);
+    const lines = UI_STYLES
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    expect(lines.some((line) => line.startsWith("button {"))).toBe(false);
+    expect(lines.some((line) => line.startsWith("input {"))).toBe(false);
+    expect(lines.some((line) => line.startsWith("body {"))).toBe(false);
     expect(UI_STYLES.includes(".tui-root")).toBe(true);
   });
 });

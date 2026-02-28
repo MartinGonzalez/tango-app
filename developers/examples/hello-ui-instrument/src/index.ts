@@ -1,31 +1,47 @@
 import {
-  ensureInstrumentUI,
-  createRoot,
-  panelHeader,
-  section,
-  card,
+  defineInstrument,
+  type InstrumentFrontendAPI,
+} from "@tango/instrument-sdk";
+import {
+  badge,
   button,
+  card,
+  createRoot,
   emptyState,
+  ensureInstrumentUI,
   list,
   listItem,
-  badge,
+  panelHeader,
+  section,
 } from "@tango/instrument-ui";
 
-let unsubSessionEnded: (() => void) | null = null;
+type RuntimeMount = {
+  sidebarNode: HTMLElement;
+  secondNode: HTMLElement;
+  deactivate: () => void;
+};
 
-export function activate(ctx: any): void {
+let runtime: RuntimeMount | null = null;
+
+function createRuntime(api: InstrumentFrontendAPI): RuntimeMount {
   ensureInstrumentUI();
 
   const sidebarRoot = createRoot();
   const panelRoot = createRoot();
 
+  const output = document.createElement("pre");
+  output.className = "tui-card";
+  output.style.whiteSpace = "pre-wrap";
+  output.style.wordBreak = "break-word";
+  output.textContent = "Ready.";
+
   const sidebarList = list({
     items: [
       listItem({
         title: "Ping backend",
-        subtitle: "Invoke backend method",
+        subtitle: "Call action from UI",
         onClick: async () => {
-          const result = await ctx.invoke("ping", { source: "hello-ui" });
+          const result = await api.actions.call("ping", { source: "hello-ui" });
           output.textContent = JSON.stringify(result, null, 2);
         },
       }),
@@ -33,12 +49,12 @@ export function activate(ctx: any): void {
         title: "Start session",
         subtitle: "sessions.start() demo",
         onClick: async () => {
-          const cwd = await ctx.stages.active();
+          const cwd = await api.stages.active();
           if (!cwd) {
             output.textContent = "No active stage selected.";
             return;
           }
-          const result = await ctx.sessions.start({
+          const result = await api.sessions.start({
             cwd,
             prompt: "Hello from @tango/instrument-ui example",
             fullAccess: true,
@@ -60,17 +76,11 @@ export function activate(ctx: any): void {
     })
   );
 
-  const output = document.createElement("pre");
-  output.className = "tui-card";
-  output.style.whiteSpace = "pre-wrap";
-  output.style.wordBreak = "break-word";
-  output.textContent = "Ready.";
-
   panelRoot.append(
     panelHeader({
       title: "Hello from instrument-ui",
       subtitle: "Scoped components using Tango tokens",
-      rightActions: [badge({ label: "v1", tone: "info" })],
+      rightActions: [badge({ label: "v2", tone: "info" })],
     }),
     section({
       title: "Demo",
@@ -81,7 +91,7 @@ export function activate(ctx: any): void {
             label: "Ping backend",
             variant: "primary",
             onClick: async () => {
-              const result = await ctx.invoke("ping", { source: "hello-ui-primary" });
+              const result = await api.actions.call("ping", { source: "hello-ui-primary" });
               output.textContent = JSON.stringify(result, null, 2);
             },
           }),
@@ -98,22 +108,58 @@ export function activate(ctx: any): void {
     })
   );
 
-  ctx.panels.mount("sidebar", sidebarRoot);
-  ctx.panels.mount("second", panelRoot);
-  ctx.panels.setVisible("sidebar", true);
-  ctx.panels.setVisible("second", true);
-
-  unsubSessionEnded = ctx.events.subscribe("session.ended", ({ sessionId, exitCode }: any) => {
+  const unsubscribeSessionEnded = api.events.subscribe("session.ended", ({ sessionId, exitCode }) => {
     output.textContent = `Session ended: ${sessionId} (exit=${exitCode})`;
   });
+
+  return {
+    sidebarNode: sidebarRoot,
+    secondNode: panelRoot,
+    deactivate: () => {
+      unsubscribeSessionEnded();
+      sidebarRoot.replaceChildren();
+      panelRoot.replaceChildren();
+    },
+  };
 }
 
-export function deactivate(): void {
-  unsubSessionEnded?.();
-  unsubSessionEnded = null;
+function ensureRuntime(api: InstrumentFrontendAPI): RuntimeMount {
+  if (!runtime) {
+    runtime = createRuntime(api);
+  }
+  return runtime;
 }
 
-export default {
-  activate,
-  deactivate,
-};
+export default defineInstrument({
+  kind: "tango.instrument.v2",
+  defaults: {
+    visible: {
+      sidebar: true,
+      first: false,
+      second: true,
+      right: false,
+    },
+  },
+  panels: {
+    sidebar: ({ api }) => {
+      const mounted = ensureRuntime(api);
+      return {
+        node: mounted.sidebarNode,
+        visible: true,
+      };
+    },
+    second: ({ api }) => {
+      const mounted = ensureRuntime(api);
+      return {
+        node: mounted.secondNode,
+        visible: true,
+      };
+    },
+  },
+  lifecycle: {
+    onStop: () => {
+      runtime?.deactivate();
+      runtime = null;
+    },
+  },
+});

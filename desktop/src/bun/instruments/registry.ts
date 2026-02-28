@@ -36,9 +36,11 @@ export class InstrumentRegistry {
         .map((entry) => ({
           ...entry,
           source: entry.source === "local" ? "local" : "bundled",
+          runtime: entry.runtime === "react" ? "react" : "vanilla",
           status: normalizeStatus(entry.status),
           lastError: entry.lastError ?? null,
           permissions: Array.isArray(entry.permissions) ? entry.permissions : [],
+          settings: Array.isArray(entry.settings) ? entry.settings : [],
           launcher: normalizeLauncher(entry.launcher),
           panels: entry.panels ?? {
             sidebar: true,

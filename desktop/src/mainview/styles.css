@@ -1161,6 +1161,17 @@ button {
   background: var(--bg);
 }
 
+.instrument-panel-host-right {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 7;
+  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
 .instrument-panel-host-sidebar {
   flex: 1;
   min-height: 0;
@@ -1559,6 +1570,67 @@ button {
   font-size: 11px;
   color: var(--text-tertiary);
   padding: 8px 12px;
+}
+
+.instrument-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 8px 8px;
+}
+
+.instrument-setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.instrument-setting-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.instrument-setting-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.instrument-setting-required {
+  font-size: 10px;
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.instrument-setting-description {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.instrument-setting-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.instrument-setting-input-row .tasks-input {
+  flex: 1;
+}
+
+.instrument-setting-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .task-row {

@@ -20,8 +20,10 @@ http://localhost:4173
 
 - Instrument architecture and mental model
 - Manifest format (`package.json` + `tango.instrument`)
-- Frontend/backend lifecycle contracts
-- SDK API overview
+- Frontend declarative contract (`defineInstrument`)
+- Backend typed actions contract (`kind: tango.instrument.backend.v2`)
+- SDK API overview (`@tango/instrument-sdk` + `@tango/instrument-sdk/react`)
+- `tango-sdk sync` flow to generate `tango-env.d.ts` from manifest settings
 - Local path installation flow
 - Minimal runnable examples:
   - `developers/examples/hello-instrument` (runtime minimum)

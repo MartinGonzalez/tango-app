@@ -54,6 +54,7 @@ export async function loadInstrumentManifest(
 
   const name = String(base.name ?? "").trim() || id;
   const group = String(base.group ?? "General").trim() || "General";
+  const runtime = base.runtime === "react" ? "react" : "vanilla";
   const entrypoint = String(base.entrypoint ?? pkg.main ?? "").trim();
   if (!entrypoint) {
     throw new Error(`Instrument entrypoint is required in ${manifestPath}`);
@@ -75,6 +76,12 @@ export async function loadInstrumentManifest(
     ? base.permissions
       .map((value) => String(value).trim())
       .filter((value): value is InstrumentManifest["permissions"][number] => Boolean(value))
+    : [];
+
+  const settings = Array.isArray(base.settings)
+    ? base.settings
+      .map((field) => normalizeSettingField(field))
+      .filter((field): field is NonNullable<typeof field> => Boolean(field))
     : [];
 
   const launcher = base.launcher && typeof base.launcher === "object"
@@ -100,11 +107,13 @@ export async function loadInstrumentManifest(
     id,
     name,
     group,
+    runtime,
     entrypoint,
     ...(backendEntrypoint ? { backendEntrypoint } : {}),
     hostApiVersion,
     panels,
     permissions,
+    settings,
     ...(launcher ? { launcher } : {}),
   };
 
@@ -119,6 +128,75 @@ export async function loadInstrumentManifest(
     manifestPath,
     version: String(pkg.version ?? "0.0.0").trim() || "0.0.0",
   };
+}
+
+function normalizeSettingField(raw: unknown): InstrumentManifest["settings"][number] | null {
+  if (!raw || typeof raw !== "object") return null;
+  const field = raw as Record<string, unknown>;
+  const type = String(field.type ?? "").trim();
+  const key = String(field.key ?? "").trim();
+  const title = String(field.title ?? "").trim();
+  if (!key || !title) return null;
+
+  const base = {
+    key,
+    title,
+    ...(field.description ? { description: String(field.description).trim() } : {}),
+    ...(typeof field.required === "boolean" ? { required: field.required } : {}),
+    ...(typeof field.secret === "boolean" ? { secret: field.secret } : {}),
+  };
+
+  if (type === "string") {
+    return {
+      ...base,
+      type: "string",
+      ...(typeof field.default === "string" ? { default: field.default } : {}),
+      ...(typeof field.placeholder === "string" ? { placeholder: field.placeholder } : {}),
+    };
+  }
+
+  if (type === "number") {
+    return {
+      ...base,
+      type: "number",
+      ...(Number.isFinite(Number(field.default)) ? { default: Number(field.default) } : {}),
+      ...(Number.isFinite(Number(field.min)) ? { min: Number(field.min) } : {}),
+      ...(Number.isFinite(Number(field.max)) ? { max: Number(field.max) } : {}),
+      ...(Number.isFinite(Number(field.step)) ? { step: Number(field.step) } : {}),
+    };
+  }
+
+  if (type === "boolean") {
+    return {
+      ...base,
+      type: "boolean",
+      ...(typeof field.default === "boolean" ? { default: field.default } : {}),
+    };
+  }
+
+  if (type === "select") {
+    const options = Array.isArray(field.options)
+      ? field.options
+        .map((option) => {
+          if (!option || typeof option !== "object") return null;
+          const item = option as Record<string, unknown>;
+          const value = String(item.value ?? "").trim();
+          const label = String(item.label ?? value).trim();
+          if (!value || !label) return null;
+          return { value, label };
+        })
+        .filter((option): option is { value: string; label: string } => Boolean(option))
+      : [];
+    if (options.length === 0) return null;
+    return {
+      ...base,
+      type: "select",
+      options,
+      ...(typeof field.default === "string" ? { default: field.default } : {}),
+    };
+  }
+
+  return null;
 }
 
 async function assertEntrypointExists(

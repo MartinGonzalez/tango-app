@@ -8,6 +8,7 @@
     "build": "bun build src/index.ts --outfile dist/index.js --format esm --target browser"
   },
   "dependencies": {
+    "@tango/instrument-sdk": "file:../../../desktop/instruments/sdk",
     "@tango/instrument-ui": "file:../../../desktop/instruments/ui"
   },
   "tango": {
@@ -15,9 +16,10 @@
       "id": "hello-ui",
       "name": "Hello UI",
       "group": "Examples",
+      "runtime": "vanilla",
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
-      "hostApiVersion": "1.0.0",
+      "hostApiVersion": "2.0.0",
       "launcher": {
         "sidebarShortcut": {
           "enabled": true,

@@ -1,24 +1,47 @@
+import type {
+  InstrumentBackendDefinition,
+  TangoInstrumentDefinition,
+} from "../../../src/shared/types/instrument-sdk.ts";
+
+export function defineInstrument(definition: TangoInstrumentDefinition): TangoInstrumentDefinition {
+  return definition;
+}
+
+export function defineBackend(
+  definition: InstrumentBackendDefinition
+): InstrumentBackendDefinition {
+  return definition;
+}
+
 export type {
-  InstrumentPanelSlot,
-  PanelAPI,
-  StorageAPI,
-  SessionsAPI,
+  ActionSchema,
   ConnectorsAPI,
-  StageAPI,
   HostEventMap,
   HostEventsAPI,
-  ShortcutRegistration,
-  InstrumentContext,
-  InstrumentFrontendModule,
+  InstrumentBackendAction,
   InstrumentBackendContext,
-  InstrumentBackendModule,
+  InstrumentBackendDefinition,
+  InstrumentBackendHostAPI,
+  InstrumentFrontendAPI,
+  InstrumentSettingsAPI,
+  SessionsAPI,
+  ShortcutRegistration,
+  StageAPI,
+  StorageAPI,
+  TangoInstrumentDefinition,
+  TangoPanelComponent,
+  TangoPanelRenderResult,
+  TangoPanelSlot,
 } from "../../../src/shared/types/instrument-sdk.ts";
 
 export type {
-  InstrumentManifest,
-  InstrumentPermission,
-  InstrumentPanelConfig,
-  InstrumentRegistryEntry,
-  InstrumentStatus,
   InstrumentEvent,
+  InstrumentLauncherConfig,
+  InstrumentManifest,
+  InstrumentPanelConfig,
+  InstrumentPermission,
+  InstrumentRegistryEntry,
+  InstrumentRuntime,
+  InstrumentSettingField,
+  InstrumentStatus,
 } from "../../../src/shared/types/instruments.ts";

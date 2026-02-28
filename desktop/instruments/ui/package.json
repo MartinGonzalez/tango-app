@@ -9,7 +9,14 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./react": {
+      "types": "./src/react.tsx",
+      "default": "./src/react.tsx"
     }
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0"
   },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --format esm"
