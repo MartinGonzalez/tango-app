@@ -12,6 +12,7 @@ import {
   countSeenFiles,
 } from "./lib/pr-file-review.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
+import { PanelSlotManager, type SlotName } from "./components/panel-slot-manager.ts";
 import { Sidebar, type StageData } from "./components/sidebar.ts";
 import {
   PluginsSidebar,
@@ -465,6 +466,7 @@ const appState = new Store<AppState>({
 // ── Components ───────────────────────────────────────────────────
 
 let panelLayout: PanelLayout;
+let slotManager: PanelSlotManager;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
 let instrumentsSidebar: InstrumentsSidebar;
@@ -486,20 +488,13 @@ let sidebarPrimaryRuntimeInstrumentsHost: HTMLElement | null = null;
 let instrumentRuntimeSidebarShell: HTMLElement | null = null;
 let instrumentRuntimeSidebarHost: HTMLElement | null = null;
 let instrumentRuntimeSidebarTitleEl: HTMLElement | null = null;
-let instrumentFirstPanelHost: HTMLElement | null = null;
-let instrumentSecondPanelHost: HTMLElement | null = null;
 let instrumentRightPanelHost: HTMLElement | null = null;
 let activeRuntimeInstrumentId: string | null = null;
 let activeRuntimeDefinition: TangoInstrumentDefinition | null = null;
 let activeRuntimeDefinitionStop: (() => void | Promise<void>) | null = null;
 const activeRuntimePanelUnmounts = new Map<TangoPanelSlot, () => void | Promise<void>>();
 let runtimeInstrumentDeactivating = false;
-const runtimePanelVisibility = {
-  sidebar: false,
-  first: false,
-  second: false,
-  right: false,
-};
+let sidebarShell: HTMLElement;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let commitContextRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -531,7 +526,6 @@ let cachedPullRequestDiff: {
   loadedAt: number;
 } | null = null;
 let prevViewMode: AppState["viewMode"] | null = null;
-let prevChatPanelFixed: boolean | null = null;
 let transcriptLoadSeq = 0;
 const frontendHostEventSubscribers = new Map<
   keyof HostEventMap,
@@ -618,23 +612,29 @@ function init(): void {
     // Create 3-column panel layout
     panelLayout = new PanelLayout(panelsContainer, [
       {
-        id: "stages",
+        id: "sidebar",
         minWidth: 0,
         defaultWidth: 15,
         fixedPercent: 15,
         resizable: false,
         hidden: false,
       },
-      { id: "chat", minWidth: 280, defaultWidth: 35 },
-      { id: "diff", minWidth: 320, defaultWidth: 65 },
+      { id: "first", minWidth: 280, defaultWidth: 35 },
+      { id: "second", minWidth: 320, defaultWidth: 65 },
     ]);
 
-    const wsPanel = panelLayout.getPanel("stages");
-    const chatPanel = panelLayout.getPanel("chat");
-    const diffPanel = panelLayout.getPanel("diff");
+    const wsPanel = panelLayout.getPanel("sidebar");
+    const chatPanel = panelLayout.getPanel("first");
+    const diffPanel = panelLayout.getPanel("second");
     if (!wsPanel || !chatPanel || !diffPanel) {
       throw new Error("Failed to initialize one or more panel roots");
     }
+
+    slotManager = new PanelSlotManager({
+      sidebar: wsPanel,
+      first: chatPanel,
+      second: diffPanel,
+    });
 
   const sidebarViews = h("div", { class: "sidebar-mode-views" });
   const stagesSidebarHost = h("div", {
@@ -666,7 +666,7 @@ function init(): void {
     class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "plugins" }));
-      panelLayout.showPanel("stages");
+      panelLayout.showPanel("sidebar");
       qs("#btn-toggle-stages")?.classList.add("active");
       void loadPlugins(true);
     },
@@ -679,7 +679,7 @@ function init(): void {
     class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "instruments" }));
-      panelLayout.showPanel("stages");
+      panelLayout.showPanel("sidebar");
       qs("#btn-toggle-stages")?.classList.add("active");
       void loadInstruments(true);
     },
@@ -702,7 +702,7 @@ function init(): void {
     class: "sidebar-primary-btn",
     onclick: () => {
       appState.update((s) => ({ ...s, viewMode: "connectors" }));
-      panelLayout.showPanel("stages");
+      panelLayout.showPanel("sidebar");
       qs("#btn-toggle-stages")?.classList.add("active");
       const stagePath = appState.get().activeStage;
       if (stagePath) {
@@ -727,11 +727,10 @@ function init(): void {
     sidebarPrimaryRuntimeInstrumentsHost,
   ]);
 
-  const sidebarShell = h("div", { class: "sidebar-shell" }, [
+  sidebarShell = h("div", { class: "sidebar-shell" }, [
     sidebarPrimaryActions,
     sidebarViews,
   ]);
-  wsPanel.appendChild(sidebarShell);
 
   // Stages sidebar
   sidebar = new Sidebar(stagesSidebarHost, {
@@ -958,8 +957,8 @@ function init(): void {
     },
   });
 
-  // Chat panel
-  chatView = new ChatView(chatPanel, {
+  // Chat panel — mounted via slot manager, not appended to chatPanel directly
+  chatView = new ChatView(null, {
     onStopSession: async () => {
       const state = appState.get();
       const activeSessionId = resolveCanonicalSessionId(state.activeSessionId);
@@ -1050,7 +1049,7 @@ function init(): void {
       return searchSlashCommands(cwd, query, 30);
     },
   });
-  pluginsPreview = new PluginsPreview(chatPanel, {
+  pluginsPreview = new PluginsPreview(null, {
     onSelect: (selection) => {
       appState.update((s) => ({
         ...s,
@@ -1058,12 +1057,7 @@ function init(): void {
       }));
     },
   });
-  instrumentFirstPanelHost = h("div", {
-    class: "instrument-panel-host instrument-panel-host-first",
-    hidden: true,
-  });
-  chatPanel.appendChild(instrumentFirstPanelHost);
-  prView = new PRView(chatPanel, {
+  prView = new PRView(null, {
     onSelectCommit: (commitSha) => {
       appState.update((s) => ({
         ...s,
@@ -1100,7 +1094,7 @@ function init(): void {
       });
     },
   });
-  connectorsView = new ConnectorsView(chatPanel, {
+  connectorsView = new ConnectorsView(null, {
     onConnect: async (provider) => {
       const stagePath = appState.get().activeStage;
       if (!stagePath) {
@@ -1150,9 +1144,9 @@ function init(): void {
     },
   });
 
-  // Diff panel
+  // Diff panel — mounted via slot manager, not appended to diffPanel directly
   commitModal = new CommitModal();
-  diffView = new DiffView(diffPanel, {
+  diffView = new DiffView(null, {
     onBranchPanelToggle: (visible) => {
       const activeStage = appState.get().activeStage;
       if (!visible || !activeStage) return;
@@ -1181,11 +1175,7 @@ function init(): void {
       await createPullRequestReviewComment(params);
     },
   });
-  instrumentSecondPanelHost = h("div", {
-    class: "instrument-panel-host instrument-panel-host-second",
-    hidden: true,
-  });
-  diffPanel.appendChild(instrumentSecondPanelHost);
+  // Right panel host for instruments (absolute-positioned overlay, out of slot manager scope)
   instrumentRightPanelHost = h("div", {
     class: "instrument-panel-host instrument-panel-host-right",
     hidden: true,
@@ -1235,12 +1225,64 @@ function init(): void {
     },
   });
 
+  // ── Mode activation functions ──────────────────────────────────
+  // Each mode mounts its views into slots. The sidebar shell is shared
+  // across all non-instrument modes; sub-view toggling is internal.
+
+  async function activateStagesMode(): Promise<void> {
+    await slotManager.unmountAll();
+    await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    await slotManager.mount("first", "stages", { node: chatView.element });
+    await slotManager.mountHeader("second", "stages", { node: diffView.toolbarElement });
+    await slotManager.mount("second", "stages", { node: diffView.element });
+    panelLayout.showPanel("first");
+    panelLayout.showPanel("second");
+    panelLayout.setPanelSizing("first", { fixedPercent: 35, resizable: false });
+  }
+
+  async function activatePluginsMode(): Promise<void> {
+    await slotManager.unmountAll();
+    await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    await slotManager.mount("first", "plugins", { node: pluginsPreview.element });
+    panelLayout.showPanel("first");
+    panelLayout.showPanel("second");
+    panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
+  }
+
+  async function activatePRsMode(): Promise<void> {
+    await slotManager.unmountAll();
+    await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    await slotManager.mount("first", "prs", { node: prView.element });
+    await slotManager.mountHeader("second", "prs", { node: diffView.toolbarElement });
+    await slotManager.mount("second", "prs", { node: diffView.element });
+    panelLayout.showPanel("first");
+    panelLayout.showPanel("second");
+    panelLayout.setPanelSizing("first", { fixedPercent: 35, resizable: false });
+  }
+
+  async function activateConnectorsMode(): Promise<void> {
+    await slotManager.unmountAll();
+    await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    await slotManager.mount("first", "connectors", { node: connectorsView.element });
+    panelLayout.showPanel("first");
+    panelLayout.showPanel("second");
+    panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
+  }
+
+  async function activateInstrumentListMode(): Promise<void> {
+    await slotManager.unmountAll();
+    await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    panelLayout.showPanel("first");
+    panelLayout.showPanel("second");
+    panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
+  }
+
   // Toggle stages button
   qs("#btn-toggle-stages")?.addEventListener("click", () => {
-    panelLayout.togglePanel("stages");
+    panelLayout.togglePanel("sidebar");
     qs("#btn-toggle-stages")?.classList.toggle(
       "active",
-      panelLayout.isPanelVisible("stages")
+      panelLayout.isPanelVisible("sidebar")
     );
   });
 
@@ -1251,26 +1293,17 @@ function init(): void {
 
     if (e.key === "1") {
       e.preventDefault();
-      const state = appState.get();
-      if (state.viewMode === "instruments" && activeRuntimeInstrumentId) {
-        panelLayout.showPanel("stages");
-        qs("#btn-toggle-stages")?.classList.add("active");
-        runtimePanelVisibility.sidebar = true;
-        const entry = state.instrumentEntries.find((item) => item.id === activeRuntimeInstrumentId) ?? null;
-        syncRuntimePanelVisibility(true, entry);
-      } else {
-        panelLayout.togglePanel("stages");
-        qs("#btn-toggle-stages")?.classList.toggle(
-          "active",
-          panelLayout.isPanelVisible("stages")
-        );
-      }
+      panelLayout.togglePanel("sidebar");
+      qs("#btn-toggle-stages")?.classList.toggle(
+        "active",
+        panelLayout.isPanelVisible("sidebar")
+      );
       return;
     }
 
     if (e.key === "2") {
       e.preventDefault();
-      panelLayout.togglePanel("chat");
+      panelLayout.togglePanel("first");
       return;
     }
 
@@ -1312,20 +1345,46 @@ function init(): void {
   // State subscription — rebuild sidebar on every snapshot or stage change
   appState.subscribe((state) => {
     try {
-    const shouldFixChatPanel = state.viewMode === "stages" || state.viewMode === "prs";
-    if (shouldFixChatPanel !== prevChatPanelFixed) {
-      panelLayout.setPanelSizing(
-        "chat",
-        shouldFixChatPanel
-          ? { fixedPercent: 35, resizable: false }
-          : { fixedPercent: null, resizable: true }
-      );
-      prevChatPanelFixed = shouldFixChatPanel;
-    }
-
     const viewModeChanged = prevViewMode !== null && prevViewMode !== state.viewMode;
     const sidebarWidthBeforeSwitch = viewModeChanged ? wsPanel.offsetWidth : 0;
 
+    // ── Mode switch: mount/unmount slot content ────────────────
+    if (viewModeChanged) {
+      const isPluginsMode = state.viewMode === "plugins";
+      const isInstrumentsMode = state.viewMode === "instruments";
+      const isPRMode = state.viewMode === "prs";
+      const isConnectorsMode = state.viewMode === "connectors";
+      const runtimeInstrumentId = state.activeInstrumentId ?? activeRuntimeInstrumentId;
+      const isRuntimeInstrumentMode = isInstrumentsMode
+        && Boolean(activeRuntimeDefinition)
+        && Boolean(runtimeInstrumentId);
+      const runtimeEntry = isRuntimeInstrumentMode
+        ? (state.instrumentEntries.find((entry) => entry.id === runtimeInstrumentId) ?? null)
+        : null;
+
+      if (isRuntimeInstrumentMode) {
+        // Runtime instrument panels are already mounted by activateRuntimeInstrument().
+        // We only need to ensure panel layout is visible.
+        panelLayout.showPanel("first");
+        panelLayout.showPanel("second");
+      } else if (isInstrumentsMode) {
+        void activateInstrumentListMode();
+      } else if (isPluginsMode) {
+        void activatePluginsMode();
+      } else if (isPRMode) {
+        void activatePRsMode();
+      } else if (isConnectorsMode) {
+        void activateConnectorsMode();
+      } else {
+        void activateStagesMode();
+      }
+
+      if (sidebarWidthBeforeSwitch > 0) {
+        panelLayout.preservePanelPixelWidth("sidebar", sidebarWidthBeforeSwitch);
+      }
+    }
+
+    // ── Sidebar sub-view toggling (internal to sidebar shell) ──
     const wsData = buildStageData(state);
     sidebar.render(wsData);
     sidebar.setActiveSession(resolveCanonicalSessionId(state.activeSessionId));
@@ -1345,9 +1404,7 @@ function init(): void {
     const runtimeEntry = isRuntimeInstrumentMode
       ? (state.instrumentEntries.find((entry) => entry.id === runtimeInstrumentId) ?? null)
       : null;
-    const runtimeShowsFirst = Boolean(runtimeEntry?.panels.first && runtimePanelVisibility.first);
-    const runtimeShowsSecond = Boolean(runtimeEntry?.panels.second && runtimePanelVisibility.second);
-    const runtimeShowsRight = Boolean(runtimeEntry?.panels.right && runtimePanelVisibility.right);
+    const runtimeShowsRight = Boolean(runtimeEntry?.panels.right);
     const pullRequestSections = buildPullRequestSidebarSections(state);
     const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
     const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
@@ -1356,6 +1413,7 @@ function init(): void {
     const activeStageAuthSession = state.connectorAuthSession?.stagePath === state.activeStage
       ? state.connectorAuthSession
       : null;
+
     if (
       activeRuntimeInstrumentId
       && !runtimeInstrumentDeactivating
@@ -1364,6 +1422,7 @@ function init(): void {
       void deactivateRuntimeInstrument();
     }
 
+    // Sidebar sub-view visibility
     sidebarPrimaryActions.hidden = isPluginsMode
       || isInstrumentsMode
       || isPRMode
@@ -1418,6 +1477,7 @@ function init(): void {
       }
     }
 
+    // ── Data rendering (pass state to components) ──────────────
     pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
     pluginsSidebar.setSelection(pluginsSelection);
     instrumentsSidebar.render(state.instrumentEntries, {
@@ -1440,7 +1500,10 @@ function init(): void {
         ?? "Instrument";
       instrumentRuntimeSidebarTitleEl.textContent = runtimeTitle;
     }
-    syncRuntimePanelVisibility(isRuntimeInstrumentMode, runtimeEntry);
+    // Right panel visibility (out of slot manager scope)
+    if (instrumentRightPanelHost) {
+      instrumentRightPanelHost.hidden = !(isRuntimeInstrumentMode && runtimeShowsRight);
+    }
     prsSidebar.render(pullRequestSections, {
       loading: state.pullRequestsLoading,
       error: state.pullRequestsError,
@@ -1470,16 +1533,6 @@ function init(): void {
       stagePath: state.activeStage,
     });
 
-    chatView.element.hidden = isPluginsMode
-      || isInstrumentsMode
-      || isPRMode
-      || isConnectorsMode;
-    pluginsPreview.setVisible(isPluginsMode);
-    prView.setVisible(isPRMode);
-    connectorsView.setVisible(isConnectorsMode);
-    diffView.element.hidden = isRuntimeInstrumentMode
-      || (isInstrumentsMode && !isRuntimeInstrumentMode);
-
     if (state.activeStage && state.activeStage !== prevConnectorsStage) {
       prevConnectorsStage = state.activeStage;
       void loadStageConnectors(state.activeStage, false);
@@ -1489,44 +1542,7 @@ function init(): void {
 
     syncConnectorAuthPollTimer(state);
 
-    const hideDiffPanel = isPluginsMode
-      || isConnectorsMode
-      || (isInstrumentsMode && !isRuntimeInstrumentMode);
-    const hideChatPanel = (isInstrumentsMode && !isRuntimeInstrumentMode)
-      || (isRuntimeInstrumentMode && !runtimeShowsFirst);
-    if (hideChatPanel && hideDiffPanel) {
-      panelLayout.showPanel("stages");
-      qs("#btn-toggle-stages")?.classList.add("active");
-    }
-
-    if (hideChatPanel) panelLayout.hidePanel("chat");
-    else panelLayout.showPanel("chat");
-
-    if (hideDiffPanel) panelLayout.hidePanel("diff");
-    else panelLayout.showPanel("diff");
-
-    // Last-resort guard: avoid ending up with all panels hidden.
-    if (
-      !panelLayout.isPanelVisible("stages")
-      && !panelLayout.isPanelVisible("chat")
-      && !panelLayout.isPanelVisible("diff")
-    ) {
-      panelLayout.showPanel("stages");
-      panelLayout.showPanel("chat");
-      qs("#btn-toggle-stages")?.classList.add("active");
-    }
-
-    if (hideDiffPanel) {
-      if (sidebarWidthBeforeSwitch > 0) {
-        panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
-      }
-      prevViewMode = state.viewMode;
-      return;
-    }
-    if (sidebarWidthBeforeSwitch > 0) {
-      panelLayout.preservePanelPixelWidth("stages", sidebarWidthBeforeSwitch);
-    }
-
+    // ── Mode-specific data updates ─────────────────────────────
     if (isRuntimeInstrumentMode) {
       if (commitModal.isOpen) {
         commitModal.close();
@@ -1627,6 +1643,10 @@ function init(): void {
     }
   });
 
+  // Mount initial mode content into slots before first render.
+  pushBootTrace("state:initial-mount");
+  void activateStagesMode();
+
   // Force first render pass even before async loaders return.
   pushBootTrace("state:initial-render");
   appState.update((s) => s);
@@ -1656,33 +1676,6 @@ function init(): void {
 
 // ── Actions ──────────────────────────────────────────────────────
 
-const INSTRUMENT_PANEL_SLOTS: TangoPanelSlot[] = ["sidebar", "first", "second", "right"];
-
-function getInstrumentSlotHost(slot: TangoPanelSlot): HTMLElement {
-  if (slot === "sidebar") {
-    if (!instrumentRuntimeSidebarHost) {
-      throw new Error("Runtime sidebar host is not initialized");
-    }
-    return instrumentRuntimeSidebarHost;
-  }
-  if (slot === "first") {
-    if (!instrumentFirstPanelHost) {
-      throw new Error("Runtime first panel host is not initialized");
-    }
-    return instrumentFirstPanelHost;
-  }
-  if (slot === "second") {
-    if (!instrumentSecondPanelHost) {
-      throw new Error("Runtime second panel host is not initialized");
-    }
-    return instrumentSecondPanelHost;
-  }
-  if (!instrumentRightPanelHost) {
-    throw new Error("Runtime right panel host is not initialized");
-  }
-  return instrumentRightPanelHost;
-}
-
 function resolveRuntimeSlotDefaultVisibility(
   entry: InstrumentRegistryEntry,
   definition: TangoInstrumentDefinition,
@@ -1694,69 +1687,10 @@ function resolveRuntimeSlotDefaultVisibility(
   return true;
 }
 
-function syncRuntimePanelVisibility(
-  isRuntimeInstrumentMode: boolean,
-  entry: InstrumentRegistryEntry | null
-): void {
-  const allowSidebar = Boolean(entry?.panels.sidebar);
-  const allowFirst = Boolean(entry?.panels.first);
-  const allowSecond = Boolean(entry?.panels.second);
-  const allowRight = Boolean(entry?.panels.right);
-  const showRight = Boolean(
-    isRuntimeInstrumentMode && allowRight && runtimePanelVisibility.right
-  );
-
-  if (instrumentRuntimeSidebarShell) {
-    instrumentRuntimeSidebarShell.hidden = !(isRuntimeInstrumentMode && allowSidebar);
-  }
-  if (instrumentRuntimeSidebarHost) {
-    instrumentRuntimeSidebarHost.hidden = !(
-      isRuntimeInstrumentMode
-      && allowSidebar
-      && runtimePanelVisibility.sidebar
-    );
-  }
-  if (instrumentFirstPanelHost) {
-    instrumentFirstPanelHost.hidden = !(
-      isRuntimeInstrumentMode
-      && allowFirst
-      && runtimePanelVisibility.first
-    );
-  }
-  if (instrumentSecondPanelHost) {
-    instrumentSecondPanelHost.hidden = !(
-      isRuntimeInstrumentMode
-      && allowSecond
-      && runtimePanelVisibility.second
-    );
-    instrumentSecondPanelHost.style.right = showRight ? "320px" : "0";
-  }
-  if (instrumentRightPanelHost) {
-    instrumentRightPanelHost.hidden = !showRight;
-  }
-}
-
-function clearInstrumentPanelHosts(): void {
-  runtimePanelVisibility.sidebar = false;
-  runtimePanelVisibility.first = false;
-  runtimePanelVisibility.second = false;
-  runtimePanelVisibility.right = false;
-  for (const slot of INSTRUMENT_PANEL_SLOTS) {
-    const host = getInstrumentSlotHost(slot);
-    host.replaceChildren();
-    host.hidden = true;
-  }
-  if (instrumentRuntimeSidebarShell) {
-    instrumentRuntimeSidebarShell.hidden = true;
-  }
-  if (instrumentSecondPanelHost) {
-    instrumentSecondPanelHost.style.right = "0";
-  }
-}
-
 async function deactivateRuntimeInstrument(): Promise<void> {
   if (runtimeInstrumentDeactivating) return;
   runtimeInstrumentDeactivating = true;
+  const prevId = activeRuntimeInstrumentId;
   const unmounters = Array.from(activeRuntimePanelUnmounts.values());
   activeRuntimePanelUnmounts.clear();
   const onStop = activeRuntimeDefinitionStop;
@@ -1770,10 +1704,18 @@ async function deactivateRuntimeInstrument(): Promise<void> {
     if (onStop) {
       await Promise.resolve(onStop());
     }
+    // Unmount all slots owned by this instrument consumer
+    if (prevId) {
+      await slotManager.unmountConsumer(`instrument:${prevId}`);
+    }
   } catch (err) {
     console.error("Failed to deactivate runtime instrument:", err);
   } finally {
-    clearInstrumentPanelHosts();
+    // Clean up right panel (out of slot manager scope)
+    if (instrumentRightPanelHost) {
+      instrumentRightPanelHost.replaceChildren();
+      instrumentRightPanelHost.hidden = true;
+    }
     runtimeInstrumentDeactivating = false;
   }
 }
@@ -1999,44 +1941,51 @@ async function mountRuntimeSlot(
   api: InstrumentFrontendAPI,
   slot: TangoPanelSlot
 ): Promise<void> {
-  const host = getInstrumentSlotHost(slot);
-  host.replaceChildren();
-  host.hidden = false;
+  const consumerId = `instrument:${entry.id}`;
   activeRuntimePanelUnmounts.delete(slot);
 
-  if (!entry.panels[slot]) {
-    runtimePanelVisibility[slot] = false;
-    return;
-  }
+  if (!entry.panels[slot]) return;
 
   const component = definition.panels[slot];
-  if (!component) {
-    runtimePanelVisibility[slot] = false;
-    return;
-  }
+  if (!component) return;
 
   const rendered = await component({ api });
-  if (!rendered) {
-    runtimePanelVisibility[slot] = false;
-    return;
-  }
+  if (!rendered) return;
 
-  if (rendered instanceof HTMLElement) {
-    host.replaceChildren(rendered);
-    runtimePanelVisibility[slot] = resolveRuntimeSlotDefaultVisibility(entry, definition, slot);
-    return;
-  }
-
-  if (!(rendered.node instanceof HTMLElement)) {
+  const node = rendered instanceof HTMLElement ? rendered : rendered.node;
+  if (!(node instanceof HTMLElement)) {
     throw new Error(`Instrument '${entry.id}' returned an invalid node for panel '${slot}'`);
   }
+  const unmountFn = rendered instanceof HTMLElement ? undefined : rendered.onUnmount;
 
-  host.replaceChildren(rendered.node);
-  runtimePanelVisibility[slot] = rendered.visible
-    ?? resolveRuntimeSlotDefaultVisibility(entry, definition, slot);
-  if (rendered.onUnmount) {
-    activeRuntimePanelUnmounts.set(slot, rendered.onUnmount);
+  // Handle the "right" panel separately (absolute-positioned overlay, not slot-managed)
+  if (slot === "right") {
+    if (!instrumentRightPanelHost) return;
+    instrumentRightPanelHost.replaceChildren(node);
+    instrumentRightPanelHost.hidden = false;
+    if (unmountFn) activeRuntimePanelUnmounts.set(slot, unmountFn);
+    return;
   }
+
+  // Handle sidebar: instrument content goes inside the runtime sidebar shell
+  if (slot === "sidebar") {
+    if (!instrumentRuntimeSidebarHost) return;
+    instrumentRuntimeSidebarHost.replaceChildren(node);
+    instrumentRuntimeSidebarHost.hidden = false;
+    if (instrumentRuntimeSidebarShell) {
+      instrumentRuntimeSidebarShell.hidden = false;
+      await slotManager.mount("sidebar", consumerId, { node: instrumentRuntimeSidebarShell });
+    }
+    if (unmountFn) activeRuntimePanelUnmounts.set(slot, unmountFn);
+    return;
+  }
+
+  // For first/second, mount directly via slot manager.
+  // Don't pass onUnmount to slot manager — deactivateRuntimeInstrument handles it
+  // via activeRuntimePanelUnmounts to avoid double-calling.
+  const slotName = slot as SlotName;
+  await slotManager.mount(slotName, consumerId, { node });
+  if (unmountFn) activeRuntimePanelUnmounts.set(slot, unmountFn);
 }
 
 async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promise<void> {
@@ -2057,10 +2006,6 @@ async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promis
     );
   }
   const api = buildInstrumentFrontendApi(entry);
-  runtimePanelVisibility.sidebar = resolveRuntimeSlotDefaultVisibility(entry, definition, "sidebar");
-  runtimePanelVisibility.first = resolveRuntimeSlotDefaultVisibility(entry, definition, "first");
-  runtimePanelVisibility.second = resolveRuntimeSlotDefaultVisibility(entry, definition, "second");
-  runtimePanelVisibility.right = resolveRuntimeSlotDefaultVisibility(entry, definition, "right");
 
   try {
     if (definition.lifecycle?.onStart) {
@@ -2069,10 +2014,18 @@ async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promis
     activeRuntimeInstrumentId = entry.id;
     activeRuntimeDefinition = definition;
     activeRuntimeDefinitionStop = definition.lifecycle?.onStop ?? null;
-    for (const slot of INSTRUMENT_PANEL_SLOTS) {
+
+    // Clear all slots — every mode starts with empty panels
+    await slotManager.unmountAll();
+
+    const panelSlots: TangoPanelSlot[] = ["sidebar", "first", "second", "right"];
+    for (const slot of panelSlots) {
       await mountRuntimeSlot(entry, definition, api, slot);
     }
-    syncRuntimePanelVisibility(true, entry);
+    // If instrument didn't mount a sidebar, keep the app sidebar shell
+    if (!entry.panels.sidebar) {
+      await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    }
   } catch (err) {
     await deactivateRuntimeInstrument();
     throw err;
@@ -2534,7 +2487,7 @@ async function loadStages(): Promise<void> {
     }));
     // Auto-show stages panel if we have stages
     if (stages.length > 0) {
-      panelLayout.showPanel("stages");
+      panelLayout.showPanel("sidebar");
       qs("#btn-toggle-stages")?.classList.add("active");
       // Load diff and history for first stage
       loadDiff(stages[0], appState.get().diffScope);
@@ -2654,7 +2607,7 @@ async function activateInstrument(instrumentId: string): Promise<void> {
     return;
   }
 
-  panelLayout.showPanel("stages");
+  panelLayout.showPanel("sidebar");
   qs("#btn-toggle-stages")?.classList.add("active");
 
   try {
@@ -3338,7 +3291,7 @@ async function refreshPullRequests(): Promise<void> {
 
 async function enterPullRequestsMode(): Promise<void> {
   appState.update((s) => ({ ...s, viewMode: "prs" }));
-  panelLayout.showPanel("stages");
+  panelLayout.showPanel("sidebar");
   qs("#btn-toggle-stages")?.classList.add("active");
 
   const state = appState.get();
@@ -3404,7 +3357,7 @@ async function openStage(): Promise<void> {
     }));
     publishFrontendHostEvent("stage.added", { path: dir });
 
-    panelLayout.showPanel("stages");
+    panelLayout.showPanel("sidebar");
     qs("#btn-toggle-stages")?.classList.add("active");
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);

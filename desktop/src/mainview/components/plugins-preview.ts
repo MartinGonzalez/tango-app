@@ -13,7 +13,7 @@ export class PluginsPreview {
   #contentView: "preview" | "raw" = "preview";
 
   constructor(
-    container: HTMLElement,
+    container: HTMLElement | null,
     opts?: {
       onSelect?: (selection: PluginSidebarSelection) => void;
     }
@@ -21,11 +21,11 @@ export class PluginsPreview {
     this.#onSelect = opts?.onSelect ?? null;
     this.#bodyEl = h("div", { class: "plugins-preview-body" });
 
-    this.#el = h("section", { class: "plugins-preview", hidden: true }, [
+    this.#el = h("section", { class: "plugins-preview" }, [
       this.#bodyEl,
     ]);
 
-    container.appendChild(this.#el);
+    if (container) container.appendChild(this.#el);
   }
 
   render(

@@ -95,7 +95,7 @@ export class DiffView {
   #fileActionsMenus = new Map<string, HTMLElement>();
   #commitButtonVisible = false;
 
-  constructor(container: HTMLElement, callbacks: DiffViewCallbacks = {}) {
+  constructor(container: HTMLElement | null, callbacks: DiffViewCallbacks = {}) {
     this.#callbacks = callbacks;
     this.#onGlobalClick = (event: MouseEvent) => {
       if (!this.#openActionsFilePath) return;
@@ -171,13 +171,12 @@ export class DiffView {
     ]);
 
     this.#el = h("div", { class: "diff-view" }, [
-      this.#toolbarEl,
       this.#bodyEl,
     ]);
 
     this.setFilesPanelVisible(false);
     this.setBranchPanelVisible(false, false);
-    container.appendChild(this.#el);
+    if (container) container.appendChild(this.#el);
     document.addEventListener("click", this.#onGlobalClick);
     document.addEventListener("keydown", this.#onGlobalKeyDown);
   }
@@ -1390,6 +1389,10 @@ export class DiffView {
 
   get isBranchPanelVisible(): boolean {
     return this.#branchPanelVisible;
+  }
+
+  get toolbarElement(): HTMLElement {
+    return this.#toolbarEl;
   }
 
   get element(): HTMLElement {

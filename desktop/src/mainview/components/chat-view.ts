@@ -87,7 +87,7 @@ export class ChatView {
   #scrollAnimationFrame: number | null = null;
   #composerResizeObserver: ResizeObserver | null = null;
 
-  constructor(container: HTMLElement, callbacks: ChatCallbacks) {
+  constructor(container: HTMLElement | null, callbacks: ChatCallbacks) {
     this.#callbacks = callbacks;
     this.#onGlobalPointerDown = (event: Event) => {
       const target = event.target as Node | null;
@@ -379,7 +379,7 @@ export class ChatView {
       composerEl,
     ]);
 
-    container.appendChild(this.#el);
+    if (container) container.appendChild(this.#el);
     this.#syncComposerInset();
     if (typeof ResizeObserver !== "undefined") {
       this.#composerResizeObserver = new ResizeObserver(() => {

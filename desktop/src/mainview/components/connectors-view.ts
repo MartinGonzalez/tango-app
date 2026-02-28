@@ -38,13 +38,13 @@ export class ConnectorsView {
   #stagePath: string | null = null;
   #actionInFlight: string | null = null;
 
-  constructor(container: HTMLElement, callbacks: ConnectorsViewCallbacks) {
+  constructor(container: HTMLElement | null, callbacks: ConnectorsViewCallbacks) {
     this.#callbacks = callbacks;
     this.#bodyEl = h("div", { class: "connectors-view-body" });
-    this.#el = h("section", { class: "connectors-view", hidden: true }, [
+    this.#el = h("section", { class: "connectors-view" }, [
       this.#bodyEl,
     ]);
-    container.appendChild(this.#el);
+    if (container) container.appendChild(this.#el);
   }
 
   render(

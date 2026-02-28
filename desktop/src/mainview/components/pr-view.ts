@@ -57,15 +57,15 @@ export class PRView {
   #applyingReviewIssues = new Set<string>();
   #applyReviewIssueErrors = new Map<string, string>();
 
-  constructor(container: HTMLElement, callbacks: PRViewCallbacks) {
+  constructor(container: HTMLElement | null, callbacks: PRViewCallbacks) {
     this.#callbacks = callbacks;
 
     this.#bodyEl = h("div", { class: "pr-view-body" });
-    this.#el = h("section", { class: "pr-view", hidden: true }, [
+    this.#el = h("section", { class: "pr-view" }, [
       this.#bodyEl,
     ]);
 
-    container.appendChild(this.#el);
+    if (container) container.appendChild(this.#el);
   }
 
   render(
