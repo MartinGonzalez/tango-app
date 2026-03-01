@@ -25,6 +25,7 @@ import {
 } from "./components/prs-sidebar.ts";
 import { ConnectorsSidebar } from "./components/connectors-sidebar.ts";
 import { InstrumentsSidebar } from "./components/instruments-sidebar.ts";
+import { DebugLogPanel, type DebugLogEntry } from "./components/debug-log-panel.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ConnectorsView } from "./components/connectors-view.ts";
 import { ChatView } from "./components/chat-view.ts";
@@ -490,6 +491,7 @@ let instrumentRuntimeSidebarShell: HTMLElement | null = null;
 let instrumentRuntimeSidebarHost: HTMLElement | null = null;
 let instrumentRuntimeSidebarTitleEl: HTMLElement | null = null;
 let instrumentRightPanelHost: HTMLElement | null = null;
+let debugLogPanel: DebugLogPanel | null = null;
 let activeRuntimeInstrumentId: string | null = null;
 let activeRuntimeDefinition: TangoInstrumentDefinition | null = null;
 let activeRuntimeDefinitionStop: (() => void | Promise<void>) | null = null;
@@ -552,6 +554,13 @@ function publishFrontendHostEvent<E extends keyof HostEventMap>(
   event: E,
   payload: HostEventMap[E]
 ): void {
+  debugLogPanel?.record({
+    ts: Date.now(),
+    dir: "host→instrument",
+    namespace: "events",
+    method: String(event),
+    args: [payload],
+  });
   const handlers = frontendHostEventSubscribers.get(event);
   if (!handlers || handlers.size === 0) return;
   for (const handler of handlers) {
@@ -1183,6 +1192,9 @@ function init(): void {
   });
   diffPanel.appendChild(instrumentRightPanelHost);
 
+  // Debug log panel (Cmd+Opt+D)
+  debugLogPanel = new DebugLogPanel(diffPanel);
+
   // Files panel (embedded inside diff panel)
   filesPanel = new FilesPanel(diffView.filesPanelHost, {
     onSelectFile: (path) => {
@@ -1291,6 +1303,13 @@ function init(): void {
   document.addEventListener("keydown", (e) => {
     const mod = (e.metaKey || e.ctrlKey) && !e.altKey;
     if (!mod) return;
+
+    // Debug panel (Cmd+L)
+    if (e.key === "l") {
+      e.preventDefault();
+      debugLogPanel?.toggle();
+      return;
+    }
 
     if (e.key === "1") {
       e.preventDefault();
@@ -1725,6 +1744,62 @@ async function deactivateRuntimeInstrument(): Promise<void> {
   }
 }
 
+function wrapApiWithDebugLogging(api: InstrumentFrontendAPI): InstrumentFrontendAPI {
+  if (!debugLogPanel) return api;
+  const panel = debugLogPanel;
+  const instrumentId = api.instrumentId;
+
+  function proxyNamespace<T extends Record<string, any>>(ns: T, nsName: string): T {
+    if (!ns || typeof ns !== "object") return ns;
+    return new Proxy(ns, {
+      get(target, prop, receiver) {
+        const val = Reflect.get(target, prop, receiver);
+        if (typeof val !== "function") return val;
+        const method = prop as string;
+        return (...args: unknown[]) => {
+          panel.record({
+            ts: Date.now(),
+            dir: "instrument→host",
+            namespace: nsName,
+            method,
+            args,
+            instrumentId,
+          });
+          return val.apply(target, args);
+        };
+      },
+    });
+  }
+
+  function wrapFn(name: string, fn: (...a: any[]) => any): typeof fn {
+    return (...args: unknown[]) => {
+      panel.record({
+        ts: Date.now(),
+        dir: "instrument→host",
+        namespace: "api",
+        method: name,
+        args,
+        instrumentId,
+      });
+      return fn(...args);
+    };
+  }
+
+  return {
+    ...api,
+    storage: proxyNamespace(api.storage, "storage"),
+    sessions: proxyNamespace(api.sessions, "sessions"),
+    connectors: proxyNamespace(api.connectors, "connectors"),
+    stages: proxyNamespace(api.stages, "stages"),
+    events: proxyNamespace(api.events, "events"),
+    actions: proxyNamespace(api.actions, "actions"),
+    settings: proxyNamespace(api.settings, "settings"),
+    ui: api.ui ? proxyNamespace(api.ui as any, "ui") : api.ui,
+    registerShortcut: wrapFn("registerShortcut", api.registerShortcut),
+    emit: wrapFn("emit", api.emit),
+  };
+}
+
 function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentFrontendAPI {
   return {
     instrumentId: entry.id,
@@ -2016,7 +2091,7 @@ async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promis
       initialError
     );
   }
-  const api = buildInstrumentFrontendApi(entry);
+  const api = wrapApiWithDebugLogging(buildInstrumentFrontendApi(entry));
 
   try {
     if (definition.lifecycle?.onStart) {
