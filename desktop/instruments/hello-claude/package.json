@@ -8,8 +8,7 @@
     "build": "bun build src/index.tsx --outfile dist/index.js --format esm --target browser"
   },
   "dependencies": {
-    "@tango/instrument-sdk": "file:../sdk",
-    "@tango/instrument-ui": "file:../ui"
+    "@tango/api": "file:../api"
   },
   "tango": {
     "instrument": {

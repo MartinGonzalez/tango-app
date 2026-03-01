@@ -3,28 +3,24 @@ title: CLI Reference
 description: All tango-sdk CLI commands.
 ---
 
-The `tango-sdk` CLI is included in `@tango/instrument-sdk` and provides build, development, and validation tools.
+The `tango-sdk` CLI is included in `@tango/api` and provides build, development, and validation tools.
 
 ## Usage
 
-```bash
-tango-sdk <command> [project-path]
-```
-
-If `project-path` is omitted, the current working directory is used.
-
-The scaffolder sets up npm scripts that wrap these commands:
+The scaffolder sets up npm scripts that invoke the CLI:
 
 ```json
 {
   "scripts": {
-    "dev": "tango-sdk dev",
-    "build": "tango-sdk build",
-    "sync": "tango-sdk sync",
-    "validate": "tango-sdk validate"
+    "dev": "bun node_modules/@tango/api/src/cli.ts dev",
+    "build": "bun node_modules/@tango/api/src/cli.ts build",
+    "sync": "bun node_modules/@tango/api/src/cli.ts sync",
+    "validate": "bun node_modules/@tango/api/src/cli.ts validate"
   }
 }
 ```
+
+If no project path argument is given, the current working directory is used.
 
 ---
 
@@ -65,10 +61,11 @@ bun run dev
 ```
 
 **What it does**:
-1. Runs an initial build
-2. Watches `src/` for file changes
-3. Rebuilds on change
-4. Sends a reload signal to the Tango dev server
+1. Syncs dependencies (clears Bun cache and runs `bun install` to refresh `file:` deps)
+2. Runs an initial build
+3. Watches `src/` for file changes
+4. Rebuilds on change
+5. Sends a reload signal to the Tango dev server
 
 Use this during development for the fastest feedback loop.
 

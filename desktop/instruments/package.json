@@ -1,6 +1,6 @@
 {
   "private": true,
-  "workspaces": ["sdk", "ui", "tasks", "hello-claude", "create-tango-instrument"],
+  "workspaces": ["sdk", "ui", "api", "tasks", "hello-claude", "create-tango-instrument"],
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

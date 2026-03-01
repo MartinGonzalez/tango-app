@@ -3,8 +3,6 @@ import {
   defineReactInstrument,
   useInstrumentApi,
   useHostEvent,
-} from "@tango/instrument-sdk/react";
-import {
   UIRoot,
   UIPanelHeader,
   UISection,
@@ -14,7 +12,7 @@ import {
   UIBadge,
   UIEmptyState,
   UIToggle,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 // ---------------------------------------------------------------------------
 // Types (stream events aren't exported from the SDK, define inline)

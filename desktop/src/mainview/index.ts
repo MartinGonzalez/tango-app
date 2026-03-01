@@ -219,6 +219,38 @@ const rpc = Electroview.defineRPC<any>({
       }) => {
         publishFrontendHostEvent("instrument.event", { instrumentId, event, payload });
       },
+      instrumentDevReload: ({
+        instrumentId,
+        entries: newEntries,
+      }: {
+        instrumentId: string;
+        entries?: InstrumentRegistryEntry[];
+      }) => {
+        let updated: InstrumentRegistryEntry[];
+        if (newEntries) {
+          // Auto-install case: replace entire entries list, mark the new one as dev
+          updated = newEntries.map((e) =>
+            e.id === instrumentId ? { ...e, devMode: true } : e
+          );
+        } else {
+          // Existing reload case: just flip devMode on the matching entry
+          const current = appState.get().instrumentEntries;
+          updated = current.map((e) =>
+            e.id === instrumentId ? { ...e, devMode: true } : e
+          );
+        }
+        appState.update((s) => ({ ...s, instrumentEntries: updated }));
+
+        // Only hot-reload if the instrument is actively being viewed
+        const state = appState.get();
+        if (
+          state.viewMode === "instruments"
+          && state.activeInstrumentId === instrumentId
+        ) {
+          const entry = updated.find((e) => e.id === instrumentId);
+          if (entry) void activateRuntimeInstrument(entry);
+        }
+      },
       pullRequestAgentReviewChanged: ({
         repo,
         number,
@@ -1458,7 +1490,8 @@ function init(): void {
         return left.name.localeCompare(right.name);
       });
       for (const entry of sortedShortcuts) {
-        const shortcutLabel = entry.launcher?.sidebarShortcut?.label?.trim() || entry.name;
+        const baseLabel = entry.launcher?.sidebarShortcut?.label?.trim() || entry.name;
+        const shortcutLabel = entry.devMode ? `${baseLabel} [dev]` : baseLabel;
         const shortcutBtn = h("button", {
           class: "sidebar-primary-btn",
           title: `Open ${shortcutLabel}`,

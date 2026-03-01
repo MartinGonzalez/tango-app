@@ -3,7 +3,7 @@ title: "Tutorial 2: UI Components"
 description: Build interactive panels with the Tango UI component library.
 ---
 
-The `@tango/instrument-ui/react` package provides themed components that match Tango's look and feel. This tutorial walks through each one with code examples.
+The `@tango/api` package provides themed components that match Tango's look and feel. This tutorial walks through each one with code examples.
 
 ## Setup
 
@@ -306,11 +306,11 @@ Here's a complete sidebar that uses several components:
 
 ```tsx
 import { useState } from "react";
-import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
 import {
+  defineReactInstrument, useInstrumentApi,
   UIRoot, UIPanelHeader, UISection, UICard,
   UIButton, UIInput, UIBadge, UIToggle, UIEmptyState,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 function SidebarPanel() {
   const api = useInstrumentApi();

@@ -102,6 +102,7 @@ export type InstrumentRegistryEntry = {
   status: InstrumentStatus;
   version: string;
   isBundled: boolean;
+  devMode?: boolean;
   lastError: string | null;
   updatedAt: string;
 };

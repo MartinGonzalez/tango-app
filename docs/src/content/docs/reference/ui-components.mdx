@@ -1,12 +1,12 @@
 ---
 title: UI Components Reference
-description: All components from @tango/instrument-ui/react with complete prop types.
+description: All UI components from @tango/api with complete prop types.
 ---
 
-All components are imported from `@tango/instrument-ui/react`. They use CSS classes prefixed with `tui-` and inherit the Tango theme automatically when wrapped in `UIRoot`.
+All components are imported from `@tango/api`. They use CSS classes prefixed with `tui-` and inherit the Tango theme automatically when wrapped in `UIRoot`.
 
 ```tsx
-import { UIRoot, UIPanelHeader, UISection, UICard, UIButton } from "@tango/instrument-ui/react";
+import { UIRoot, UIPanelHeader, UISection, UICard, UIButton } from "@tango/api";
 ```
 
 ---
@@ -207,10 +207,11 @@ props: {
     content: React.ReactNode;
   }>;
   initialValue?: string;
+  onChange?: (value: string) => void;
 }
 ```
 
-If no `initialValue` is provided, the first tab is selected.
+If no `initialValue` is provided, the first tab is selected. The `onChange` callback fires with the selected tab's `value` when the user switches tabs.
 
 ---
 

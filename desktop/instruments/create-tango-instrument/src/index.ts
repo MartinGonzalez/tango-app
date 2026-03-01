@@ -76,10 +76,9 @@ async function main(): Promise<void> {
     const panels = await promptPanels(rl);
     const includeBackend = await promptYesNo(rl, "Include backend?", true);
 
-    // Resolve SDK and UI paths relative to the target directory
+    // Resolve @tango/api path relative to the target directory
     const thisDir = dirname(new URL(import.meta.url).pathname);
-    const sdkPath = relative(dir, resolve(thisDir, "../../sdk"));
-    const uiPath = relative(dir, resolve(thisDir, "../../ui"));
+    const apiPath = relative(dir, resolve(thisDir, "../../api"));
 
     console.log("\nScaffolding...");
 
@@ -89,8 +88,7 @@ async function main(): Promise<void> {
       dir,
       panels,
       includeBackend,
-      sdkPath,
-      uiPath,
+      apiPath,
     });
 
     console.log(`\nCreated ${created.length} files:`);

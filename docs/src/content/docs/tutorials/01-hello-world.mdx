@@ -18,8 +18,7 @@ cd hello-world && bun install
 Replace `src/index.tsx` with:
 
 ```tsx
-import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
-import { UIRoot, UIPanelHeader, UISection, UICard } from "@tango/instrument-ui/react";
+import { defineReactInstrument, useInstrumentApi, UIRoot, UIPanelHeader, UISection, UICard } from "@tango/api";
 
 function SidebarPanel() {
   const api = useInstrumentApi();

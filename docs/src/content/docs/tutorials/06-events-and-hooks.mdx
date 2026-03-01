@@ -10,7 +10,7 @@ Tango's event system lets instruments react to changes in the host app — new s
 The primary way to subscribe to events in React:
 
 ```tsx
-import { useHostEvent } from "@tango/instrument-sdk/react";
+import { useHostEvent } from "@tango/api";
 
 useHostEvent("snapshot.update", (snapshot) => {
   console.log("Processes:", snapshot.processes.length);
@@ -198,11 +198,11 @@ Here's a complete instrument that monitors active sessions in real time:
 
 ```tsx
 import { useCallback, useState } from "react";
-import { defineReactInstrument, useInstrumentApi, useHostEvent } from "@tango/instrument-sdk/react";
 import {
+  defineReactInstrument, useInstrumentApi, useHostEvent,
   UIRoot, UIPanelHeader, UISection, UICard,
   UIBadge, UIGroupList, UIGroupItem, UIEmptyState,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 type SessionLog = {
   sessionId: string;

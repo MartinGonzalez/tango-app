@@ -12,8 +12,7 @@ export type ScaffoldOptions = {
     right: boolean;
   };
   includeBackend: boolean;
-  sdkPath: string;
-  uiPath: string;
+  apiPath: string;
 };
 
 function toKebabCase(str: string): string {
@@ -58,13 +57,14 @@ function generateFrontend(options: ScaffoldOptions): string {
     )
     .join("\n\n");
 
-  return `import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
-import {
+  return `import {
+  defineReactInstrument,
+  useInstrumentApi,
   UIRoot,
   UIPanelHeader,
   UISection,
   UIEmptyState,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 ${componentDefs}
 
@@ -82,7 +82,7 @@ ${panelImports(options.panels)},
 }
 
 function generateBackend(options: ScaffoldOptions): string {
-  return `import { defineBackend, type InstrumentBackendContext } from "@tango/instrument-sdk";
+  return `import { defineBackend, type InstrumentBackendContext } from "@tango/api/backend";
 
 async function helloAction(
   ctx: InstrumentBackendContext,
@@ -113,22 +113,20 @@ export default defineBackend({
 }
 
 function generatePackageJson(options: ScaffoldOptions): string {
+  const cli = "bun node_modules/@tango/api/src/cli.ts";
   const scripts: Record<string, string> = {
-    dev: "tango-sdk dev",
-    build: "tango-sdk build",
-    sync: "tango-sdk sync",
-    validate: "tango-sdk validate",
+    dev: `${cli} dev`,
+    build: `${cli} build`,
+    sync: `${cli} sync`,
+    validate: `${cli} validate`,
   };
 
   const deps: Record<string, string> = {
-    "@tango/instrument-sdk": `file:${options.sdkPath}`,
-    "@tango/instrument-ui": `file:${options.uiPath}`,
+    "@tango/api": `file:${options.apiPath}`,
   };
 
   const devDeps: Record<string, string> = {
     "@types/react": "^18.0.0",
-    react: "^18.0.0",
-    "react-dom": "^18.0.0",
     typescript: "^5.0.0",
   };
 
@@ -140,6 +138,14 @@ function generatePackageJson(options: ScaffoldOptions): string {
     entrypoint: "./dist/index.js",
     ...(options.includeBackend ? { backendEntrypoint: "./dist/backend.js" } : {}),
     hostApiVersion: "2.0.0",
+    launcher: {
+      sidebarShortcut: {
+        enabled: true,
+        label: options.name,
+        icon: "puzzle",
+        order: 100,
+      },
+    },
     panels: options.panels,
     permissions: ["storage.properties"],
   };

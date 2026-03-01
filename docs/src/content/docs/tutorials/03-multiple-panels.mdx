@@ -60,11 +60,11 @@ The sidebar shows items and writes the selection to storage + emits an event:
 
 ```tsx
 import { useCallback, useEffect, useRef, useState } from "react";
-import { defineReactInstrument, useInstrumentApi, useHostEvent } from "@tango/instrument-sdk/react";
 import {
+  defineReactInstrument, useInstrumentApi, useHostEvent,
   UIRoot, UIPanelHeader, UISection,
   UIGroupList, UIGroupItem, UIBadge,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 function SidebarPanel() {
   const api = useInstrumentApi();

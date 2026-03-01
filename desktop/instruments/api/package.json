@@ -1,0 +1,18 @@
+{
+  "name": "@tango/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "tango-sdk": "./src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./backend": "./src/backend.ts",
+    "./cli": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@tango/instrument-sdk": "file:../sdk",
+    "@tango/instrument-ui": "file:../ui"
+  }
+}

@@ -30,14 +30,13 @@ The `tango.instrument` field is the manifest that tells Tango how to load your i
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tango-sdk dev",
-    "build": "tango-sdk build",
-    "sync": "tango-sdk sync",
-    "validate": "tango-sdk validate"
+    "dev": "bun node_modules/@tango/api/src/cli.ts dev",
+    "build": "bun node_modules/@tango/api/src/cli.ts build",
+    "sync": "bun node_modules/@tango/api/src/cli.ts sync",
+    "validate": "bun node_modules/@tango/api/src/cli.ts validate"
   },
   "dependencies": {
-    "@tango/instrument-sdk": "file:../sdk",
-    "@tango/instrument-ui": "file:../ui"
+    "@tango/api": "file:../../desktop/instruments/api"
   },
   "tango": {
     "instrument": {
@@ -48,6 +47,14 @@ The `tango.instrument` field is the manifest that tells Tango how to load your i
       "entrypoint": "./dist/index.js",
       "backendEntrypoint": "./dist/backend.js",
       "hostApiVersion": "2.0.0",
+      "launcher": {
+        "sidebarShortcut": {
+          "enabled": true,
+          "label": "My Instrument",
+          "icon": "puzzle",
+          "order": 100
+        }
+      },
       "panels": {
         "sidebar": true,
         "first": false,
@@ -79,7 +86,7 @@ The `tango.instrument` field is the manifest that tells Tango how to load your i
 | `hostApiVersion` | `string` | SDK version for compatibility |
 | `permissions` | `string[]` | Capabilities the instrument needs |
 | `settings` | `array` | User-configurable settings schema |
-| `launcher` | `object` | Sidebar shortcut configuration |
+| `launcher` | `object` | Sidebar shortcut configuration. **Required for the instrument to appear in the sidebar.** |
 
 See the [Manifest Reference](/reference/manifest/) for full details.
 
@@ -88,8 +95,14 @@ See the [Manifest Reference](/reference/manifest/) for full details.
 This is a React component that Tango renders inside a panel. It must default-export a `TangoInstrumentDefinition` created by `defineReactInstrument`:
 
 ```tsx
-import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
-import { UIRoot, UIPanelHeader, UISection, UIEmptyState } from "@tango/instrument-ui/react";
+import {
+  defineReactInstrument,
+  useInstrumentApi,
+  UIRoot,
+  UIPanelHeader,
+  UISection,
+  UIEmptyState,
+} from "@tango/api";
 
 function SidebarPanel() {
   const api = useInstrumentApi();
@@ -118,7 +131,7 @@ export default defineReactInstrument({
 Runs in the host Bun process. Define actions that the frontend can call:
 
 ```ts
-import { defineBackend, type InstrumentBackendContext } from "@tango/instrument-sdk";
+import { defineBackend, type InstrumentBackendContext } from "@tango/api/backend";
 
 export default defineBackend({
   kind: "tango.instrument.backend.v2",

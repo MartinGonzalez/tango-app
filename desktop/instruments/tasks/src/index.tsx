@@ -4,8 +4,6 @@ import {
   useInstrumentApi,
   useHostEvent,
   type InstrumentFrontendAPI,
-} from "@tango/instrument-sdk/react";
-import {
   UIRoot,
   UIPanelHeader,
   UISection,
@@ -20,7 +18,7 @@ import {
   UIGroupList,
   UIGroupItem,
   UIGroupEmpty,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 // ---------------------------------------------------------------------------
 // Types

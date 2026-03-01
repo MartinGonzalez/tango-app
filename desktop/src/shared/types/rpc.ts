@@ -427,6 +427,10 @@ export type AppRPC = {
         event: string;
         payload?: unknown;
       };
+      instrumentDevReload: {
+        instrumentId: string;
+        entries?: InstrumentRegistryEntry[];
+      };
     };
   }>;
 };

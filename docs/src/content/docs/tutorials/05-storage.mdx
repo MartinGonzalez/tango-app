@@ -151,11 +151,11 @@ Here's a sidebar that uses all three tiers:
 
 ```tsx
 import { useEffect, useState } from "react";
-import { defineReactInstrument, useInstrumentApi } from "@tango/instrument-sdk/react";
 import {
+  defineReactInstrument, useInstrumentApi,
   UIRoot, UIPanelHeader, UISection, UICard,
   UIButton, UIInput, UIBadge,
-} from "@tango/instrument-ui/react";
+} from "@tango/api";
 
 type Note = { id: string; title: string; created_at: string };
 

@@ -21,6 +21,10 @@
     "./react": {
       "types": "./src/react.tsx",
       "default": "./src/react.tsx"
+    },
+    "./cli": {
+      "types": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
     }
   },
   "peerDependencies": {

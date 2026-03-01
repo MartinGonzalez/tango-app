@@ -31,10 +31,7 @@ cd my-instrument
 bun install
 ```
 
-This installs two workspace packages:
-
-- `@tango/instrument-sdk` — core API, React bindings, CLI tools
-- `@tango/instrument-ui` — pre-built UI components
+This installs `@tango/api`, which bundles the core SDK, React bindings, UI components, and CLI tools.
 
 ## Start development
 
@@ -42,17 +39,18 @@ This installs two workspace packages:
 bun run dev
 ```
 
-This runs `tango-sdk dev` which:
+This runs the `tango-sdk dev` flow which:
 
-1. Builds your frontend (and backend if present) with Bun
-2. Watches for file changes and rebuilds automatically
-3. Notifies the running Tango app to hot-reload your instrument
+1. Syncs dependencies (ensures `@tango/api` and its transitive deps are fresh)
+2. Builds your frontend (and backend if present) with Bun
+3. Watches for file changes and rebuilds automatically
+4. Notifies the running Tango app to hot-reload your instrument
 
 ## See it in Tango
 
-Open Tango. Your instrument appears in the sidebar (if you enabled the sidebar panel). Click it to see your panels render.
+Open Tango. Your instrument appears in the sidebar thanks to the `launcher.sidebarShortcut` config in the manifest. Click it to see your panels render.
 
-If Tango was already open before you ran `bun run dev`, the instrument reloads automatically on each save.
+If Tango was already open before you ran `bun run dev`, the instrument hot-reloads automatically on each save. A `[dev]` badge appears next to the instrument label in the sidebar while dev mode is active.
 
 ## Manual build
 

@@ -24,7 +24,7 @@ Update your manifest in `package.json`:
 Create `src/backend.ts`:
 
 ```ts
-import { defineBackend, type InstrumentBackendContext } from "@tango/instrument-sdk";
+import { defineBackend, type InstrumentBackendContext } from "@tango/api/backend";
 
 export default defineBackend({
   kind: "tango.instrument.backend.v2",
@@ -93,8 +93,7 @@ You have full access to the same APIs as the frontend, plus the ability to emit 
 Use `useInstrumentAction` to create a typed caller:
 
 ```tsx
-import { useInstrumentAction, useInstrumentApi } from "@tango/instrument-sdk/react";
-import { UIRoot, UIPanelHeader, UISection, UICard, UIButton, UIInput } from "@tango/instrument-ui/react";
+import { useInstrumentAction, useInstrumentApi, UIRoot, UIPanelHeader, UISection, UICard, UIButton, UIInput } from "@tango/api";
 import { useState } from "react";
 
 type GreetInput = { name: string };

@@ -56,6 +56,7 @@ import { PRAgentReviewProvider } from "./pr-agent-review-provider.ts";
 import { isAgentReviewPlaceholderPayload } from "./pr-agent-review-files.ts";
 import { ConnectorsRepository } from "./connectors-repository.ts";
 import { InstrumentRuntime } from "./instruments/runtime.ts";
+import { setDevReloadHandler, createDevReloadHandler } from "./instruments/dev-server.ts";
 import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
@@ -2028,6 +2029,12 @@ await prAgentReviewStore.load();
 await prAgentReviewStore.reconcileInterruptedRuns();
 await connectors.start();
 await initializeInstrumentRuntime();
+setDevReloadHandler(createDevReloadHandler({
+  get: (id) => instrumentRuntime.get(id),
+  installFromPath: (path) => instrumentRuntime.installFromPath(path),
+  list: () => instrumentRuntime.list(),
+  sendDevReload: (msg) => mainRPC?.send.instrumentDevReload(msg),
+}));
 await ensureServer();
 try {
   approvals.start(4243);
