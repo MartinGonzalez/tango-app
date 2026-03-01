@@ -11,7 +11,7 @@ import {
   UIButton,
   UIInput,
   UITextarea,
-  UISelect,
+  UIDropdown,
   UIBadge,
   UIEmptyState,
   UIGroup,
@@ -576,7 +576,7 @@ function TaskSourcesSection(props: {
         <UICard>
           <div className="tui-col">
             <SectionTitle>Kind</SectionTitle>
-            <UISelect
+            <UIDropdown
               options={SOURCE_KIND_OPTIONS}
               value={kind}
               onChange={setKind}
@@ -688,7 +688,7 @@ function TaskDetailView(props: {
               onInput={setTitle}
             />
             <SectionTitle>Status</SectionTitle>
-            <UISelect
+            <UIDropdown
               options={STATUS_OPTIONS}
               value={status}
               onChange={setStatus}
@@ -871,64 +871,62 @@ function TasksSidebarPanel() {
 
   return (
     <UIRoot>
-      <div style={{ height: "100%", overflow: "auto", padding: 10, boxSizing: "border-box" }}>
-        <UIPanelHeader
-          title="Tasks"
-          subtitle="Grouped by stage"
-          rightActions={
-            <UIBadge
-              label={`${state.stages.length} stage${state.stages.length === 1 ? "" : "s"}`}
-              tone="neutral"
-            />
-          }
-        />
+      <UIPanelHeader
+        title="Tasks"
+        subtitle="Grouped by stage"
+        rightActions={
+          <UIBadge
+            label={`${state.stages.length} stage${state.stages.length === 1 ? "" : "s"}`}
+            tone="neutral"
+          />
+        }
+      />
 
-        {state.loading ? (
-          <UISection>
-            <UICard>
-              <MutedText>Loading tasks...</MutedText>
-            </UICard>
-          </UISection>
-        ) : state.stages.length === 0 ? (
-          <UISection>
-            <UIEmptyState
-              title="No stages yet"
-              description="Create or open a stage to start using Tasks."
-            />
-          </UISection>
-        ) : (
-          <UISection>
-            <div className="tui-col">
-              {state.stages.map((stagePath) => {
-                const tasks = state.tasksByStage[stagePath] ?? [];
-                return (
-                  <StageGroup
-                    key={stagePath}
-                    stagePath={stagePath}
-                    tasks={tasks}
-                    selectedTaskId={state.selectedTaskId}
-                    expanded={isStageExpanded(stagePath, tasks)}
-                    onToggle={() => toggleStage(stagePath, tasks)}
-                    onSelectTask={(taskId) => {
-                      dispatch({ type: "EXPAND_STAGE", stagePath });
-                      void selectTask(taskId);
-                    }}
-                    onCreateTask={() => {
-                      void createTask(stagePath).then(async () => {
-                        const tasks = state.tasksByStage[stagePath] ?? [];
-                        const first = tasks[0];
-                        if (first?.id) {
-                          await selectTask(first.id);
-                        }
-                      });
-                    }}
-                  />
-                );
-              })}
-            </div>
-          </UISection>
-        )}
-      </div>
+      {state.loading ? (
+        <UISection>
+          <UICard>
+            <MutedText>Loading tasks...</MutedText>
+          </UICard>
+        </UISection>
+      ) : state.stages.length === 0 ? (
+        <UISection>
+          <UIEmptyState
+            title="No stages yet"
+            description="Create or open a stage to start using Tasks."
+          />
+        </UISection>
+      ) : (
+        <UISection>
+          <div className="tui-col">
+            {state.stages.map((stagePath) => {
+              const tasks = state.tasksByStage[stagePath] ?? [];
+              return (
+                <StageGroup
+                  key={stagePath}
+                  stagePath={stagePath}
+                  tasks={tasks}
+                  selectedTaskId={state.selectedTaskId}
+                  expanded={isStageExpanded(stagePath, tasks)}
+                  onToggle={() => toggleStage(stagePath, tasks)}
+                  onSelectTask={(taskId) => {
+                    dispatch({ type: "EXPAND_STAGE", stagePath });
+                    void selectTask(taskId);
+                  }}
+                  onCreateTask={() => {
+                    void createTask(stagePath).then(async () => {
+                      const tasks = state.tasksByStage[stagePath] ?? [];
+                      const first = tasks[0];
+                      if (first?.id) {
+                        await selectTask(first.id);
+                      }
+                    });
+                  }}
+                />
+              );
+            })}
+          </div>
+        </UISection>
+      )}
     </UIRoot>
   );
 }
@@ -1009,60 +1007,58 @@ function TasksSecondPanel() {
 
   return (
     <UIRoot>
-      <div style={{ height: "100%", overflow: "auto", padding: 12, boxSizing: "border-box" }}>
-        <UIPanelHeader
-          title={detail?.title?.trim() ? detail.title : "Tasks"}
-          subtitle={
-            detail?.stagePath
-              ? stageNameFromPath(detail.stagePath)
-              : "Select or create a task"
-          }
-          rightActions={
-            detail?.status ? (
-              <UIBadge label={detail.status} tone={toneForStatus(detail.status)} />
-            ) : undefined
-          }
-        />
+      <UIPanelHeader
+        title={detail?.title?.trim() ? detail.title : "Tasks"}
+        subtitle={
+          detail?.stagePath
+            ? stageNameFromPath(detail.stagePath)
+            : "Select or create a task"
+        }
+        rightActions={
+          detail?.status ? (
+            <UIBadge label={detail.status} tone={toneForStatus(detail.status)} />
+          ) : undefined
+        }
+      />
 
-        {state.error ? (
-          <UISection>
-            <UICard>
-              <div className="tui-row">
-                <UIBadge label="Error" tone="danger" />
-                <PreviewText>{state.error}</PreviewText>
-              </div>
-            </UICard>
-          </UISection>
-        ) : null}
+      {state.error ? (
+        <UISection>
+          <UICard>
+            <div className="tui-row">
+              <UIBadge label="Error" tone="danger" />
+              <PreviewText>{state.error}</PreviewText>
+            </div>
+          </UICard>
+        </UISection>
+      ) : null}
 
-        {!detail ? (
-          <UISection>
-            <UIEmptyState
-              title="Select or create a task"
-              description="Pick a task from the sidebar to edit details, sources and actions."
-            />
-          </UISection>
-        ) : (
-          <TaskDetailView
-            detail={detail}
-            onSave={(patch) => {
-              void saveTask(detail.id, detail.stagePath, patch);
-            }}
-            onDelete={() => {
-              void removeTask(detail.id, detail.stagePath);
-            }}
-            onRunAction={(action) => {
-              void runAction(detail.id, detail.stagePath, action);
-            }}
-            onOpenSession={() => {
-              void openSession(detail);
-            }}
-            onAddSource={addSource}
-            onFetchSource={fetchSource}
-            onRemoveSource={removeSource}
+      {!detail ? (
+        <UISection>
+          <UIEmptyState
+            title="Select or create a task"
+            description="Pick a task from the sidebar to edit details, sources and actions."
           />
-        )}
-      </div>
+        </UISection>
+      ) : (
+        <TaskDetailView
+          detail={detail}
+          onSave={(patch) => {
+            void saveTask(detail.id, detail.stagePath, patch);
+          }}
+          onDelete={() => {
+            void removeTask(detail.id, detail.stagePath);
+          }}
+          onRunAction={(action) => {
+            void runAction(detail.id, detail.stagePath, action);
+          }}
+          onOpenSession={() => {
+            void openSession(detail);
+          }}
+          onAddSource={addSource}
+          onFetchSource={fetchSource}
+          onRemoveSource={removeSource}
+        />
+      )}
     </UIRoot>
   );
 }

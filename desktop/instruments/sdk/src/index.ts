@@ -34,6 +34,8 @@ export type {
   TangoPanelComponent,
   TangoPanelRenderResult,
   TangoPanelSlot,
+  UseSessionOptions,
+  UseSessionReturn,
 } from "./types/instrument-sdk.ts";
 
 export type {

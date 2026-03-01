@@ -10,6 +10,8 @@
     "dev:raw": "electrobun dev",
     "dev:app": "TANGO_DISABLE_WATCHER_AUTOSTART=1 bun run build:instruments && TANGO_DISABLE_WATCHER_AUTOSTART=1 electrobun build && TANGO_DISABLE_WATCHER_AUTOSTART=1 electrobun dev",
     "start": "bun run clean && bun run build && bun run dev:raw",
+    "clean:cache": "rm -rf node_modules/.bun instruments/node_modules/.bun && bun install",
+    "dev:fresh": "bun run clean:cache && bun run dev",
     "clean": "bun run kill-app; bun run kill-server; true",
     "kill-app": "pkill -f 'Tango' 2>/dev/null; pkill -f 'electrobun dev' 2>/dev/null; true",
     "kill-server": "lsof -ti:4242 | xargs kill 2>/dev/null; true",
@@ -17,11 +19,14 @@
     "check:tasks-decoupling": "bun ./scripts/assert-tasks-decoupling.mjs"
   },
   "dependencies": {
+    "@tango/api": "file:./instruments/api",
+    "@tango/instrument-ui": "file:./instruments/ui",
     "electrobun": "latest",
     "prismjs": "^1.30.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/prismjs": "^1.26.6"
+    "@types/prismjs": "^1.26.6",
+    "linkedom": "^0.18.12"
   }
 }

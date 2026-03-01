@@ -864,6 +864,131 @@ button {
   }
 }
 
+/* ── Error modal ─────────────────────────────────────────────── */
+
+.error-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.error-modal {
+  width: min(860px, 90%);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid #5a2020;
+  background: var(--bg);
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.45);
+}
+
+.error-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.error-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fca5a5;
+}
+
+.error-modal-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.error-modal-close:hover {
+  border-color: #5a2020;
+  background: #2a1010;
+  color: #fca5a5;
+}
+
+.error-modal-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.error-modal-entry {
+  padding: 12px;
+  border-radius: 10px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+}
+
+.error-modal-entry-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.error-modal-context {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffb4a6;
+}
+
+.error-modal-copy {
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.error-modal-copy:hover {
+  border-color: #666;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.error-modal-stack {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #d1d5db;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.error-modal-trace-label {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.error-modal-trace {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: #9ca3af;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
 /* ── Stage sessions ──────────────────────────────────────────── */
 
 .ws-sessions {
@@ -5889,31 +6014,12 @@ button {
 }
 
 .dv-icon-btn {
-  width: 28px;
-  height: 28px;
   margin-left: 4px;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transition: all 80ms ease;
   flex-shrink: 0;
 }
 
 .dv-icon-btn .material-symbols-outlined {
   font-size: 18px;
-}
-
-.dv-icon-btn:hover {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-
-.dv-icon-btn.active {
-  color: var(--text);
-  background: var(--bg-active);
 }
 
 .dv-commit-btn {

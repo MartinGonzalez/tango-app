@@ -22,6 +22,45 @@ export type UIIconPrimitive =
   | { tag: "path"; d: string }
   | { tag: "circle"; cx: number; cy: number; r: number }
   | { tag: "line"; x1: number; y1: number; x2: number; y2: number };
+export type UIDOMRootOptions = { className?: string };
+export type UIDOMButtonOptions = {
+  label: string;
+  icon?: UIIconName | string | HTMLElement;
+  variant?: UIButtonVariant;
+  size?: UIButtonSize;
+  disabled?: boolean;
+  onClick?: () => void;
+};
+export type UIDOMIconButtonOptions = {
+  icon: UIIconName | string | HTMLElement;
+  label: string;
+  title?: string;
+  variant?: UIIconButtonVariant;
+  size?: UIIconButtonSize;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+};
+export type UIDOMOption = { value: string; label: string };
+export type UIDOMSegmentedControlOptions = {
+  options: UIDOMOption[];
+  value?: string;
+  onChange?: (value: string) => void;
+};
+export type UIDOMTabDefinition = { value: string; label: string; content: HTMLElement };
+export type UIDOMTabsOptions = {
+  tabs: UIDOMTabDefinition[];
+  value?: string;
+  onChange?: (value: string) => void;
+};
+export type UIDOMDropdownOptions = {
+  options: UIDOMOption[];
+  value?: string;
+  initialValue?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onChange?: (value: string) => void;
+};
 
 type BadgeTone = UITone;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -156,7 +195,7 @@ export function ensureInstrumentUI(doc: Document = document): void {
   doc.head.appendChild(style);
 }
 
-export function createRoot(opts: { className?: string } = {}): HTMLDivElement {
+export function createRoot(opts: UIDOMRootOptions = {}): HTMLDivElement {
   ensureInstrumentUI();
   const className = opts.className
     ? `tui-root ${opts.className}`.trim()
@@ -221,14 +260,7 @@ export function card(opts: {
   return el("div", { className }, normalizeContent(opts.content));
 }
 
-export function button(opts: {
-  label: string;
-  icon?: UIIconName | string | HTMLElement;
-  variant?: UIButtonVariant;
-  size?: UIButtonSize;
-  disabled?: boolean;
-  onClick?: () => void;
-}): HTMLButtonElement {
+export function button(opts: UIDOMButtonOptions): HTMLButtonElement {
   const variant = opts.variant ?? "secondary";
   const size = opts.size ?? "md";
   let iconNode: HTMLElement | null = null;
@@ -256,16 +288,7 @@ export function button(opts: {
   }, [iconNode, labelNode]);
 }
 
-export function iconButton(opts: {
-  icon: UIIconName | string | HTMLElement;
-  label: string;
-  title?: string;
-  variant?: UIIconButtonVariant;
-  size?: UIIconButtonSize;
-  active?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-}): HTMLButtonElement {
+export function iconButton(opts: UIDOMIconButtonOptions): HTMLButtonElement {
   const variant = opts.variant ?? "ghost";
   const size = opts.size ?? "sm";
   let iconNode: HTMLElement;
@@ -611,11 +634,7 @@ export function radioGroup(opts: {
   }));
 }
 
-export function segmentedControl(opts: {
-  options: Array<{ value: string; label: string }>;
-  value?: string;
-  onChange?: (value: string) => void;
-}): HTMLElement {
+export function segmentedControl(opts: UIDOMSegmentedControlOptions): HTMLElement {
   return el("div", { className: "tui-segmented" }, opts.options.map((option) =>
     el("button", {
       className: `tui-segmented-item${opts.value === option.value ? " is-active" : ""}`,
@@ -628,11 +647,7 @@ export function segmentedControl(opts: {
   ));
 }
 
-export function tabs(opts: {
-  tabs: Array<{ value: string; label: string; content: HTMLElement }>;
-  value?: string;
-  onChange?: (value: string) => void;
-}): HTMLElement {
+export function tabs(opts: UIDOMTabsOptions): HTMLElement {
   const currentValue = opts.value ?? opts.tabs[0]?.value ?? "";
   const selected = opts.tabs.find((item) => item.value === currentValue) ?? opts.tabs[0] ?? null;
   return el("div", { className: "tui-tabs" }, [
@@ -654,14 +669,7 @@ export function tabs(opts: {
   ]);
 }
 
-export function dropdown(opts: {
-  options: Array<{ value: string; label: string }>;
-  value?: string;
-  initialValue?: string;
-  placeholder?: string;
-  disabled?: boolean;
-  onChange?: (value: string) => void;
-}): HTMLElement {
+export function dropdown(opts: UIDOMDropdownOptions): HTMLElement {
   const current = { value: opts.value ?? opts.initialValue ?? "" };
   const root = el("div", {
     className: `tui-dropdown-select${opts.disabled ? " is-disabled" : ""}`,

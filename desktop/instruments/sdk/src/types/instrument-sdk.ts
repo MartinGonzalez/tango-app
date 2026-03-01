@@ -239,3 +239,19 @@ export type InstrumentBackendDefinition = {
   onStart?: (ctx: InstrumentBackendContext) => Promise<void> | void;
   onStop?: () => Promise<void> | void;
 };
+
+export type UseSessionOptions = {
+  id: string;
+  persist?: boolean;
+};
+
+export type UseSessionReturn = {
+  send: (text: string) => Promise<void>;
+  /** Clear the current session and all persisted state. Next send() starts fresh. */
+  reset: () => Promise<void>;
+  userMessage: string;
+  response: string;
+  isResponding: boolean;
+  sessionId: string | null;
+  loaded: boolean;
+};

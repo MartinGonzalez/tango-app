@@ -5,9 +5,10 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build:frontend": "bun build src/index.tsx --outfile dist/index.js --format esm --target browser",
-    "build:backend": "bun build src/backend.ts --outfile dist/backend.js --format esm --target bun",
-    "build": "bun run build:frontend && bun run build:backend",
+    "dev": "bun node_modules/@tango/api/src/cli.ts dev",
+    "build": "bun node_modules/@tango/api/src/cli.ts build",
+    "sync": "bun node_modules/@tango/api/src/cli.ts sync",
+    "validate": "bun node_modules/@tango/api/src/cli.ts validate",
     "check:portable": "bun run build && bun run scripts/verify-portable.mjs",
     "build:external-local": "bun run build && bun run scripts/build-external-local.mjs",
     "test": "bun test ./test"

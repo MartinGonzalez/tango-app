@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,7 +41,8 @@ function resolveSource(cwd: string, entrypoint: string): string {
   // Try tsx first, fallback to ts
   const tsxPath = resolve(cwd, srcPath);
   const tsPath = tsxPath.replace(/\.tsx$/, ".ts");
-  return tsxPath;
+  if (existsSync(tsxPath)) return tsxPath;
+  return tsPath;
 }
 
 /**

@@ -32,6 +32,7 @@ import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel, type FileListView } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
 import { CommitModal } from "./components/commit-modal.ts";
+import { ErrorModal } from "./components/error-modal.ts";
 import { PRView } from "./components/pr-view.ts";
 import type {
   SessionInfo,
@@ -278,7 +279,9 @@ const rpc = Electroview.defineRPC<any>({
 const _electrobun = new Electrobun.Electroview({ rpc });
 type ClientLogLevel = "debug" | "info" | "warn" | "error";
 const bootTraceLines: string[] = [];
-let fatalScreenVisible = false;
+const errorModal = new ErrorModal();
+let renderErrorCount = 0;
+const RENDER_ERROR_CAP = 3;
 
 function stringifyForLog(value: unknown): string {
   if (value === null || value === undefined) return "";
@@ -318,51 +321,17 @@ function pushBootTrace(step: string, detail?: unknown): void {
   sendClientLog("debug", `boot:${step}`, detail);
 }
 
-function renderFatalScreen(context: string, error: unknown): void {
-  if (fatalScreenVisible) return;
-  fatalScreenVisible = true;
-
-  const host = qs("#app") ?? document.body;
-  if (!host) return;
-  host.replaceChildren();
-
-  const container = h("div", {
-    style: {
-      height: "100vh",
-      overflow: "auto",
-      padding: "16px",
-      color: "#f5f5f5",
-      background: "#111315",
-      fontFamily: "\"SF Mono\", Menlo, monospace",
-      fontSize: "12px",
-      lineHeight: "1.5",
-    },
-  }, [
-    h("h2", {
-      style: { marginBottom: "12px", fontSize: "16px", color: "#ffb4a6" },
-    }, ["Tango UI crash report"]),
-    h("div", {
-      style: { marginBottom: "8px", color: "#fca5a5" },
-    }, [`Context: ${context}`]),
-    h("pre", {
-      style: {
-        whiteSpace: "pre-wrap",
-        marginBottom: "12px",
-      },
-    }, [stringifyForLog(error)]),
-    h("div", {
-      style: { marginBottom: "6px", color: "#9ca3af" },
-    }, ["Boot trace"]),
-    h("pre", {
-      style: {
-        whiteSpace: "pre-wrap",
-        color: "#d1d5db",
-      },
-    }, [bootTraceLines.join("\n")]),
-  ]);
-
-  host.appendChild(container);
+function showErrorModal(context: string, error: unknown): void {
+  try {
+    errorModal.show(context, error, [...bootTraceLines]);
+  } catch {
+    // If the modal itself errors, avoid infinite recursion — log and bail
+    console.error("[mainview] ErrorModal.show() failed for:", context, error);
+  }
 }
+
+// Signal to the HTML bootstrap handler that the TS layer is ready
+(window as any).__tangoTSErrorHandlerReady = true;
 
 function reportFatal(context: string, error: unknown, meta?: unknown): void {
   sendClientLog("error", `fatal:${context}`, {
@@ -370,7 +339,7 @@ function reportFatal(context: string, error: unknown, meta?: unknown): void {
     meta: meta ?? null,
     bootTrace: bootTraceLines,
   });
-  renderFatalScreen(context, error);
+  showErrorModal(context, error);
 }
 
 window.addEventListener("error", (event) => {
@@ -1667,12 +1636,15 @@ function init(): void {
       prevBranchCommits = branchCommits;
     }
     } catch (err) {
-      reportFatal("state.render", err, {
-        viewMode: state.viewMode,
-        activeStage: state.activeStage,
-        activeInstrumentId: state.activeInstrumentId,
-        activeRuntimeInstrumentId,
-      });
+      renderErrorCount++;
+      if (renderErrorCount <= RENDER_ERROR_CAP) {
+        reportFatal("state.render", err, {
+          viewMode: state.viewMode,
+          activeStage: state.activeStage,
+          activeInstrumentId: state.activeInstrumentId,
+          activeRuntimeInstrumentId,
+        });
+      }
     }
   });
 

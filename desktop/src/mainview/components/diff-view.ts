@@ -1,9 +1,9 @@
 import { h, clearChildren } from "../lib/dom.ts";
 import { stageBranchIcon } from "../lib/icons.ts";
 import {
-  button as uiButton,
-  ensureInstrumentUI,
-} from "../../../instruments/ui/src/index.ts";
+  UIButton,
+  UIIconButton,
+} from "../ui/index.ts";
 import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type {
   DiffFile,
@@ -101,7 +101,6 @@ export class DiffView {
 
   constructor(container: HTMLElement | null, callbacks: DiffViewCallbacks = {}) {
     this.#callbacks = callbacks;
-    ensureInstrumentUI(document);
     this.#onGlobalClick = (event: MouseEvent) => {
       if (!this.#openActionsFilePath) return;
       const target = event.target;
@@ -125,21 +124,23 @@ export class DiffView {
       }
     };
 
-    this.#filesToggleBtn = h("button", {
-      class: "dv-icon-btn",
+    this.#filesToggleBtn = UIIconButton({
+      label: "Toggle files changed",
       title: "Toggle files changed",
-      onclick: () => this.toggleFilesPanel(),
-    }, [
-      h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, ["folder_open"]),
-    ]) as HTMLButtonElement;
+      icon: h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, ["folder_open"]),
+      onClick: () => this.toggleFilesPanel(),
+    });
+    this.#filesToggleBtn.classList.add("dv-icon-btn");
 
-    this.#branchToggleBtn = h("button", {
-      class: "dv-icon-btn",
+    this.#branchToggleBtn = UIIconButton({
+      label: "Toggle branch history",
       title: "Toggle branch history",
-      onclick: () => this.toggleBranchPanel(),
-    }, [stageBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
+      icon: stageBranchIcon("dv-icon-branch"),
+      onClick: () => this.toggleBranchPanel(),
+    });
+    this.#branchToggleBtn.classList.add("dv-icon-btn");
 
-    this.#commitBtn = uiButton({
+    this.#commitBtn = UIButton({
       label: "Commit",
       variant: "primary",
       size: "sm",
@@ -178,7 +179,7 @@ export class DiffView {
       this.#branchHostEl,
     ]);
 
-    this.#el = h("div", { class: "diff-view tui-root" }, [
+    this.#el = h("div", { class: "diff-view" }, [
       this.#bodyEl,
     ]);
 
@@ -1351,7 +1352,7 @@ export class DiffView {
     this.#filesPanelVisible = visible;
     this.#el.classList.toggle("files-visible", visible);
     this.#filesHostEl.hidden = !visible;
-    this.#filesToggleBtn.classList.toggle("active", visible);
+    this.#filesToggleBtn.classList.toggle("is-active", visible);
   }
 
   toggleFilesPanel(): void {
@@ -1370,7 +1371,7 @@ export class DiffView {
     this.#branchPanelVisible = visible;
     this.#el.classList.toggle("branch-visible", visible);
     this.#branchHostEl.hidden = !visible;
-    this.#branchToggleBtn.classList.toggle("active", visible);
+    this.#branchToggleBtn.classList.toggle("is-active", visible);
 
     if (notify) {
       this.#callbacks.onBranchPanelToggle?.(visible);

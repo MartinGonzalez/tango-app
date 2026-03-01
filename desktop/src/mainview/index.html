@@ -20,20 +20,82 @@
         if (value && value.stack) return `${value.message || "Error"}\n${value.stack}`;
         try { return JSON.stringify(value); } catch { return String(value); }
       };
+      let bootOverlay = null;
+      const dismissBootOverlay = () => {
+        if (bootOverlay) { bootOverlay.remove(); bootOverlay = null; }
+        window.removeEventListener("keydown", onBootEsc);
+      };
+      const onBootEsc = (e) => { if (e.key === "Escape") dismissBootOverlay(); };
+
       const show = (title, detail) => {
+        // If the TS error handler is ready, let it handle errors
+        if (window.__tangoTSErrorHandlerReady) return;
+
         const body = document.body || document.documentElement;
         if (!body) return;
-        body.innerHTML = "";
-        const container = document.createElement("div");
-        container.style.cssText = "height:100vh;overflow:auto;padding:16px;background:#111315;color:#f5f5f5;font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;";
-        container.innerHTML = `
-          <h2 style="margin:0 0 12px;color:#ffb4a6;font-size:16px;">Tango Boot Error</h2>
-          <div style="margin:0 0 8px;color:#fca5a5;">${title}</div>
-          <pre style="white-space:pre-wrap;margin:0 0 12px;">${stringify(detail)}</pre>
-          <div style="margin:0 0 6px;color:#9ca3af;">Boot trace</div>
-          <pre style="white-space:pre-wrap;margin:0;">${trace.join("\n")}</pre>
-        `;
-        body.appendChild(container);
+
+        // Create modal overlay (inline styles since CSS may not be loaded yet)
+        if (!bootOverlay) {
+          bootOverlay = document.createElement("div");
+          bootOverlay.style.cssText = "position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,0.58);";
+          bootOverlay.addEventListener("click", dismissBootOverlay);
+
+          const dialog = document.createElement("div");
+          dialog.style.cssText = "width:min(860px,90%);max-height:80vh;overflow-y:auto;padding:18px;border-radius:18px;border:1px solid #5a2020;background:#1e1e1e;box-shadow:0 22px 46px rgba(0,0,0,0.45);";
+          dialog.addEventListener("click", (e) => e.stopPropagation());
+
+          const header = document.createElement("div");
+          header.style.cssText = "display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;";
+
+          const titleEl = document.createElement("div");
+          titleEl.style.cssText = "font-size:18px;font-weight:700;color:#fca5a5;";
+          titleEl.textContent = "Tango Boot Error";
+
+          const closeBtn = document.createElement("button");
+          closeBtn.style.cssText = "width:28px;height:28px;border-radius:8px;border:1px solid transparent;background:transparent;color:#9ca3af;font-size:24px;line-height:1;cursor:pointer;";
+          closeBtn.textContent = "\u00d7";
+          closeBtn.addEventListener("click", dismissBootOverlay);
+
+          header.appendChild(titleEl);
+          header.appendChild(closeBtn);
+
+          const entries = document.createElement("div");
+          entries.className = "__boot-error-entries";
+
+          dialog.appendChild(header);
+          dialog.appendChild(entries);
+          bootOverlay.appendChild(dialog);
+          body.appendChild(bootOverlay);
+          window.addEventListener("keydown", onBootEsc);
+        }
+
+        const entries = bootOverlay.querySelector(".__boot-error-entries");
+        if (!entries) return;
+
+        const entry = document.createElement("div");
+        entry.style.cssText = "padding:12px;border-radius:10px;background:#1a1a1a;border:1px solid #333;margin-bottom:14px;";
+
+        const ctx = document.createElement("div");
+        ctx.style.cssText = "font-size:13px;font-weight:600;color:#ffb4a6;margin-bottom:8px;";
+        ctx.textContent = title;
+
+        const stack = document.createElement("pre");
+        stack.style.cssText = "font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#d1d5db;white-space:pre-wrap;word-break:break-word;margin:0;";
+        stack.textContent = stringify(detail);
+
+        const traceLabel = document.createElement("div");
+        traceLabel.style.cssText = "font-size:12px;color:#9ca3af;margin-top:10px;margin-bottom:4px;";
+        traceLabel.textContent = "Boot trace";
+
+        const tracePre = document.createElement("pre");
+        tracePre.style.cssText = "font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:#9ca3af;white-space:pre-wrap;word-break:break-word;margin:0;";
+        tracePre.textContent = trace.join("\n");
+
+        entry.appendChild(ctx);
+        entry.appendChild(stack);
+        entry.appendChild(traceLabel);
+        entry.appendChild(tracePre);
+        entries.appendChild(entry);
       };
 
       window.__tangoBootShow = show;
