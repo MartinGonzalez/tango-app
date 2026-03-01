@@ -10,6 +10,18 @@ export const UI_STYLES = `
   --tui-text-secondary: var(--text-secondary, #9ca3af);
   --tui-border: var(--border, #333333);
   --tui-primary: var(--primary, #d97757);
+  --tui-primary-soft: rgba(217, 119, 87, 0.18);
+  --tui-primary-border: rgba(217, 119, 87, 0.45);
+  --tui-primary-hover: rgba(217, 119, 87, 0.52);
+  --tui-focus-ring: rgba(217, 119, 87, 0.55);
+  --tui-control-bg: rgba(12, 12, 12, 0.72);
+  --tui-dropdown-bg: #202020;
+  --tui-dropdown-border: rgba(255, 255, 255, 0.12);
+  --tui-dropdown-hover-bg: rgba(172, 98, 75, 0.82);
+  --tui-radius-control: 9px;
+  --tui-radius-panel: 10px;
+  --tui-radius-inner: 7px;
+  --tui-radius-tight: 4px;
   --tui-blue: var(--blue, #3b82f6);
   --tui-green: var(--green, #10b981);
   --tui-amber: var(--amber, #f59e0b);
@@ -42,7 +54,7 @@ export const UI_STYLES = `
 
 .tui-root .tui-card {
   border: 1px solid var(--tui-border);
-  border-radius: 10px;
+  border-radius: var(--tui-radius-panel);
   background: var(--tui-bg-card);
   padding: 10px;
 }
@@ -88,7 +100,7 @@ export const UI_STYLES = `
 }
 
 .tui-root .tui-btn {
-  border-radius: 9px;
+  border-radius: var(--tui-radius-control);
   border: 1px solid transparent;
   background: transparent;
   color: var(--tui-text-secondary);
@@ -146,7 +158,7 @@ export const UI_STYLES = `
   width: 100%;
   background: var(--tui-bg-secondary);
   border: 1px solid var(--tui-border);
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
   color: var(--tui-text);
   padding: 8px 10px;
   font-size: 12px;
@@ -162,7 +174,8 @@ export const UI_STYLES = `
 .tui-root .tui-input:focus,
 .tui-root .tui-textarea:focus,
 .tui-root .tui-select:focus {
-  border-color: var(--tui-blue);
+  border-color: var(--tui-primary);
+  box-shadow: 0 0 0 1px var(--tui-primary-soft);
 }
 
 .tui-root .tui-badge {
@@ -202,7 +215,7 @@ export const UI_STYLES = `
 
 .tui-root .tui-empty {
   border: 1px dashed var(--tui-border);
-  border-radius: 10px;
+  border-radius: var(--tui-radius-panel);
   padding: 16px;
   text-align: center;
 }
@@ -220,7 +233,7 @@ export const UI_STYLES = `
 
 .tui-root .tui-group {
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
   background: transparent;
   margin-bottom: 6px;
   overflow: visible;
@@ -246,7 +259,7 @@ export const UI_STYLES = `
   justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid var(--tui-border);
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--tui-radius-control) var(--tui-radius-control) 0 0;
   padding: 8px 10px;
 }
 
@@ -262,12 +275,12 @@ export const UI_STYLES = `
 .tui-root .tui-group-header:focus-visible {
   outline: 1px solid var(--tui-primary);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--tui-radius-inner);
 }
 
 .tui-root .tui-group-header-collapsed {
   border-bottom: 0;
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
 }
 
 .tui-root .tui-group-meta {
@@ -430,7 +443,7 @@ export const UI_STYLES = `
 
 .tui-root .tui-list-item {
   width: 100%;
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
   border: 1px solid transparent;
   background: transparent;
   color: var(--tui-text-secondary);
@@ -467,9 +480,15 @@ export const UI_STYLES = `
 .tui-root .tui-radio {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: var(--tui-text);
   font-size: 12px;
+  user-select: none;
+}
+
+.tui-root .tui-toggle,
+.tui-root .tui-checkbox {
+  cursor: pointer;
 }
 
 .tui-root .tui-toggle input,
@@ -482,42 +501,109 @@ export const UI_STYLES = `
   position: relative;
 }
 
-.tui-root .tui-toggle input {
+.tui-root .tui-toggle input,
+.tui-root .tui-checkbox input {
   opacity: 0;
   width: 0;
   height: 0;
   position: absolute;
+  pointer-events: none;
+}
+
+.tui-root .tui-toggle-label,
+.tui-root .tui-checkbox-label {
+  color: var(--tui-text);
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 .tui-root .tui-toggle-slider {
-  width: 34px;
-  height: 20px;
+  width: 38px;
+  height: 22px;
   border-radius: 999px;
   border: 1px solid var(--tui-border);
-  background: var(--tui-bg-secondary);
+  background: var(--tui-control-bg);
   display: inline-flex;
   align-items: center;
   padding: 2px;
-  transition: all 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
 }
 
 .tui-root .tui-toggle-slider::after {
   content: "";
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--tui-text-secondary);
+  background: #6b7280;
   transition: transform 120ms ease, background 120ms ease;
 }
 
 .tui-root .tui-toggle input:checked + .tui-toggle-slider {
-  border-color: rgba(217, 119, 87, 0.45);
-  background: rgba(217, 119, 87, 0.15);
+  border-color: var(--tui-primary-border);
+  background: var(--tui-primary-soft);
+  box-shadow:
+    inset 0 0 0 1px rgba(217, 119, 87, 0.2),
+    0 0 10px rgba(217, 119, 87, 0.25);
 }
 
 .tui-root .tui-toggle input:checked + .tui-toggle-slider::after {
-  transform: translateX(14px);
+  transform: translateX(16px);
   background: var(--tui-primary);
+}
+
+.tui-root .tui-checkbox {
+  position: relative;
+}
+
+.tui-root .tui-toggle input:focus-visible + .tui-toggle-slider,
+.tui-root .tui-checkbox input:focus-visible + .tui-checkbox-indicator {
+  outline: 2px solid var(--tui-focus-ring);
+  outline-offset: 2px;
+}
+
+.tui-root .tui-toggle input:disabled + .tui-toggle-slider,
+.tui-root .tui-checkbox input:disabled + .tui-checkbox-indicator {
+  opacity: 0.55;
+}
+
+.tui-root .tui-checkbox-indicator {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--tui-radius-tight);
+  border: 1px solid var(--tui-border);
+  background: var(--tui-control-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.tui-root .tui-checkbox-indicator::after {
+  content: "";
+  width: 4px;
+  height: 9px;
+  border-right: 2px solid rgba(255, 255, 255, 0.95);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.95);
+  transform: rotate(45deg);
+  transform-origin: center;
+  margin-top: -2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.tui-root .tui-checkbox:hover .tui-checkbox-indicator {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.tui-root .tui-checkbox input:checked + .tui-checkbox-indicator {
+  border-color: var(--tui-primary);
+  background: var(--tui-primary);
+  box-shadow: none;
+}
+
+.tui-root .tui-checkbox input:checked + .tui-checkbox-indicator::after {
+  opacity: 1;
 }
 
 .tui-root .tui-radio-group {
@@ -526,60 +612,222 @@ export const UI_STYLES = `
   gap: 6px;
 }
 
+.tui-root .tui-radio input {
+  accent-color: var(--tui-primary);
+}
+
 .tui-root .tui-segmented {
   display: inline-flex;
-  border: 1px solid var(--tui-border);
-  border-radius: 8px;
-  padding: 2px;
-  background: var(--tui-bg-secondary);
-  gap: 2px;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--tui-radius-control);
+  padding: 3px;
+  background: var(--tui-control-bg);
+  gap: 3px;
 }
 
 .tui-root .tui-segmented-item {
-  border: 0;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--tui-text-secondary);
-  border-radius: 6px;
+  border-radius: var(--tui-radius-inner);
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.tui-root .tui-segmented-item:hover {
+  color: var(--tui-text);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .tui-root .tui-segmented-item.is-active {
-  background: rgba(217, 119, 87, 0.12);
+  background: rgba(217, 119, 87, 0.16);
+  border-color: rgba(217, 119, 87, 0.34);
   color: var(--tui-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .tui-root .tui-tabs {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .tui-root .tui-tabs-list {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  background: var(--tui-control-bg);
+  border: 1px solid var(--tui-border);
+  border-radius: var(--tui-radius-control);
+  padding: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tui-root .tui-tabs-list::-webkit-scrollbar {
+  display: none;
 }
 
 .tui-root .tui-tabs-trigger {
-  border: 1px solid var(--tui-border);
-  border-radius: 8px;
-  background: var(--tui-bg-secondary);
+  border: none;
+  border-radius: var(--tui-radius-inner);
+  background: transparent;
   color: var(--tui-text-secondary);
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 20px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.tui-root .tui-tabs-trigger:hover {
+  color: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tui-root .tui-tabs-trigger:focus-visible {
+  outline: 2px solid var(--tui-focus-ring);
+  outline-offset: 2px;
 }
 
 .tui-root .tui-tabs-trigger.is-active {
-  border-color: rgba(217, 119, 87, 0.45);
-  color: var(--tui-text);
+  background: var(--tui-primary);
+  color: #fff;
 }
 
 .tui-root .tui-tabs-panel {
   border: 1px solid var(--tui-border);
-  border-radius: 8px;
+  border-radius: var(--tui-radius-panel);
   background: var(--tui-bg-card);
-  padding: 10px;
+  padding: 12px;
+}
+
+.tui-root .tui-dropdown-select {
+  width: 100%;
+  position: relative;
+}
+
+.tui-root .tui-dropdown-select-trigger {
+  width: 100%;
+  border: 1px solid var(--tui-dropdown-border);
+  border-radius: var(--tui-radius-control);
+  background: var(--tui-dropdown-bg);
+  color: var(--tui-text);
+  min-height: 56px;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+  outline: none;
+}
+
+.tui-root .tui-dropdown-select-trigger:focus-visible {
+  border-color: var(--tui-primary);
+  box-shadow: 0 0 0 2px var(--tui-focus-ring);
+}
+
+.tui-root .tui-dropdown-select.is-open .tui-dropdown-select-trigger {
+  border-color: var(--tui-primary-border);
+}
+
+.tui-root .tui-dropdown-select.is-disabled .tui-dropdown-select-trigger {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tui-root .tui-dropdown-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.tui-root .tui-dropdown-select-value.is-placeholder {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.tui-root .tui-dropdown-select-caret {
+  width: 12px;
+  height: 12px;
+  color: #8d94a3;
+  flex-shrink: 0;
+  position: relative;
+  transition: color 120ms ease;
+}
+
+.tui-root .tui-dropdown-select-caret::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transform-origin: center;
+  transition: transform 120ms ease;
+}
+
+.tui-root .tui-dropdown-select.is-open .tui-dropdown-select-caret {
+  color: var(--tui-primary);
+}
+
+.tui-root .tui-dropdown-select.is-open .tui-dropdown-select-caret::before {
+  transform: rotate(-135deg);
+}
+
+.tui-root .tui-dropdown-select-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  right: 0;
+  border: 1px solid var(--tui-dropdown-border);
+  border-radius: var(--tui-radius-control);
+  background: var(--tui-dropdown-bg);
+  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 40;
+}
+
+.tui-root .tui-dropdown-select-menu[hidden] {
+  display: none;
+}
+
+.tui-root .tui-dropdown-select-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--tui-text);
+  min-height: 54px;
+  padding: 10px 20px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tui-root .tui-dropdown-select-item:hover:not(.is-active) {
+  background: var(--tui-dropdown-hover-bg);
+  color: #fff;
+}
+
+.tui-root .tui-dropdown-select-item.is-active {
+  background: var(--tui-primary);
+  color: #fff;
 }
 
 .tui-root .tui-dropdown {
@@ -589,18 +837,24 @@ export const UI_STYLES = `
 .tui-root .tui-dropdown-trigger {
   list-style: none;
   border: 1px solid var(--tui-border);
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
   background: var(--tui-bg-secondary);
   color: var(--tui-text);
   min-height: 30px;
   padding: 6px 10px;
   cursor: pointer;
+  outline: none;
+}
+
+.tui-root .tui-dropdown-trigger:focus-visible {
+  border-color: var(--tui-primary);
+  box-shadow: 0 0 0 2px var(--tui-focus-ring);
 }
 
 .tui-root .tui-dropdown-menu {
   margin-top: 6px;
   border: 1px solid var(--tui-border);
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
   background: var(--tui-bg-card);
   overflow: hidden;
   min-width: 180px;
@@ -633,7 +887,7 @@ export const UI_STYLES = `
 .tui-root .tui-selection-item {
   width: 100%;
   border: 1px solid var(--tui-border);
-  border-radius: 8px;
+  border-radius: var(--tui-radius-control);
   background: transparent;
   color: var(--tui-text-secondary);
   text-align: left;

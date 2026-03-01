@@ -45,6 +45,7 @@ export {
   UIInput,
   UITextarea,
   UISelect,
+  UIDropdown,
   UIBadge,
   UIEmptyState,
   UIList,

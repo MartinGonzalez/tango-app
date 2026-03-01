@@ -139,6 +139,8 @@ function renderReactPanel(
   return ({ api }) => {
     const node = document.createElement("div");
     node.className = "tango-react-panel";
+    node.style.overflowY = "auto";
+    node.style.height = "100%";
 
     const root = createRoot(node);
     root.render(
@@ -188,6 +190,8 @@ export function reactPanel(
   return ({ api }) => {
     const node = document.createElement("div");
     node.className = "tango-react-panel";
+    node.style.overflowY = "auto";
+    node.style.height = "100%";
     const root = createRoot(node);
     root.render(
       <InstrumentApiProvider api={api}>

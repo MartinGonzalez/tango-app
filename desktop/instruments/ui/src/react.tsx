@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type {
   UIButtonSize,
   UIButtonVariant,
@@ -147,6 +147,102 @@ export function UISelect(props: {
   );
 }
 
+export function UIDropdown(props: {
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  initialValue?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onChange?: (value: string) => void;
+}): JSX.Element {
+  const initial = props.initialValue ?? props.value ?? "";
+  const [internalValue, setInternalValue] = useState(initial);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const controlled = typeof props.value === "string";
+  const value = controlled ? (props.value as string) : internalValue;
+  const selected = props.options.find((option) => option.value === value) ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const root = rootRef.current;
+      const target = event.target;
+      if (!root || !(target instanceof Node)) return;
+      if (!root.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (controlled) return;
+    if (props.options.length === 0) return;
+    if (!internalValue) return;
+    const hasCurrent = props.options.some((option) => option.value === internalValue);
+    if (!hasCurrent) {
+      setInternalValue("");
+    }
+  }, [controlled, internalValue, props.options]);
+
+  const selectValue = (next: string) => {
+    if (!controlled) {
+      setInternalValue(next);
+    }
+    props.onChange?.(next);
+    setOpen(false);
+  };
+
+  const label = selected?.label ?? props.placeholder ?? "Select option";
+
+  return (
+    <div
+      ref={rootRef}
+      className={`tui-dropdown-select${open ? " is-open" : ""}${props.disabled ? " is-disabled" : ""}`}
+    >
+      <button
+        type="button"
+        className="tui-dropdown-select-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={Boolean(props.disabled)}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className={`tui-dropdown-select-value${selected ? "" : " is-placeholder"}`}>{label}</span>
+        <span className="tui-dropdown-select-caret" aria-hidden="true" />
+      </button>
+      <div className="tui-dropdown-select-menu" role="listbox" hidden={!open}>
+        {props.options.map((option) => {
+          const active = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={active}
+              className={`tui-dropdown-select-item${active ? " is-active" : ""}`}
+              onClick={() => selectValue(option.value)}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function UIBadge(props: {
   label: string;
   tone?: BadgeTone;
@@ -231,7 +327,8 @@ export function UICheckbox(props: {
         checked={Boolean(props.checked)}
         onChange={(event) => props.onChange?.(event.currentTarget.checked)}
       />
-      <span>{props.label}</span>
+      <span className="tui-checkbox-indicator" aria-hidden="true" />
+      <span className="tui-checkbox-label">{props.label}</span>
     </label>
   );
 }
@@ -286,33 +383,50 @@ export function UITabs(props: {
     label: string;
     content: React.ReactNode;
   }>;
+  value?: string;
   initialValue?: string;
   onChange?: (value: string) => void;
 }): JSX.Element {
-  const initial = props.initialValue ?? props.tabs[0]?.value ?? "";
-  const [value, setValue] = useState(initial);
+  const initial = props.initialValue ?? props.value ?? props.tabs[0]?.value ?? "";
+  const [internalValue, setInternalValue] = useState(initial);
+  const controlled = typeof props.value === "string";
+  const value = controlled ? (props.value as string) : internalValue;
   const selected = props.tabs.find((tab) => tab.value === value) ?? props.tabs[0] ?? null;
 
+  useEffect(() => {
+    if (controlled) return;
+    if (props.tabs.length === 0) return;
+    const hasCurrent = props.tabs.some((tab) => tab.value === internalValue);
+    if (!hasCurrent) {
+      setInternalValue(props.tabs[0]?.value ?? "");
+    }
+  }, [controlled, internalValue, props.tabs]);
+
   const selectTab = (next: string) => {
-    setValue(next);
+    if (!controlled) {
+      setInternalValue(next);
+    }
     props.onChange?.(next);
   };
 
   return (
     <div className="tui-tabs">
-      <div className="tui-tabs-list">
+      <div className="tui-tabs-list" role="tablist">
         {props.tabs.map((tab) => (
           <button
             key={tab.value}
             type="button"
             className={`tui-tabs-trigger${tab.value === value ? " is-active" : ""}`}
+            role="tab"
+            aria-selected={tab.value === value}
+            tabIndex={tab.value === value ? 0 : -1}
             onClick={() => selectTab(tab.value)}
           >
             {tab.label}
           </button>
         ))}
       </div>
-      <div className="tui-tabs-panel">{selected?.content}</div>
+      <div className="tui-tabs-panel" role="tabpanel">{selected?.content}</div>
     </div>
   );
 }

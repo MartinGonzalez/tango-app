@@ -29,7 +29,13 @@ function normalizeNodeText(
 
 export function ensureInstrumentUI(doc: Document = document): void {
   if (!doc || !doc.head) return;
-  if (doc.getElementById(UI_STYLE_ID)) return;
+  const existing = doc.getElementById(UI_STYLE_ID) as HTMLStyleElement | null;
+  if (existing) {
+    if (existing.textContent !== UI_STYLES) {
+      existing.textContent = UI_STYLES;
+    }
+    return;
+  }
   const style = doc.createElement("style");
   style.id = UI_STYLE_ID;
   style.textContent = UI_STYLES;
@@ -407,7 +413,8 @@ export function checkbox(opts: {
   }
   return el("label", { className: "tui-checkbox" }, [
     inputNode,
-    el("span", { text: opts.label }),
+    el("span", { className: "tui-checkbox-indicator", "aria-hidden": "true" }),
+    el("span", { className: "tui-checkbox-label", text: opts.label }),
   ]);
 }
 
@@ -462,18 +469,131 @@ export function tabs(opts: {
   const currentValue = opts.value ?? opts.tabs[0]?.value ?? "";
   const selected = opts.tabs.find((item) => item.value === currentValue) ?? opts.tabs[0] ?? null;
   return el("div", { className: "tui-tabs" }, [
-    el("div", { className: "tui-tabs-list" }, opts.tabs.map((tab) =>
-      el("button", {
-        className: `tui-tabs-trigger${tab.value === currentValue ? " is-active" : ""}`,
+    el("div", { className: "tui-tabs-list", role: "tablist" }, opts.tabs.map((tab) => {
+      const active = tab.value === currentValue;
+      return el("button", {
+        className: `tui-tabs-trigger${active ? " is-active" : ""}`,
         type: "button",
+        role: "tab",
+        "aria-selected": active ? "true" : "false",
+        tabIndex: active ? 0 : -1,
         text: tab.label,
         onClick: () => {
           opts.onChange?.(tab.value);
         },
-      })
-    )),
-    el("div", { className: "tui-tabs-panel" }, selected ? [selected.content] : []),
+      });
+    })),
+    el("div", { className: "tui-tabs-panel", role: "tabpanel" }, selected ? [selected.content] : []),
   ]);
+}
+
+export function dropdown(opts: {
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  initialValue?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onChange?: (value: string) => void;
+}): HTMLElement {
+  const current = { value: opts.value ?? opts.initialValue ?? "" };
+  const root = el("div", {
+    className: `tui-dropdown-select${opts.disabled ? " is-disabled" : ""}`,
+  });
+  const trigger = el("button", {
+    type: "button",
+    className: "tui-dropdown-select-trigger",
+    "aria-haspopup": "listbox",
+    "aria-expanded": "false",
+    disabled: Boolean(opts.disabled),
+  });
+  const label = el("span", { className: "tui-dropdown-select-value" });
+  const caret = el("span", {
+    className: "tui-dropdown-select-caret",
+    "aria-hidden": "true",
+  });
+  trigger.append(label, caret);
+
+  const menu = el("div", {
+    className: "tui-dropdown-select-menu",
+    role: "listbox",
+  });
+  menu.hidden = true;
+  let outsideListenerBound = false;
+
+  const closeMenu = () => {
+    root.classList.remove("is-open");
+    trigger.setAttribute("aria-expanded", "false");
+    menu.hidden = true;
+    if (outsideListenerBound) {
+      document.removeEventListener("mousedown", onDocumentPointerDown);
+      outsideListenerBound = false;
+    }
+  };
+
+  const openMenu = () => {
+    if (opts.disabled) return;
+    root.classList.add("is-open");
+    trigger.setAttribute("aria-expanded", "true");
+    menu.hidden = false;
+    if (!outsideListenerBound) {
+      document.addEventListener("mousedown", onDocumentPointerDown);
+      outsideListenerBound = true;
+    }
+  };
+
+  const onDocumentPointerDown = (event: MouseEvent) => {
+    if (!(event.target instanceof Node)) return;
+    if (!root.contains(event.target)) {
+      closeMenu();
+    }
+  };
+
+  const refreshLabel = () => {
+    const selected = opts.options.find((item) => item.value === current.value) ?? null;
+    label.textContent = selected?.label ?? opts.placeholder ?? "Select option";
+    label.classList.toggle("is-placeholder", !selected);
+  };
+
+  const selectValue = (next: string) => {
+    current.value = next;
+    refreshLabel();
+    closeMenu();
+    opts.onChange?.(next);
+  };
+
+  for (const item of opts.options) {
+    const optionBtn = el("button", {
+      type: "button",
+      className: `tui-dropdown-select-item${item.value === current.value ? " is-active" : ""}`,
+      role: "option",
+      "aria-selected": item.value === current.value ? "true" : "false",
+      text: item.label,
+      onClick: () => {
+        for (const node of menu.querySelectorAll(".tui-dropdown-select-item")) {
+          node.classList.remove("is-active");
+          node.setAttribute("aria-selected", "false");
+        }
+        optionBtn.classList.add("is-active");
+        optionBtn.setAttribute("aria-selected", "true");
+        selectValue(item.value);
+      },
+    });
+    menu.appendChild(optionBtn);
+  }
+
+  trigger.addEventListener("click", () => {
+    if (menu.hidden) openMenu();
+    else closeMenu();
+  });
+  trigger.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeMenu();
+    }
+  });
+
+  refreshLabel();
+  root.append(trigger, menu);
+  return root;
 }
 
 export function dropdownMenu(opts: {

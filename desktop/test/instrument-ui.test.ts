@@ -6,10 +6,13 @@ import {
 import {
   badge,
   button,
+  checkbox,
+  dropdown,
   dropdownMenu,
   createRoot,
   ensureInstrumentUI,
   segmentedControl,
+  tabs,
   group,
   groupEmpty,
   groupItem,
@@ -88,6 +91,30 @@ describe("instrument-ui", () => {
     node.value = "b";
     node.dispatchEvent(new Event("change"));
     expect(selected).toBe("b");
+  });
+
+  test("dropdown emits onChange value", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let selected = "";
+    const node = dropdown({
+      options: [
+        { value: "github", label: "GitHub" },
+        { value: "jira", label: "Jira" },
+      ],
+      value: "github",
+      onChange: (value) => {
+        selected = value;
+      },
+    });
+    const trigger = node.querySelector(".tui-dropdown-select-trigger") as HTMLButtonElement;
+    trigger.click();
+    const option = node.querySelectorAll(".tui-dropdown-select-item")[1] as HTMLButtonElement;
+    option.click();
+    expect(selected).toBe("jira");
   });
 
   test("listItem active state applies active class", () => {
@@ -190,6 +217,26 @@ describe("instrument-ui", () => {
     expect(checked).toBe(true);
   });
 
+  test("checkbox renders custom indicator and emits checked state", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let checked = false;
+    const node = checkbox({
+      label: "Remember me",
+      onChange: (value) => {
+        checked = value;
+      },
+    });
+    expect(node.querySelector(".tui-checkbox-indicator")).toBeTruthy();
+    const input = node.querySelector("input") as HTMLInputElement;
+    input.checked = true;
+    input.dispatchEvent(new Event("change"));
+    expect(checked).toBe(true);
+  });
+
   test("segmentedControl emits option value on click", () => {
     if (typeof document === "undefined") {
       expect(true).toBe(true);
@@ -210,6 +257,36 @@ describe("instrument-ui", () => {
     const buttonNode = node.querySelectorAll("button")[1] as HTMLButtonElement;
     buttonNode.click();
     expect(selected).toBe("b");
+  });
+
+  test("tabs marks active trigger and emits selected value", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let nextValue = "";
+    const panelA = document.createElement("div");
+    panelA.textContent = "A";
+    const panelB = document.createElement("div");
+    panelB.textContent = "B";
+
+    const node = tabs({
+      value: "a",
+      tabs: [
+        { value: "a", label: "A", content: panelA },
+        { value: "b", label: "B", content: panelB },
+      ],
+      onChange: (value) => {
+        nextValue = value;
+      },
+    });
+
+    const triggers = node.querySelectorAll(".tui-tabs-trigger");
+    expect(triggers[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(triggers[1]?.getAttribute("aria-selected")).toBe("false");
+    (triggers[1] as HTMLButtonElement).click();
+    expect(nextValue).toBe("b");
   });
 
   test("selectionList emits single selection", () => {

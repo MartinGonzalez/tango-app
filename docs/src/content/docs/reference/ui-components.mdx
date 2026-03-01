@@ -138,6 +138,25 @@ props: {
 
 ---
 
+## UIDropdown
+
+Custom Tango-style dropdown with trigger + menu options.
+
+```ts
+props: {
+  options: Array<{ value: string; label: string }>;
+  value?: string;
+  initialValue?: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onChange?: (value: string) => void;
+}
+```
+
+`UIDropdown` supports uncontrolled (`initialValue`) and controlled (`value`) usage.
+
+---
+
 ## UIToggle
 
 On/off switch with label.
@@ -206,12 +225,16 @@ props: {
     label: string;
     content: React.ReactNode;
   }>;
+  value?: string;
   initialValue?: string;
   onChange?: (value: string) => void;
 }
 ```
 
-If no `initialValue` is provided, the first tab is selected. The `onChange` callback fires with the selected tab's `value` when the user switches tabs.
+`UITabs` supports uncontrolled and controlled usage:
+
+- Uncontrolled: pass `initialValue` (or omit it to select the first tab).
+- Controlled: pass `value` and update it in your parent state from `onChange`.
 
 ---
 
