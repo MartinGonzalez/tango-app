@@ -3,12 +3,43 @@ import type {
   UIButtonSize,
   UIButtonVariant,
   UIGroupItemMeta,
+  UIIconButtonSize,
+  UIIconButtonVariant,
   UIGroupSubtitle,
   UIGroupTitle,
+  UIIconName,
+  UIIconPrimitive,
 } from "./index.ts";
-import { ensureInstrumentUI } from "./index.ts";
+import {
+  Icon as TangoIcons,
+  ensureInstrumentUI,
+  getIconPrimitives,
+  isUIIconName,
+} from "./index.ts";
 
 type BadgeTone = "neutral" | "info" | "success" | "warning" | "danger";
+export const Icon = TangoIcons;
+
+function renderIconPrimitive(
+  primitive: UIIconPrimitive,
+  key: string
+): JSX.Element {
+  if (primitive.tag === "path") {
+    return <path key={key} d={primitive.d} />;
+  }
+  if (primitive.tag === "circle") {
+    return <circle key={key} cx={primitive.cx} cy={primitive.cy} r={primitive.r} />;
+  }
+  return (
+    <line
+      key={key}
+      x1={primitive.x1}
+      y1={primitive.y1}
+      x2={primitive.x2}
+      y2={primitive.y2}
+    />
+  );
+}
 
 export function useInstrumentUIStyles(): void {
   useEffect(() => {
@@ -74,8 +105,41 @@ export function UICard(props: {
   return <div className={`tui-card ${props.className ?? ""}`.trim()}>{props.children}</div>;
 }
 
+export function UIIcon(props: {
+  name: UIIconName;
+  className?: string;
+  size?: number;
+  title?: string;
+}): JSX.Element {
+  const size = props.size ?? 16;
+  return (
+    <span
+      className={`tui-icon ${props.className ?? ""}`.trim()}
+      role={props.title ? "img" : undefined}
+      aria-label={props.title}
+      aria-hidden={props.title ? undefined : true}
+      style={{ width: `${size}px`, height: `${size}px` }}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {getIconPrimitives(props.name).map((primitive, index) =>
+          renderIconPrimitive(primitive, `${props.name}-${index}`))}
+      </svg>
+    </span>
+  );
+}
+
 export function UIButton(props: {
   label: string;
+  icon?: UIIconName | React.ReactNode;
   variant?: UIButtonVariant;
   size?: UIButtonSize;
   disabled?: boolean;
@@ -83,6 +147,15 @@ export function UIButton(props: {
 }): JSX.Element {
   const variant = props.variant ?? "secondary";
   const size = props.size ?? "md";
+  const iconNode = typeof props.icon === "string" && isUIIconName(props.icon)
+    ? <UIIcon name={props.icon} className="tui-btn-icon" />
+    : props.icon
+      ? (
+        <span className="tui-btn-icon" aria-hidden="true">
+          {props.icon}
+        </span>
+      )
+      : null;
   return (
     <button
       type="button"
@@ -90,7 +163,41 @@ export function UIButton(props: {
       disabled={props.disabled}
       onClick={props.onClick}
     >
-      {props.label}
+      {iconNode}
+      <span className="tui-btn-label">{props.label}</span>
+    </button>
+  );
+}
+
+export function UIIconButton(props: {
+  icon: UIIconName | React.ReactNode;
+  label: string;
+  title?: string;
+  variant?: UIIconButtonVariant;
+  size?: UIIconButtonSize;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}): JSX.Element {
+  const variant = props.variant ?? "ghost";
+  const size = props.size ?? "sm";
+  const iconNode = typeof props.icon === "string" && isUIIconName(props.icon)
+    ? <UIIcon name={props.icon} className="tui-icon-btn-icon" />
+    : (
+      <span className="tui-icon-btn-icon" aria-hidden="true">
+        {props.icon}
+      </span>
+    );
+  return (
+    <button
+      type="button"
+      className={`tui-icon-btn tui-icon-btn-${variant} tui-icon-btn-${size}${props.active ? " is-active" : ""}`}
+      aria-label={props.label}
+      title={props.title ?? props.label}
+      disabled={props.disabled}
+      onClick={props.onClick}
+    >
+      {iconNode}
     </button>
   );
 }
@@ -620,6 +727,9 @@ export function UIGroupItem(props: {
 
 export type {
   UIGroupItemMeta,
+  UIIconButtonSize,
+  UIIconButtonVariant,
+  UIIconName,
   UIGroupSubtitle,
   UIGroupTitle,
 };

@@ -7,6 +7,8 @@ import {
   badge,
   button,
   checkbox,
+  Icon,
+  iconButton,
   dropdown,
   dropdownMenu,
   createRoot,
@@ -66,6 +68,66 @@ describe("instrument-ui", () => {
 
     expect(btn.className).toContain("tui-btn-primary");
     expect(btn.className).toContain("tui-btn-sm");
+    btn.click();
+    expect(clicked).toBe(1);
+  });
+
+  test("button supports optional left icon", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const icon = document.createElement("span");
+    icon.textContent = "★";
+    const btn = button({
+      label: "Run",
+      icon,
+      variant: "primary",
+    });
+
+    const iconNode = btn.querySelector(".tui-btn-icon") as HTMLElement | null;
+    const labelNode = btn.querySelector(".tui-btn-label") as HTMLElement | null;
+    expect(iconNode).toBeTruthy();
+    expect(labelNode?.textContent).toBe("Run");
+    expect(btn.firstElementChild).toBe(iconNode);
+  });
+
+  test("button supports Tango icon names", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    const btn = button({
+      label: "Create branch",
+      icon: Icon.Branch,
+      variant: "secondary",
+    });
+
+    const iconNode = btn.querySelector(".tui-icon.tui-btn-icon");
+    expect(iconNode).toBeTruthy();
+    expect(iconNode?.querySelector("svg")).toBeTruthy();
+  });
+
+  test("iconButton supports Tango icon names and click handlers", () => {
+    if (typeof document === "undefined") {
+      expect(true).toBe(true);
+      return;
+    }
+
+    let clicked = 0;
+    const btn = iconButton({
+      icon: Icon.Branch,
+      label: "Toggle branch panel",
+      onClick: () => {
+        clicked += 1;
+      },
+    });
+
+    expect(btn.className).toContain("tui-icon-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Toggle branch panel");
+    expect(btn.querySelector(".tui-icon-btn-icon svg")).toBeTruthy();
     btn.click();
     expect(clicked).toBe(1);
   });

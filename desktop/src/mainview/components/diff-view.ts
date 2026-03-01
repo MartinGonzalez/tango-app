@@ -1,5 +1,9 @@
 import { h, clearChildren } from "../lib/dom.ts";
 import { stageBranchIcon } from "../lib/icons.ts";
+import {
+  button as uiButton,
+  ensureInstrumentUI,
+} from "../../../instruments/ui/src/index.ts";
 import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
 import type {
   DiffFile,
@@ -97,6 +101,7 @@ export class DiffView {
 
   constructor(container: HTMLElement | null, callbacks: DiffViewCallbacks = {}) {
     this.#callbacks = callbacks;
+    ensureInstrumentUI(document);
     this.#onGlobalClick = (event: MouseEvent) => {
       if (!this.#openActionsFilePath) return;
       const target = event.target;
@@ -134,14 +139,17 @@ export class DiffView {
       onclick: () => this.toggleBranchPanel(),
     }, [stageBranchIcon("dv-icon-branch")]) as HTMLButtonElement;
 
-    this.#commitBtn = h("button", {
-      class: "dv-commit-btn",
-      title: "Commit changes",
-      hidden: true,
-      onclick: () => this.#callbacks.onCommitClick?.(),
-    }, ["Commit"]) as HTMLButtonElement;
+    this.#commitBtn = uiButton({
+      label: "Commit",
+      variant: "primary",
+      size: "sm",
+      onClick: () => this.#callbacks.onCommitClick?.(),
+    });
+    this.#commitBtn.classList.add("dv-commit-btn");
+    this.#commitBtn.title = "Commit changes";
+    this.#commitBtn.hidden = true;
 
-    this.#toolbarEl = h("div", { class: "dv-toolbar" }, [
+    this.#toolbarEl = h("div", { class: "dv-toolbar tui-root" }, [
       h("span", { class: "dv-file-label" }, [""]),
       h("span", { class: "dv-toolbar-spacer" }),
       h("div", { class: "dv-toggle-group" }, [
@@ -170,7 +178,7 @@ export class DiffView {
       this.#branchHostEl,
     ]);
 
-    this.#el = h("div", { class: "diff-view" }, [
+    this.#el = h("div", { class: "diff-view tui-root" }, [
       this.#bodyEl,
     ]);
 

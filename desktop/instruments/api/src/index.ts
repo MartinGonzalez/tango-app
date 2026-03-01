@@ -37,10 +37,13 @@ export {
 // UI React components
 export {
   useInstrumentUIStyles,
+  Icon,
   UIRoot,
   UIPanelHeader,
   UISection,
   UICard,
+  UIIcon,
+  UIIconButton,
   UIButton,
   UIInput,
   UITextarea,
@@ -67,6 +70,9 @@ export {
 // UI React types
 export type {
   UIGroupItemMeta,
+  UIIconButtonSize,
+  UIIconButtonVariant,
+  UIIconName,
   UIGroupSubtitle,
   UIGroupTitle,
 } from "@tango/instrument-ui/react";

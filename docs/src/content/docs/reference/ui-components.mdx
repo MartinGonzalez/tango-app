@@ -6,7 +6,7 @@ description: All UI components from @tango/api with complete prop types.
 All components are imported from `@tango/api`. They use CSS classes prefixed with `tui-` and inherit the Tango theme automatically when wrapped in `UIRoot`.
 
 ```tsx
-import { UIRoot, UIPanelHeader, UISection, UICard, UIButton } from "@tango/api";
+import { UIRoot, UIPanelHeader, UISection, UICard, UIButton, UIIconButton, UIIcon, Icon } from "@tango/api";
 ```
 
 ---
@@ -75,6 +75,7 @@ Action trigger button.
 ```ts
 props: {
   label: string;
+  icon?: UIIconName | React.ReactNode;                      // optional left icon
   variant?: "primary" | "secondary" | "danger" | "ghost";  // default: "secondary"
   size?: "sm" | "md";                                        // default: "md"
   disabled?: boolean;
@@ -88,6 +89,65 @@ props: {
 | `secondary` | Secondary actions |
 | `danger` | Destructive actions (delete, remove) |
 | `ghost` | Subtle actions (inline, toolbar) |
+
+Using Tango icons:
+
+```tsx
+<UIButton label="Run task" variant="primary" icon={Icon.Play} />
+<UIButton label="Create branch" variant="secondary" icon={Icon.Branch} />
+```
+
+---
+
+## UIIconButton
+
+Icon-only button for toolbars and compact actions.
+
+```ts
+props: {
+  icon: UIIconName | React.ReactNode;
+  label: string;                                         // required (aria-label)
+  title?: string;                                        // tooltip/title, defaults to label
+  variant?: "ghost" | "secondary";                       // default: "ghost"
+  size?: "sm" | "md";                                    // default: "sm"
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}
+```
+
+```tsx
+<UIIconButton icon={Icon.Branch} label="Toggle branch panel" />
+<UIIconButton icon={Icon.Post} label="Open files panel" active />
+```
+
+---
+
+## UIIcon + Icon
+
+Tango-standard icon set for consistent visuals across instruments.
+
+```ts
+UIIcon props: {
+  name: UIIconName;
+  className?: string;
+  size?: number;           // default: 16
+  title?: string;          // accessibility label
+}
+```
+
+`Icon` provides named constants (initial set):
+
+- `Icon.Branch`
+- `Icon.Play`
+- `Icon.Post`
+- `Icon.AI`
+- `Icon.Check`
+- `Icon.Pause`
+
+```tsx
+<UIIcon name={Icon.AI} />
+```
 
 ---
 

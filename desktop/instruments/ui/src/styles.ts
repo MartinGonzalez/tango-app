@@ -100,6 +100,10 @@ export const UI_STYLES = `
 }
 
 .tui-root .tui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border-radius: var(--tui-radius-control);
   border: 1px solid transparent;
   background: transparent;
@@ -107,6 +111,93 @@ export const UI_STYLES = `
   cursor: pointer;
   transition: all 120ms ease;
   font-weight: 600;
+}
+
+.tui-root .tui-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tui-root .tui-btn-label {
+  line-height: 1;
+}
+
+.tui-root .tui-icon-btn {
+  border-radius: var(--tui-radius-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--tui-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 120ms ease;
+  flex-shrink: 0;
+}
+
+.tui-root .tui-icon-btn-sm {
+  width: 28px;
+  height: 28px;
+}
+
+.tui-root .tui-icon-btn-md {
+  width: 32px;
+  height: 32px;
+}
+
+.tui-root .tui-icon-btn-ghost:hover:not(:disabled) {
+  color: var(--tui-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tui-root .tui-icon-btn-secondary {
+  border-color: var(--tui-border);
+  background: var(--tui-bg-secondary);
+  color: var(--tui-text);
+}
+
+.tui-root .tui-icon-btn-secondary:hover:not(:disabled) {
+  background: var(--tui-bg-hover);
+}
+
+.tui-root .tui-icon-btn.is-active {
+  color: var(--tui-text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tui-root .tui-icon-btn:focus-visible {
+  outline: 2px solid var(--tui-focus-ring);
+  outline-offset: 2px;
+}
+
+.tui-root .tui-icon-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tui-root .tui-icon-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.tui-root .tui-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.tui-root .tui-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .tui-root .tui-btn:hover:not(:disabled) {
@@ -132,9 +223,19 @@ export const UI_STYLES = `
 }
 
 .tui-root .tui-btn-primary {
-  background: rgba(217, 119, 87, 0.14);
-  border-color: rgba(217, 119, 87, 0.45);
-  color: var(--tui-text);
+  background: var(--tui-primary);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+.tui-root .tui-btn-primary:hover:not(:disabled) {
+  background: #bc7159;
+  color: #ffffff;
+}
+
+.tui-root .tui-btn-primary:active:not(:disabled) {
+  background: #9f5f49;
+  color: #ffffff;
 }
 
 .tui-root .tui-btn-secondary {
@@ -619,36 +720,37 @@ export const UI_STYLES = `
 .tui-root .tui-segmented {
   display: inline-flex;
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--tui-border);
   border-radius: var(--tui-radius-control);
   padding: 3px;
   background: var(--tui-control-bg);
-  gap: 3px;
+  gap: 4px;
 }
 
 .tui-root .tui-segmented-item {
-  border: 1px solid transparent;
+  border: none;
   background: transparent;
   color: var(--tui-text-secondary);
   border-radius: var(--tui-radius-inner);
   min-height: 28px;
-  padding: 0 12px;
-  font-size: 11px;
+  padding: 0 20px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
 }
 
 .tui-root .tui-segmented-item:hover {
-  color: var(--tui-text);
+  color: rgba(255, 255, 255, 0.86);
   background: rgba(255, 255, 255, 0.05);
 }
 
 .tui-root .tui-segmented-item.is-active {
-  background: rgba(217, 119, 87, 0.16);
-  border-color: rgba(217, 119, 87, 0.34);
-  color: var(--tui-text);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: var(--tui-primary);
+  color: #fff;
 }
 
 .tui-root .tui-tabs {
@@ -722,8 +824,8 @@ export const UI_STYLES = `
   border-radius: var(--tui-radius-control);
   background: var(--tui-dropdown-bg);
   color: var(--tui-text);
-  min-height: 56px;
-  padding: 10px 20px;
+  min-height: 42px;
+  padding: 7px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -753,7 +855,7 @@ export const UI_STYLES = `
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -762,8 +864,8 @@ export const UI_STYLES = `
 }
 
 .tui-root .tui-dropdown-select-caret {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   color: #8d94a3;
   flex-shrink: 0;
   position: relative;
@@ -791,7 +893,7 @@ export const UI_STYLES = `
 
 .tui-root .tui-dropdown-select-menu {
   position: absolute;
-  top: calc(100% + 10px);
+  top: calc(100% + 8px);
   left: 0;
   right: 0;
   border: 1px solid var(--tui-dropdown-border);
@@ -811,11 +913,11 @@ export const UI_STYLES = `
   border: 0;
   background: transparent;
   color: var(--tui-text);
-  min-height: 54px;
-  padding: 10px 20px;
+  min-height: 40px;
+  padding: 7px 14px;
   text-align: left;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   transition: background 120ms ease, color 120ms ease;
 }

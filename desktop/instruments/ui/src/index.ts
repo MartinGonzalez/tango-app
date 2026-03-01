@@ -3,12 +3,126 @@ import { UI_STYLE_ID, UI_STYLES } from "./styles.ts";
 
 export type UIButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type UIButtonSize = "sm" | "md";
+export type UIIconButtonVariant = "ghost" | "secondary";
+export type UIIconButtonSize = "sm" | "md";
 export type UIGroupTitle = string | HTMLElement;
 export type UIGroupSubtitle = string | HTMLElement;
 export type UIGroupItemMeta = string | HTMLElement;
 export type UITone = "neutral" | "info" | "success" | "warning" | "danger";
+export const Icon = {
+  Branch: "branch",
+  Play: "play",
+  Post: "post",
+  AI: "ai",
+  Check: "check",
+  Pause: "pause",
+} as const;
+export type UIIconName = (typeof Icon)[keyof typeof Icon];
+export type UIIconPrimitive =
+  | { tag: "path"; d: string }
+  | { tag: "circle"; cx: number; cy: number; r: number }
+  | { tag: "line"; x1: number; y1: number; x2: number; y2: number };
 
 type BadgeTone = UITone;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ICON_NAMES = new Set<string>(Object.values(Icon));
+const ICON_PRIMITIVES: Record<UIIconName, UIIconPrimitive[]> = {
+  [Icon.Branch]: [
+    { tag: "line", x1: 6, y1: 4, x2: 6, y2: 20 },
+    { tag: "line", x1: 6, y1: 12, x2: 18, y2: 12 },
+    { tag: "circle", cx: 6, cy: 4, r: 2.2 },
+    { tag: "circle", cx: 18, cy: 12, r: 2.2 },
+    { tag: "circle", cx: 6, cy: 20, r: 2.2 },
+  ],
+  [Icon.Play]: [
+    { tag: "path", d: "M9 6 L19 12 L9 18 Z" },
+  ],
+  [Icon.Post]: [
+    { tag: "path", d: "M4 6 H20 V18 H4 Z" },
+    { tag: "line", x1: 7, y1: 10, x2: 17, y2: 10 },
+    { tag: "line", x1: 7, y1: 14, x2: 15, y2: 14 },
+  ],
+  [Icon.AI]: [
+    { tag: "path", d: "M12 3.5 L14.2 9.2 L20 12 L14.2 14.8 L12 20.5 L9.8 14.8 L4 12 L9.8 9.2 Z" },
+  ],
+  [Icon.Check]: [
+    { tag: "path", d: "M5 12.5 L10 17 L19 8" },
+  ],
+  [Icon.Pause]: [
+    { tag: "line", x1: 9, y1: 6, x2: 9, y2: 18 },
+    { tag: "line", x1: 15, y1: 6, x2: 15, y2: 18 },
+  ],
+};
+
+function iconNameFromValue(value: string): UIIconName {
+  if (isUIIconName(value)) return value;
+  return Icon.AI;
+}
+
+function iconPrimitiveNode(doc: Document, primitive: UIIconPrimitive): SVGElement {
+  const node = doc.createElementNS(SVG_NS, primitive.tag);
+  if (primitive.tag === "path") {
+    node.setAttribute("d", primitive.d);
+    return node;
+  }
+  if (primitive.tag === "circle") {
+    node.setAttribute("cx", String(primitive.cx));
+    node.setAttribute("cy", String(primitive.cy));
+    node.setAttribute("r", String(primitive.r));
+    return node;
+  }
+  node.setAttribute("x1", String(primitive.x1));
+  node.setAttribute("y1", String(primitive.y1));
+  node.setAttribute("x2", String(primitive.x2));
+  node.setAttribute("y2", String(primitive.y2));
+  return node;
+}
+
+export function isUIIconName(value: string): value is UIIconName {
+  return ICON_NAMES.has(value);
+}
+
+export function getIconPrimitives(name: UIIconName): UIIconPrimitive[] {
+  return ICON_PRIMITIVES[name] ?? ICON_PRIMITIVES[Icon.AI];
+}
+
+export function icon(opts: {
+  name: UIIconName;
+  className?: string;
+  size?: number;
+  title?: string;
+}): HTMLElement {
+  const iconName = iconNameFromValue(opts.name);
+  const className = opts.className
+    ? `tui-icon ${opts.className}`.trim()
+    : "tui-icon";
+  const wrapper = el("span", { className });
+  if (opts.title) {
+    wrapper.setAttribute("role", "img");
+    wrapper.setAttribute("aria-label", opts.title);
+  } else {
+    wrapper.setAttribute("aria-hidden", "true");
+  }
+  const size = opts.size ?? 16;
+  wrapper.style.width = `${size}px`;
+  wrapper.style.height = `${size}px`;
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+
+  for (const primitive of getIconPrimitives(iconName)) {
+    svg.appendChild(iconPrimitiveNode(document, primitive));
+  }
+  wrapper.appendChild(svg);
+  return wrapper;
+}
 
 function normalizeContent(content?: HTMLElement | HTMLElement[]): HTMLElement[] {
   if (!content) return [];
@@ -109,6 +223,7 @@ export function card(opts: {
 
 export function button(opts: {
   label: string;
+  icon?: UIIconName | string | HTMLElement;
   variant?: UIButtonVariant;
   size?: UIButtonSize;
   disabled?: boolean;
@@ -116,13 +231,65 @@ export function button(opts: {
 }): HTMLButtonElement {
   const variant = opts.variant ?? "secondary";
   const size = opts.size ?? "md";
+  let iconNode: HTMLElement | null = null;
+  if (opts.icon) {
+    if (typeof opts.icon === "string") {
+      iconNode = isUIIconName(opts.icon)
+        ? icon({ name: opts.icon, className: "tui-btn-icon" })
+        : el("span", {
+          className: "tui-btn-icon",
+          text: opts.icon,
+          "aria-hidden": "true",
+        });
+    } else {
+      opts.icon.classList.add("tui-btn-icon");
+      opts.icon.setAttribute("aria-hidden", "true");
+      iconNode = opts.icon;
+    }
+  }
+  const labelNode = el("span", { className: "tui-btn-label", text: opts.label });
   return el("button", {
     className: `tui-btn tui-btn-${variant} tui-btn-${size}`,
     type: "button",
-    text: opts.label,
     disabled: Boolean(opts.disabled),
     onClick: opts.onClick,
-  });
+  }, [iconNode, labelNode]);
+}
+
+export function iconButton(opts: {
+  icon: UIIconName | string | HTMLElement;
+  label: string;
+  title?: string;
+  variant?: UIIconButtonVariant;
+  size?: UIIconButtonSize;
+  active?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+}): HTMLButtonElement {
+  const variant = opts.variant ?? "ghost";
+  const size = opts.size ?? "sm";
+  let iconNode: HTMLElement;
+  if (typeof opts.icon === "string") {
+    iconNode = isUIIconName(opts.icon)
+      ? icon({ name: opts.icon, className: "tui-icon-btn-icon" })
+      : el("span", {
+        className: "tui-icon-btn-icon",
+        text: opts.icon,
+        "aria-hidden": "true",
+      });
+  } else {
+    opts.icon.classList.add("tui-icon-btn-icon");
+    opts.icon.setAttribute("aria-hidden", "true");
+    iconNode = opts.icon;
+  }
+  return el("button", {
+    className: `tui-icon-btn tui-icon-btn-${variant} tui-icon-btn-${size}${opts.active ? " is-active" : ""}`,
+    type: "button",
+    disabled: Boolean(opts.disabled),
+    ariaLabel: opts.label,
+    title: opts.title ?? opts.label,
+    onClick: opts.onClick,
+  }, [iconNode]);
 }
 
 export function input(opts: {

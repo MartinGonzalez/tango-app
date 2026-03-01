@@ -5917,24 +5917,8 @@ button {
 }
 
 .dv-commit-btn {
-  height: 26px;
   margin-left: 4px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-heavy);
-  background: var(--bg-card);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  transition: all 80ms ease;
   flex-shrink: 0;
-}
-
-.dv-commit-btn:hover {
-  border-color: var(--primary);
-  background: var(--bg-hover);
 }
 
 .dv-commit-btn:disabled {
