@@ -28,7 +28,7 @@ import { InstrumentsSidebar } from "./components/instruments-sidebar.ts";
 import { DebugLogPanel, type DebugLogEntry } from "./components/debug-log-panel.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ConnectorsView } from "./components/connectors-view.ts";
-import { ChatView } from "./components/chat-view.ts";
+import { ChatView, renderMarkdown } from "./components/chat-view.ts";
 import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel, type FileListView } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
@@ -2008,6 +2008,11 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
           value,
         });
         return response.values;
+      },
+    },
+    ui: {
+      renderMarkdown: (text: string): string => {
+        return renderMarkdown(text);
       },
     },
     registerShortcut: () => {},

@@ -26,6 +26,7 @@ export type {
   StageAPI,
   StorageAPI,
   TangoInstrumentDefinition,
+  UIAPI,
   TangoPanelComponent,
   TangoPanelRenderResult,
   TangoPanelSlot,
@@ -79,6 +80,7 @@ export {
   UIGroupList,
   UIGroupEmpty,
   UIGroupItem,
+  UIMarkdownRenderer as UIMarkdownRendererBase,
 } from "@tango/instrument-ui/react";
 // UI React types
 export type {
@@ -89,3 +91,20 @@ export type {
   UIGroupSubtitle,
   UIGroupTitle,
 } from "@tango/instrument-ui/react";
+
+// Convenience wrapper that auto-injects renderMarkdown from the instrument API
+import React from "react";
+import { useInstrumentApi } from "@tango/instrument-sdk/react";
+import { UIMarkdownRenderer as _MarkdownRendererBase } from "@tango/instrument-ui/react";
+
+export function UIMarkdownRenderer(props: {
+  content: string;
+  rawViewEnabled?: boolean;
+  className?: string;
+}): JSX.Element {
+  const api = useInstrumentApi();
+  return React.createElement(_MarkdownRendererBase, {
+    ...props,
+    renderMarkdown: api.ui.renderMarkdown,
+  });
+}

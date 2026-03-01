@@ -31,6 +31,7 @@ export type {
   StageAPI,
   StorageAPI,
   TangoInstrumentDefinition,
+  UIAPI,
   TangoPanelComponent,
   TangoPanelRenderResult,
   TangoPanelSlot,

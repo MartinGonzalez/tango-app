@@ -725,6 +725,74 @@ export function UIGroupItem(props: {
   );
 }
 
+export function UIMarkdownRenderer(props: {
+  content: string;
+  renderMarkdown: (text: string) => string;
+  rawViewEnabled?: boolean;
+  className?: string;
+}): JSX.Element {
+  const [view, setView] = useState<"preview" | "raw">("preview");
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const showRaw = view === "raw";
+  const html = props.renderMarkdown(props.content);
+
+  useEffect(() => {
+    if (!showRaw && bodyRef.current) {
+      bodyRef.current.innerHTML = html;
+    }
+  }, [html, showRaw]);
+
+  const classes = [
+    "tui-markdown-renderer",
+    props.className ?? "",
+  ].filter(Boolean).join(" ");
+
+  if (!props.rawViewEnabled) {
+    return (
+      <div className={classes}>
+        <div
+          ref={bodyRef}
+          className="tui-markdown-body chat-bubble assistant"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={classes}>
+      <div className="tui-markdown-toolbar">
+        <div className="tui-markdown-toggle">
+          <button
+            type="button"
+            className={`tui-markdown-btn${!showRaw ? " active" : ""}`}
+            title="Preview markdown"
+            onClick={() => setView("preview")}
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            className={`tui-markdown-btn${showRaw ? " active" : ""}`}
+            title="View raw markdown"
+            onClick={() => setView("raw")}
+          >
+            Raw
+          </button>
+        </div>
+      </div>
+      {showRaw ? (
+        <pre className="tui-markdown-raw">{props.content}</pre>
+      ) : (
+        <div
+          ref={bodyRef}
+          className="tui-markdown-body chat-bubble assistant"
+        />
+      )}
+    </div>
+  );
+}
+
 export type {
   UIGroupItemMeta,
   UIIconButtonSize,

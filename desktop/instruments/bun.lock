@@ -94,12 +94,12 @@
 
     "@tango/instrument-tasks/@tango/api": ["@tango/api@file:api", { "dependencies": { "@tango/instrument-sdk": "file:../sdk", "@tango/instrument-ui": "file:../ui" } }],
 
-    "@tango/instrument-hello-claude/@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", {}],
+    "@tango/instrument-hello-claude/@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/cli/index.ts" } }],
 
-    "@tango/instrument-hello-claude/@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", {}],
+    "@tango/instrument-hello-claude/@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", { "peerDependencies": { "react": ">=18.0.0" } }],
 
-    "@tango/instrument-tasks/@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", {}],
+    "@tango/instrument-tasks/@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/cli/index.ts" } }],
 
-    "@tango/instrument-tasks/@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", {}],
+    "@tango/instrument-tasks/@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", { "peerDependencies": { "react": ">=18.0.0" } }],
   }
 }

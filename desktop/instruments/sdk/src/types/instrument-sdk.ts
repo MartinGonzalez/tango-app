@@ -154,6 +154,10 @@ export type InstrumentSettingsAPI = {
   setValue: (key: string, value: unknown) => Promise<Record<string, unknown>>;
 };
 
+export type UIAPI = {
+  renderMarkdown: (text: string) => string;
+};
+
 export type InstrumentFrontendAPI = {
   instrumentId: string;
   permissions: InstrumentPermission[];
@@ -164,6 +168,7 @@ export type InstrumentFrontendAPI = {
   events: HostEventsAPI;
   actions: InstrumentActionsAPI;
   settings: InstrumentSettingsAPI;
+  ui: UIAPI;
   registerShortcut: (shortcut: ShortcutRegistration) => void;
   emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
 };

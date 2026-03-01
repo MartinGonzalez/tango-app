@@ -1018,4 +1018,73 @@ export const UI_STYLES = `
   font-size: 11px;
   color: var(--tui-text-secondary);
 }
+
+.tui-root .tui-markdown-renderer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tui-root .tui-markdown-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--tui-border);
+  flex-shrink: 0;
+}
+
+.tui-root .tui-markdown-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tui-root .tui-markdown-btn {
+  min-width: 34px;
+  height: 30px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--tui-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 12px;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.tui-root .tui-markdown-btn:hover:not(:disabled) {
+  color: var(--tui-text);
+  background: var(--tui-bg-hover);
+}
+
+.tui-root .tui-markdown-btn.active {
+  color: var(--tui-text);
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.14);
+}
+
+.tui-root .tui-markdown-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 18px;
+}
+
+.tui-root .tui-markdown-raw {
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 18px;
+  font-family: var(--font-mono, "SF Mono", "Fira Code", "Cascadia Code", monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--tui-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 `;
