@@ -39,7 +39,11 @@ RELEASES="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>&1)" || {
   exit 1
 }
 
-TAG="$(echo "$RELEASES" | grep -m1 '"tag_name"' | sed 's/.*: "//;s/".*//' || true)"
+TAG="$(echo "$RELEASES" \
+  | grep '"tag_name"' \
+  | sed 's/.*: "//;s/".*//' \
+  | sort -Vr \
+  | head -1 || true)"
 
 if [ -z "$TAG" ]; then
   echo "Error: No releases found for $REPO"
