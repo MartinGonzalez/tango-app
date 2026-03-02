@@ -146,7 +146,7 @@ export class DiffView {
       size: "sm",
       onClick: () => this.#callbacks.onCommitClick?.(),
     });
-    this.#commitBtn.classList.add("dv-commit-btn");
+    this.#commitBtn.classList.add("dv-commit-btn", "dv-commit-hidden");
     this.#commitBtn.title = "Commit changes";
     this.#commitBtn.hidden = true;
 
@@ -306,7 +306,9 @@ export class DiffView {
     this.#reviewMode = enabled;
     this.#el.classList.toggle("review-mode", enabled);
     this.#branchToggleBtn.hidden = enabled;
-    this.#commitBtn.hidden = enabled || !this.#commitButtonVisible;
+    const shouldHide = enabled || !this.#commitButtonVisible;
+    this.#commitBtn.classList.toggle("dv-commit-hidden", shouldHide);
+    this.#commitBtn.hidden = shouldHide;
     if (enabled) {
       this.#fullFileVisible.clear();
       this.#fullFileLoadState.clear();
@@ -1385,7 +1387,9 @@ export class DiffView {
 
   setCommitButtonVisible(visible: boolean): void {
     this.#commitButtonVisible = visible;
-    this.#commitBtn.hidden = this.#reviewMode || !visible;
+    const shouldHide = this.#reviewMode || !visible;
+    this.#commitBtn.classList.toggle("dv-commit-hidden", shouldHide);
+    this.#commitBtn.hidden = shouldHide;
   }
 
   get filesPanelHost(): HTMLElement {

@@ -2,6 +2,7 @@ import type { ClaudeStreamEvent } from "../shared/types.ts";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveModel } from "./models.ts";
 
 export type SessionProcess = {
   sessionId: string | null;
@@ -72,8 +73,9 @@ export class SessionManager {
       args.push("--resume", resumeSessionId);
     }
 
-    if (model && model.trim()) {
-      args.push("--model", model.trim());
+    const resolved = resolveModel(model);
+    if (resolved) {
+      args.push("--model", resolved);
     }
 
     if (Array.isArray(tools)) {

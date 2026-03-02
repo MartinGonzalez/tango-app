@@ -258,7 +258,7 @@ export class CommitModal {
       this.#includeUnstagedInput.disabled = this.#isSubmitting || this.#isGenerating;
     }
     if (this.#messageInput) {
-      this.#messageInput.disabled = this.#isSubmitting;
+      this.#messageInput.disabled = this.#isSubmitting || this.#isGenerating;
     }
     if (this.#commitModeBtn) {
       this.#commitModeBtn.disabled = this.#isSubmitting || this.#isGenerating;
