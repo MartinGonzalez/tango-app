@@ -399,6 +399,10 @@ export type AppRPC = {
           downloadUrl: string;
         };
       };
+      toggleMaximize: {
+        params: {};
+        response: void;
+      };
       logClient: {
         params: {
           ts?: string;

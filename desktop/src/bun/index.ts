@@ -1404,6 +1404,14 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         }
       },
 
+      toggleMaximize: async () => {
+        if (mainWindow.isMaximized()) {
+          mainWindow.unmaximize();
+        } else {
+          mainWindow.maximize();
+        }
+      },
+
       logClient: async ({
         ts,
         level,
