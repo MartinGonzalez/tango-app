@@ -28,8 +28,8 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Injecting version: $VERSION"
-          sed -i '' "s/\"version\": \"0.0.1\"/\"version\": \"$VERSION\"/" package.json
-          sed -i '' "s/version: \"0.0.1\"/version: \"$VERSION\"/" electrobun.config.ts
+          sed -i '' "s/\"version\": \"0.0.0\"/\"version\": \"$VERSION\"/" package.json
+          sed -i '' "s/version: \"0.0.0\"/version: \"$VERSION\"/" electrobun.config.ts
 
       - name: Build app
         working-directory: desktop
