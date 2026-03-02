@@ -18,7 +18,7 @@ import {
   UIGroupList,
   UIGroupItem,
   UIGroupEmpty,
-} from "@tango/api";
+} from "tango-api";
 
 // ---------------------------------------------------------------------------
 // Types

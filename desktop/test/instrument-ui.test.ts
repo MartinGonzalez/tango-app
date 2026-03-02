@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   UI_STYLE_ID,
   UI_STYLES,
-} from "../instruments/ui/src/styles.ts";
-import {
   badge,
   button,
   checkbox,
@@ -23,7 +21,7 @@ import {
   selectionList,
   select,
   toggle,
-} from "../instruments/ui/src/index.ts";
+} from "tango-api/ui";
 
 describe("instrument-ui", () => {
   test("ensureInstrumentUI injects style only once", () => {

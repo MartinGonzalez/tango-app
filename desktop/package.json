@@ -19,8 +19,7 @@
     "check:tasks-decoupling": "bun ./scripts/assert-tasks-decoupling.mjs"
   },
   "dependencies": {
-    "@tango/api": "file:./instruments/api",
-    "@tango/instrument-ui": "file:./instruments/ui",
+    "tango-api": "github:MartinGonzalez/tango-api#v0.0.1",
     "electrobun": "latest",
     "prismjs": "^1.30.0"
   },

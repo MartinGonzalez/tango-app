@@ -9,70 +9,29 @@
         "react-dom": "^18.3.1",
       },
     },
-    "api": {
-      "name": "@tango/api",
-      "version": "0.1.0",
-      "dependencies": {
-        "@tango/instrument-sdk": "file:../sdk",
-        "@tango/instrument-ui": "file:../ui",
-      },
-    },
-    "create-tango-instrument": {
-      "name": "create-tango-instrument",
-      "version": "0.1.0",
-      "bin": {
-        "create-tango-instrument": "./src/index.ts",
-      },
-    },
     "hello-claude": {
       "name": "@tango/instrument-hello-claude",
       "version": "0.1.0",
       "dependencies": {
-        "@tango/api": "file:../api",
-      },
-    },
-    "sdk": {
-      "name": "@tango/instrument-sdk",
-      "version": "0.1.0",
-      "bin": {
-        "tango-sdk": "./src/cli/index.ts",
-      },
-      "peerDependencies": {
-        "react": ">=18.0.0",
-        "react-dom": ">=18.0.0",
+        "tango-api": "github:MartinGonzalez/tango-api#v0.0.1",
       },
     },
     "tasks": {
       "name": "@tango/instrument-tasks",
       "version": "0.1.0",
       "dependencies": {
-        "@tango/api": "file:../api",
-      },
-    },
-    "ui": {
-      "name": "@tango/instrument-ui",
-      "version": "0.1.0",
-      "peerDependencies": {
-        "react": ">=18.0.0",
+        "tango-api": "github:MartinGonzalez/tango-api#v0.0.1",
       },
     },
   },
   "packages": {
-    "@tango/api": ["@tango/api@workspace:api"],
-
     "@tango/instrument-hello-claude": ["@tango/instrument-hello-claude@workspace:hello-claude"],
 
-    "@tango/instrument-sdk": ["@tango/instrument-sdk@workspace:sdk"],
-
     "@tango/instrument-tasks": ["@tango/instrument-tasks@workspace:tasks"],
-
-    "@tango/instrument-ui": ["@tango/instrument-ui@workspace:ui"],
 
     "@types/prop-types": ["@types/prop-types@15.7.15", "", {}, "sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw=="],
 
     "@types/react": ["@types/react@18.3.28", "", { "dependencies": { "@types/prop-types": "*", "csstype": "^3.2.2" } }, "sha512-z9VXpC7MWrhfWipitjNdgCauoMLRdIILQsAEV+ZesIzBq/oUlxk0m3ApZuMFCXdnS4U7KrI+l3WRUEGQ8K1QKw=="],
-
-    "create-tango-instrument": ["create-tango-instrument@workspace:create-tango-instrument"],
 
     "csstype": ["csstype@3.2.3", "", {}, "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ=="],
 
@@ -86,20 +45,6 @@
 
     "scheduler": ["scheduler@0.23.2", "", { "dependencies": { "loose-envify": "^1.1.0" } }, "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ=="],
 
-    "@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/cli/index.ts" } }],
-
-    "@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", { "peerDependencies": { "react": ">=18.0.0" } }],
-
-    "@tango/instrument-hello-claude/@tango/api": ["@tango/api@file:api", { "dependencies": { "@tango/instrument-sdk": "file:../sdk", "@tango/instrument-ui": "file:../ui" } }],
-
-    "@tango/instrument-tasks/@tango/api": ["@tango/api@file:api", { "dependencies": { "@tango/instrument-sdk": "file:../sdk", "@tango/instrument-ui": "file:../ui" } }],
-
-    "@tango/instrument-hello-claude/@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/cli/index.ts" } }],
-
-    "@tango/instrument-hello-claude/@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", { "peerDependencies": { "react": ">=18.0.0" } }],
-
-    "@tango/instrument-tasks/@tango/api/@tango/instrument-sdk": ["@tango/instrument-sdk@file:sdk", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/cli/index.ts" } }],
-
-    "@tango/instrument-tasks/@tango/api/@tango/instrument-ui": ["@tango/instrument-ui@file:ui", { "peerDependencies": { "react": ">=18.0.0" } }],
+    "tango-api": ["tango-api@github:MartinGonzalez/tango-api#8f41613", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/sdk/cli/index.ts", "create-tango-instrument": "./create-tango-instrument/src/index.ts" } }, "MartinGonzalez-tango-api-8f41613"],
   }
 }

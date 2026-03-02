@@ -3,7 +3,7 @@ import { TasksStore } from "./backend/tasks-store.ts";
 import {
   defineBackend,
   type InstrumentBackendContext,
-} from "@tango/api/backend";
+} from "tango-api/backend";
 import type {
   ConnectorProvider,
   TaskAction,

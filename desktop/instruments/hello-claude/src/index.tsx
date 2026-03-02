@@ -12,7 +12,7 @@ import {
   UIBadge,
   UIEmptyState,
   UIToggle,
-} from "@tango/api";
+} from "tango-api";
 
 // ---------------------------------------------------------------------------
 // Types (stream events aren't exported from the SDK, define inline)

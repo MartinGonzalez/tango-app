@@ -3,7 +3,7 @@ import {
   type UIDOMButtonOptions,
   type UIDOMDropdownOptions,
   type UIDOMIconButtonOptions,
-} from "@tango/api/dom";
+} from "tango-api/dom";
 
 let stylesInjected = false;
 
