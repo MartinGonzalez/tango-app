@@ -43,14 +43,16 @@ if [[ "$KIND" == "rc" ]]; then
   TARGET_PATCH=$((PATCH + 1))
   TARGET="v${MAJOR}.${MINOR}.${TARGET_PATCH}"
 
-  # Find highest existing rc for this target
-  LAST_RC="$(echo "$TAGS" | grep -E "^${TARGET}-rc[0-9]+$" | head -1 || true)"
+  # Find highest existing rc number for this target
+  LAST_RC_NUM="$(echo "$TAGS" | grep -oE "^${TARGET}-rc([0-9]+)$" \
+    | sed "s/${TARGET}-rc//" \
+    | sort -rn \
+    | head -1 || true)"
 
-  if [[ -z "$LAST_RC" ]]; then
+  if [[ -z "$LAST_RC_NUM" ]]; then
     NEXT_TAG="${TARGET}-rc1"
   else
-    RC_NUM="${LAST_RC##*-rc}"
-    NEXT_TAG="${TARGET}-rc$((RC_NUM + 1))"
+    NEXT_TAG="${TARGET}-rc$((LAST_RC_NUM + 1))"
   fi
 else
   case "$KIND" in
