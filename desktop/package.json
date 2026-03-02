@@ -16,7 +16,11 @@
     "kill-app": "pkill -f 'Tango' 2>/dev/null; pkill -f 'electrobun dev' 2>/dev/null; true",
     "kill-server": "lsof -ti:4242 | xargs kill 2>/dev/null; true",
     "test": "bun test",
-    "check:tasks-decoupling": "bun ./scripts/assert-tasks-decoupling.mjs"
+    "check:tasks-decoupling": "bun ./scripts/assert-tasks-decoupling.mjs",
+    "release:rc": "../scripts/release.sh rc",
+    "release:patch": "../scripts/release.sh patch",
+    "release:minor": "../scripts/release.sh minor",
+    "release:major": "../scripts/release.sh major"
   },
   "dependencies": {
     "tango-api": "github:MartinGonzalez/tango-api#v0.0.1",
