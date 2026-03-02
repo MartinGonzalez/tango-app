@@ -399,6 +399,10 @@ export type AppRPC = {
           downloadUrl: string;
         };
       };
+      performUpdate: {
+        params: { downloadUrl: string };
+        response: { success: boolean; error?: string };
+      };
       toggleMaximize: {
         params: {};
         response: void;
