@@ -2388,9 +2388,8 @@ async function refreshStageAfterCommit(cwd: string): Promise<void> {
 
   if (isStageVisible) {
     await loadDiff(cwd, state.diffScope);
-  } else {
-    await loadCommitContext(cwd);
   }
+  await loadCommitContext(cwd);
   await loadBranchHistory(cwd, true);
 }
 
