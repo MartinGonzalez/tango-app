@@ -74,7 +74,9 @@ export class Sidebar {
 
   setVersion(version: string): void {
     this.#versionEl.textContent = version ? `v${version}` : "";
-    this.#versionEl.style.color = version.includes("-rc") ? "var(--color-danger, #e53935)" : "";
+    const isRc = version.includes("-rc");
+    this.#versionEl.style.color = isRc ? "var(--color-danger, #e53935)" : "";
+    this.#versionEl.style.fontWeight = isRc ? "bold" : "";
   }
 
   setActiveSession(sessionId: string | null): void {
