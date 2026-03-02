@@ -1424,7 +1424,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           const zipPath = join(tmp, "update.zip");
           await Bun.write(zipPath, zipBytes);
 
-          const unzip = Bun.spawn(["unzip", "-q", "-o", zipPath, "-d", tmp], {
+          const unzip = Bun.spawn(["/usr/bin/unzip", "-q", "-o", zipPath, "-d", tmp], {
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -1435,12 +1435,12 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           }
 
           // 3. Remove existing app
-          const rm = Bun.spawn(["rm", "-rf", appPath], { stdout: "pipe", stderr: "pipe" });
+          const rm = Bun.spawn(["/bin/rm", "-rf", appPath], { stdout: "pipe", stderr: "pipe" });
           await rm.exited;
 
           // 4. Move extracted app to /Applications
           const extractedApp = join(tmp, appName);
-          const mv = Bun.spawn(["mv", extractedApp, appPath], {
+          const mv = Bun.spawn(["/bin/mv", extractedApp, appPath], {
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -1451,13 +1451,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           }
 
           // 5. Remove quarantine attribute
-          Bun.spawn(["xattr", "-cr", appPath], { stdout: "pipe", stderr: "pipe" });
+          Bun.spawn(["/usr/bin/xattr", "-cr", appPath], { stdout: "pipe", stderr: "pipe" });
 
           // 6. Cleanup temp dir
-          Bun.spawn(["rm", "-rf", tmp], { stdout: "pipe", stderr: "pipe" });
+          Bun.spawn(["/bin/rm", "-rf", tmp], { stdout: "pipe", stderr: "pipe" });
 
           // 7. Relaunch and quit
-          Bun.spawn(["open", "-a", appName]);
+          Bun.spawn(["/usr/bin/open", "-a", appName]);
           setTimeout(() => Utils.quit(), 500);
 
           return { success: true };
