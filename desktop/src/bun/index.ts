@@ -1444,9 +1444,14 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           // 5. Cleanup temp dir
           await rm(tmp, { recursive: true, force: true });
 
-          // 7. Relaunch and quit
-          Bun.spawn(["/usr/bin/open", "-a", appName]);
-          setTimeout(() => Utils.quit(), 500);
+          // 6. Relaunch after quit — detached shell survives the parent process
+          const relaunch = Bun.spawn(["/bin/sh", "-c", `sleep 2 && open -a "${appName}"`], {
+            stdout: "ignore",
+            stderr: "ignore",
+            stdin: "ignore",
+          });
+          relaunch.unref();
+          Utils.quit();
 
           return { success: true };
         } catch (err: unknown) {
