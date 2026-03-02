@@ -1,6 +1,6 @@
 import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/bun";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { unlink, rm, rename, cp } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -1435,26 +1435,14 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           }
 
           // 3. Remove existing app
-          const rm = Bun.spawn(["/bin/rm", "-rf", appPath], { stdout: "pipe", stderr: "pipe" });
-          await rm.exited;
+          await rm(appPath, { recursive: true, force: true });
 
-          // 4. Move extracted app to /Applications
+          // 4. Copy extracted app to /Applications
           const extractedApp = join(tmp, appName);
-          const mv = Bun.spawn(["/bin/mv", extractedApp, appPath], {
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const mvExit = await mv.exited;
-          if (mvExit !== 0) {
-            const stderr = await new Response(mv.stderr).text();
-            return { success: false, error: `Move failed (exit ${mvExit}): ${stderr}` };
-          }
+          await cp(extractedApp, appPath, { recursive: true });
 
-          // 5. Remove quarantine attribute
-          Bun.spawn(["/usr/bin/xattr", "-cr", appPath], { stdout: "pipe", stderr: "pipe" });
-
-          // 6. Cleanup temp dir
-          Bun.spawn(["/bin/rm", "-rf", tmp], { stdout: "pipe", stderr: "pipe" });
+          // 5. Cleanup temp dir
+          await rm(tmp, { recursive: true, force: true });
 
           // 7. Relaunch and quit
           Bun.spawn(["/usr/bin/open", "-a", appName]);
