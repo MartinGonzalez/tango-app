@@ -4,7 +4,7 @@ export default {
   app: {
     name: "Tango",
     identifier: "dev.tango.app",
-    version: "0.0.1",
+    version: "0.0.0",
   },
   build: {
     bun: {

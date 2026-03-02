@@ -30,10 +30,20 @@ if ! command -v unzip &>/dev/null; then
   exit 1
 fi
 
-# --- Fetch latest release ---
+# --- Fetch latest release (includes pre-releases) ---
 
 echo "Fetching latest release from $REPO..."
-DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$ZIP_NAME"
+TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" \
+  | grep -m1 '"tag_name"' \
+  | sed 's/.*: "//;s/".*//')"
+
+if [ -z "$TAG" ]; then
+  echo "Error: No releases found for $REPO"
+  exit 1
+fi
+
+echo "Found release: $TAG"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ZIP_NAME"
 
 TMPDIR_PATH="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_PATH"' EXIT
