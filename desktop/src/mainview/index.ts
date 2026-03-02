@@ -1297,6 +1297,11 @@ function init(): void {
     }
   });
 
+  // Double-click titlebar to maximize/restore
+  qs("#titlebar")?.addEventListener("dblclick", () => {
+    (rpc as any).request.toggleMaximize({});
+  });
+
   // Toggle stages button
   qs("#btn-toggle-stages")?.addEventListener("click", () => {
     panelLayout.togglePanel("sidebar");
