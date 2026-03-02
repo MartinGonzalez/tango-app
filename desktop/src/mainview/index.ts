@@ -2284,6 +2284,7 @@ function stageInfoFromCommitContext(path: string, ctx: CommitContext): StageInfo
   return {
     path,
     branch: ctx.isGitRepo ? ctx.branch : null,
+    headSha: ctx.headSha,
     hasVersionControl: ctx.isGitRepo,
     hasChanges: ctx.hasChanges,
     additions: ctx.totalAdditions,
@@ -2295,16 +2296,18 @@ async function loadCommitContext(cwd: string): Promise<void> {
   if (!cwd) return;
   try {
     const context: CommitContext = await (rpc as any).request.getCommitContext({ cwd });
+    const info = stageInfoFromCommitContext(cwd, context);
     appState.update((s) => ({
       ...s,
-      activeStageInfo: s.activeStage === cwd
-        ? stageInfoFromCommitContext(cwd, context)
-        : s.activeStageInfo,
+      activeStageInfo: s.activeStage === cwd ? info : s.activeStageInfo,
       commitContextByStage: {
         ...s.commitContextByStage,
         [cwd]: context,
       },
     }));
+    if (appState.get().activeStage === cwd) {
+      publishFrontendHostEvent("stage.selected", info);
+    }
   } catch (err) {
     console.error("Failed to load commit context:", err);
     const empty = emptyCommitContext();
@@ -2620,6 +2623,7 @@ function emptyCommitContext(): CommitContext {
   return {
     isGitRepo: false,
     branch: "(unknown)",
+    headSha: null,
     hasChanges: false,
     stagedFiles: 0,
     stagedAdditions: 0,

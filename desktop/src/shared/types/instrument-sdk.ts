@@ -4,6 +4,7 @@ import type {
   ConnectorProvider,
   StageConnector,
 } from "./connectors.ts";
+import type { StageInfo } from "./diff.ts";
 import type { InstrumentEvent, InstrumentPermission, InstrumentSettingField } from "./instruments.ts";
 import type { PullRequestAgentReviewStatus } from "./pull-requests.ts";
 import type { SessionInfo } from "./sessions.ts";
@@ -109,6 +110,7 @@ export type HostEventMap = {
   "stage.removed": {
     path: string;
   };
+  "stage.selected": StageInfo;
   "connector.auth.changed": ConnectorAuthSession;
 };
 

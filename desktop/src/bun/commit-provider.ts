@@ -49,10 +49,14 @@ export async function getCommitContext(cwd: string): Promise<CommitContext> {
     ...status.untracked,
   ]).size;
 
-  const branch = await resolveBranchName(cwd);
+  const [branch, headSha] = await Promise.all([
+    resolveBranchName(cwd),
+    resolveHeadSha(cwd),
+  ]);
   return {
     isGitRepo: true,
     branch,
+    headSha,
     hasChanges: totalFiles > 0,
     stagedFiles: status.staged.size,
     stagedAdditions: stagedStats.additions,
@@ -385,6 +389,15 @@ async function hasStagedChanges(cwd: string): Promise<boolean> {
   return result.exitCode === 1;
 }
 
+async function resolveHeadSha(cwd: string): Promise<string | null> {
+  try {
+    const result = await runGit(cwd, ["rev-parse", "HEAD"]);
+    return result.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveBranchName(cwd: string): Promise<string> {
   const branch = await runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const value = branch.stdout.trim();
@@ -498,6 +511,7 @@ function emptyCommitContext(): CommitContext {
   return {
     isGitRepo: false,
     branch: "(unknown)",
+    headSha: null,
     hasChanges: false,
     stagedFiles: 0,
     stagedAdditions: 0,
