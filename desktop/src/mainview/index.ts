@@ -857,6 +857,11 @@ function init(): void {
     },
   });
 
+  // Show app version in sidebar footer
+  (rpc as any).request.getAppVersion({}).then((res: { version: string }) => {
+    sidebar.setVersion(res.version);
+  }).catch(() => {});
+
   // Plugins sidebar
   pluginsSidebar = new PluginsSidebar(pluginsSidebarHost, {
     onSelect: (selection) => {

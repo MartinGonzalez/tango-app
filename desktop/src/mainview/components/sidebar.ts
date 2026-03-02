@@ -38,6 +38,7 @@ export type SidebarCallbacks = {
 export class Sidebar {
   #el: HTMLElement;
   #listEl: HTMLElement;
+  #versionEl: HTMLElement;
   #callbacks: SidebarCallbacks;
   #activeSessionId: string | null = null;
   #openMenuSessionId: string | null = null;
@@ -60,13 +61,19 @@ export class Sidebar {
     ]);
 
     this.#listEl = h("div", { class: "ws-list" });
+    this.#versionEl = h("div", { class: "sidebar-version" });
 
     this.#el = h("div", { class: "sidebar" }, [
       header,
       this.#listEl,
+      this.#versionEl,
     ]);
 
     container.appendChild(this.#el);
+  }
+
+  setVersion(version: string): void {
+    this.#versionEl.textContent = version ? `v${version}` : "";
   }
 
   setActiveSession(sessionId: string | null): void {
