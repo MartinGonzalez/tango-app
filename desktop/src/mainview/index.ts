@@ -2283,6 +2283,7 @@ function ensureBranchHistory(cwd: string): void {
 function stageInfoFromCommitContext(path: string, ctx: CommitContext): StageInfo {
   return {
     path,
+    branch: ctx.isGitRepo ? ctx.branch : null,
     hasVersionControl: ctx.isGitRepo,
     hasChanges: ctx.hasChanges,
     additions: ctx.totalAdditions,
@@ -3969,8 +3970,10 @@ function buildStageData(state: AppState): StageData[] {
 
   return state.stages.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
+    const stageInfo = state.activeStageInfo?.path === wsPath ? state.activeStageInfo : null;
     const vcsInfo = state.vcsInfoByStage[wsPath];
-    const branch = vcsInfo?.branch
+    const branch = stageInfo?.branch
+      ?? vcsInfo?.branch
       ?? resolveStageBranchName(state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS);
     // Live sessions for this stage
     const wsLive = liveSessions.filter((s) => s.cwd === wsPath);

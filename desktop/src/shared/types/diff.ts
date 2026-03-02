@@ -60,6 +60,7 @@ export type CommitActionMode = "commit" | "commit_and_push";
 
 export type StageInfo = {
   path: string;
+  branch: string | null;
   hasVersionControl: boolean;
   hasChanges: boolean;
   additions: number;
