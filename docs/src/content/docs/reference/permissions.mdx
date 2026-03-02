@@ -97,11 +97,11 @@ Read the list of open stages (project folders) and which one is active.
 
 ### `stages.observe`
 
-**Enables**: Subscription to `stage.added` and `stage.removed` events
+**Enables**: Subscription to `stage.added`, `stage.removed`, `stage.selected`, and `stage.updated` events
 
-React to stage changes in real time. Note: you can always subscribe to these events without this permission, but the host may throttle or filter them.
+React to stage changes in real time. `stage.selected` fires when the user switches stages; `stage.updated` fires when the active stage's metadata refreshes (after commits, file changes). Both carry a `StageInfo` payload with branch, HEAD SHA, and change counts. Note: you can always subscribe to these events without this permission, but the host may throttle or filter them.
 
-**Use when**: Your instrument needs to update its UI immediately when stages change.
+**Use when**: Your instrument needs to update its UI immediately when stages change or needs git context about the active stage.
 
 ---
 

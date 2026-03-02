@@ -1,18 +1,18 @@
 ---
 title: UI Components Reference
-description: All UI components from @tango/api with complete prop types.
+description: All UI components from tango-api with complete prop types.
 ---
 
-All components are imported from `@tango/api`. They use CSS classes prefixed with `tui-` and inherit the Tango theme automatically when wrapped in `UIRoot`.
+All components are imported from `tango-api`. They use CSS classes prefixed with `tui-` and inherit the Tango theme automatically when wrapped in `UIRoot`.
 
 ```tsx
-import { UIRoot, UIPanelHeader, UISection, UICard, UIButton, UIIconButton, UIIcon, Icon } from "@tango/api";
+import { UIRoot, UIPanelHeader, UISection, UICard, UIButton, UIIconButton, UIIcon, Icon } from "tango-api";
 ```
 
-For non-React/DOM usage, use the DOM surface from `@tango/api/dom`:
+For non-React/DOM usage, use the DOM surface from `tango-api/dom`:
 
 ```ts
-import { UIDOM, Icon } from "@tango/api/dom";
+import { UIDOM, Icon } from "tango-api/dom";
 
 UIDOM.ensureStyles(document);
 const commitBtn = UIDOM.UIButton({ label: "Commit", variant: "primary", size: "sm" });

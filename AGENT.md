@@ -161,22 +161,32 @@ Event handling:
 
 #### State Management
 
-**State shape**:
+**State shape** (key fields):
 ```typescript
 {
   snapshot: Snapshot | null;
+  viewMode: "stages" | "plugins" | "prs" | "connectors" | "instruments";
   stages: string[];
   expandedStages: Set<string>;
   activeStage: string | null;
   activeSessionId: string | null;
-  historySessions: Record<string, HistorySession[]>; // keyed by stage path
-  liveSessions: Set<string>; // IDs with running processes
+  activeStageInfo: StageInfo | null;          // selected stage metadata (branch, headSha, hasChanges, etc.)
+  commitContextByStage: Record<string, CommitContext>; // detailed commit context for dialog
+  diffScope: DiffScope;
+  branchHistory: Record<string, BranchCommit[]>;
+  vcsInfoByStage: Record<string, VcsInfo>;
+  historySessions: Record<string, HistorySession[]>;
+  liveSessions: Set<string>;
   customSessionNames: Record<string, string>;
+  connectorsByStage: Record<string, StageConnector[]>;
+  // ... plus plugins, instruments, pull requests, and UI loading state
 }
 ```
 
+**Stage selection data flow**: When a stage is selected, `activeStageInfo` is cleared to `null` (hiding the commit button), then `loadCommitContext()` fetches fresh metadata from the backend. On resolve, `activeStageInfo` is populated with a `StageInfo` object and a `stage.selected` host event is published. The commit button reacts to `activeStageInfo.hasChanges`.
+
 **RPC contract** (desktop/src/shared/types.ts):
-- Requests: getSessions, getTranscript, sendPrompt, sendFollowUp, killSession, renameSession, etc.
+- Requests: getSessions, getTranscript, sendPrompt, sendFollowUp, killSession, renameSession, getCommitContext, getDiff, getVcsInfo, getBranchHistory, etc.
 - Messages: snapshotUpdate, sessionStream, sessionIdResolved, sessionEnded, toolApproval
 
 ### Key Flows

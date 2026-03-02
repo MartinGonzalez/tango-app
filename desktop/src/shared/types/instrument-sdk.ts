@@ -111,6 +111,7 @@ export type HostEventMap = {
     path: string;
   };
   "stage.selected": StageInfo;
+  "stage.updated": StageInfo;
   "connector.auth.changed": ConnectorAuthSession;
 };
 

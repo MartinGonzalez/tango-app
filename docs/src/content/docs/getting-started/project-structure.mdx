@@ -29,14 +29,20 @@ The `tango.instrument` field is the manifest that tells Tango how to load your i
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "bun node_modules/@tango/api/src/cli.ts dev",
-    "build": "bun node_modules/@tango/api/src/cli.ts build",
-    "sync": "bun node_modules/@tango/api/src/cli.ts sync",
-    "validate": "bun node_modules/@tango/api/src/cli.ts validate"
+    "dev": "bun node_modules/tango-api/src/cli.ts dev",
+    "build": "bun node_modules/tango-api/src/cli.ts build",
+    "sync": "bun node_modules/tango-api/src/cli.ts sync",
+    "validate": "bun node_modules/tango-api/src/cli.ts validate"
   },
   "dependencies": {
-    "@tango/api": "file:../../desktop/instruments/api"
+    "tango-api": "github:MartinGonzalez/tango-api#v0.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "tango": {
     "instrument": {
@@ -98,11 +104,12 @@ This is a React component that Tango renders inside a panel. It must default-exp
 import {
   defineReactInstrument,
   useInstrumentApi,
+  useHostEvent,
   UIRoot,
   UIPanelHeader,
   UISection,
   UIEmptyState,
-} from "@tango/api";
+} from "tango-api";
 
 function SidebarPanel() {
   const api = useInstrumentApi();
@@ -126,12 +133,40 @@ export default defineReactInstrument({
 });
 ```
 
+### Subscribing to host events
+
+Use `useHostEvent` to react to system events like stage changes, session activity, and more:
+
+```tsx
+import { useHostEvent } from "tango-api";
+import { useCallback } from "react";
+
+// Fires when the user switches to a different stage
+useHostEvent("stage.selected", useCallback((stageInfo) => {
+  // stageInfo.path, stageInfo.branch, stageInfo.headSha
+  // stageInfo.hasVersionControl, stageInfo.hasChanges
+  // stageInfo.additions, stageInfo.deletions
+}, []));
+
+// Fires when the active stage's metadata refreshes (post-commit, file changes)
+useHostEvent("stage.updated", useCallback((stageInfo) => {
+  // Same StageInfo payload as stage.selected
+}, []));
+
+// Fires for each Claude streaming chunk
+useHostEvent("session.stream", useCallback(({ sessionId, event }) => {
+  // event: ClaudeStreamEvent
+}, []));
+```
+
+See the [Events & Hooks tutorial](/tutorials/06-events-and-hooks/) for the full list of available events.
+
 ## `src/backend.ts` — Backend entry (optional)
 
 Runs in the host Bun process. Define actions that the frontend can call:
 
 ```ts
-import { defineBackend, type InstrumentBackendContext } from "@tango/api/backend";
+import { defineBackend, type InstrumentBackendContext } from "tango-api/backend";
 
 export default defineBackend({
   kind: "tango.instrument.backend.v2",

@@ -10,7 +10,7 @@ Tango's event system lets instruments react to changes in the host app — new s
 The primary way to subscribe to events in React:
 
 ```tsx
-import { useHostEvent } from "@tango/api";
+import { useHostEvent } from "tango-api";
 
 useHostEvent("snapshot.update", (snapshot) => {
   console.log("Processes:", snapshot.processes.length);
@@ -125,6 +125,33 @@ useHostEvent("stage.removed", useCallback((payload) => {
 }, []));
 ```
 
+### `stage.selected`
+
+Fires when the user switches to a different stage. Provides full git/VCS context for the newly selected stage.
+
+```tsx
+useHostEvent("stage.selected", useCallback((stageInfo) => {
+  // stageInfo.path — stage directory path
+  // stageInfo.branch — current git branch (or null)
+  // stageInfo.headSha — HEAD commit SHA (or null)
+  // stageInfo.hasVersionControl — true if git/vcs repo
+  // stageInfo.hasChanges — true if any uncommitted changes
+  // stageInfo.additions — total line additions
+  // stageInfo.deletions — total line deletions
+}, []));
+```
+
+### `stage.updated`
+
+Fires when the active stage's metadata is refreshed without switching stages — e.g. after a commit, when files change during a session, or when the commit dialog loads fresh context. Same `StageInfo` payload as `stage.selected`.
+
+```tsx
+useHostEvent("stage.updated", useCallback((stageInfo) => {
+  // Same shape as stage.selected
+  console.log(`Stage updated: ${stageInfo.branch}@${stageInfo.headSha?.slice(0, 7)}`);
+}, []));
+```
+
 ### `connector.auth.changed`
 
 Fires when a connector's authorization state changes.
@@ -202,7 +229,7 @@ import {
   defineReactInstrument, useInstrumentApi, useHostEvent,
   UIRoot, UIPanelHeader, UISection, UICard,
   UIBadge, UIGroupList, UIGroupItem, UIEmptyState,
-} from "@tango/api";
+} from "tango-api";
 
 type SessionLog = {
   sessionId: string;
@@ -299,6 +326,8 @@ export default defineReactInstrument({
 | `instrument.event` | Any instrument emits a custom event |
 | `stage.added` | User opens a stage |
 | `stage.removed` | A stage is removed |
+| `stage.selected` | User switched to a different stage |
+| `stage.updated` | Active stage metadata refreshed |
 | `connector.auth.changed` | Connector auth state changes |
 | `pullRequest.agentReviewChanged` | PR review status changes |
 

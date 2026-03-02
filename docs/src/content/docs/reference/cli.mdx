@@ -3,7 +3,7 @@ title: CLI Reference
 description: All tango-sdk CLI commands.
 ---
 
-The `tango-sdk` CLI is included in `@tango/api` and provides build, development, and validation tools.
+The `tango-sdk` CLI is included in `tango-api` and provides build, development, and validation tools.
 
 ## Usage
 
@@ -12,10 +12,10 @@ The scaffolder sets up npm scripts that invoke the CLI:
 ```json
 {
   "scripts": {
-    "dev": "bun node_modules/@tango/api/src/cli.ts dev",
-    "build": "bun node_modules/@tango/api/src/cli.ts build",
-    "sync": "bun node_modules/@tango/api/src/cli.ts sync",
-    "validate": "bun node_modules/@tango/api/src/cli.ts validate"
+    "dev": "bun node_modules/tango-api/src/cli.ts dev",
+    "build": "bun node_modules/tango-api/src/cli.ts build",
+    "sync": "bun node_modules/tango-api/src/cli.ts sync",
+    "validate": "bun node_modules/tango-api/src/cli.ts validate"
   }
 }
 ```

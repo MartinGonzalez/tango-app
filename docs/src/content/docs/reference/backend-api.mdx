@@ -10,7 +10,7 @@ The backend runs in the host Bun process. It's optional — only needed when you
 Creates a backend definition. Must be the default export of your backend entry file.
 
 ```ts
-import { defineBackend } from "@tango/api/backend";
+import { defineBackend } from "tango-api/backend";
 
 export default defineBackend({
   kind: "tango.instrument.backend.v2",
@@ -183,7 +183,7 @@ output: {
 ## Complete example
 
 ```ts
-import { defineBackend, type InstrumentBackendContext } from "@tango/api/backend";
+import { defineBackend, type InstrumentBackendContext } from "tango-api/backend";
 
 type CreateTaskInput = {
   stagePath: string;
