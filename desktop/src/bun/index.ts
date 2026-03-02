@@ -647,7 +647,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         cwd: string;
         includeUnstaged?: boolean;
       }) => {
-        const message = await generateCommitMessage(cwd, includeUnstaged ?? true);
+        const message = await generateCommitMessage(cwd, includeUnstaged ?? true, queryClaudeSession);
         return { message };
       },
 

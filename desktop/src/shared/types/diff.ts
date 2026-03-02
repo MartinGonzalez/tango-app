@@ -59,6 +59,7 @@ export type BranchCommit = {
 export type CommitActionMode = "commit" | "commit_and_push";
 
 export type CommitContext = {
+  isGitRepo: boolean;
   branch: string;
   hasChanges: boolean;
   stagedFiles: number;

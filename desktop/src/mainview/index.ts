@@ -2309,6 +2309,7 @@ function syncCommitButtonVisibility(state: AppState): void {
     : null;
   const visible = state.viewMode === "stages"
     && Boolean(activeStage)
+    && Boolean(commitContext?.isGitRepo)
     && Boolean(commitContext?.hasChanges);
   diffView.setCommitButtonVisible(visible);
 }

@@ -51,6 +51,7 @@ export async function getCommitContext(cwd: string): Promise<CommitContext> {
 
   const branch = await resolveBranchName(cwd);
   return {
+    isGitRepo: true,
     branch,
     hasChanges: totalFiles > 0,
     stagedFiles: status.staged.size,
@@ -66,9 +67,17 @@ export async function getCommitContext(cwd: string): Promise<CommitContext> {
   };
 }
 
+export type QueryFn = (params: {
+  prompt: string;
+  cwd: string;
+  model?: string;
+  tools?: string[];
+}) => Promise<{ text: string; durationMs: number; costUsd: number }>;
+
 export async function generateCommitMessage(
   cwd: string,
-  includeUnstaged = true
+  includeUnstaged = true,
+  queryFn?: QueryFn
 ): Promise<string> {
   if (!(await isGitRepo(cwd))) {
     throw new Error("Not a git repository");
@@ -83,7 +92,20 @@ export async function generateCommitMessage(
   }
 
   const prompt = await buildCommitPrompt(cwd, context, includeUnstaged);
-  const raw = await runClaudePrompt(cwd, prompt);
+
+  let raw: string;
+  if (queryFn) {
+    const result = await queryFn({
+      prompt,
+      cwd,
+      model: DEFAULT_COMMIT_MODEL,
+      tools: [],
+    });
+    raw = result.text;
+  } else {
+    raw = await runClaudePrompt(cwd, prompt);
+  }
+
   const message = sanitizeCommitMessage(raw);
   if (!message) {
     throw new Error("Claude returned an empty commit message");
@@ -474,6 +496,7 @@ function truncate(value: string, maxChars: number): string {
 
 function emptyCommitContext(): CommitContext {
   return {
+    isGitRepo: false,
     branch: "(unknown)",
     hasChanges: false,
     stagedFiles: 0,
