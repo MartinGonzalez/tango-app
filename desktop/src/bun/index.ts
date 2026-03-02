@@ -18,6 +18,7 @@ import {
 } from "./diff-provider.ts";
 import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
 import { getVcsStrategy, getVcsInfo, invalidateVcsCache } from "./vcs/vcs-provider.ts";
+import { compareSemver } from "../shared/version.ts";
 import {
   generateCommitMessage,
   getCommitContext,
@@ -73,8 +74,8 @@ import type {
 
 console.log("Tango starting...");
 
-// Baked in at build time — CI patches this value from the git tag.
-const APP_VERSION = "0.0.0";
+import pkg from "../../package.json";
+const APP_VERSION: string = pkg.version;
 
 const MAINVIEW_LOG_PATH = join(homedir(), ".tango", "logs", "mainview.log");
 
@@ -85,42 +86,6 @@ function writeMainviewLogLine(line: string): void {
   } catch {
     // best-effort only
   }
-}
-
-/**
- * Compare two semver strings, including pre-release tags.
- * Supports: 1.2.3, 1.2.3-rc1, 1.2.3-beta2, 1.2.3-alpha3
- * Pre-release < release (1.0.0-rc1 < 1.0.0).
- * Pre-release ordering: alpha < beta < rc, then by number.
- */
-function compareSemver(a: string, b: string): number {
-  const parse = (v: string) => {
-    const [core, pre] = v.split("-", 2);
-    const parts = core.split(".").map(Number);
-    return { major: parts[0] ?? 0, minor: parts[1] ?? 0, patch: parts[2] ?? 0, pre: pre ?? "" };
-  };
-  const preOrder = (tag: string): { rank: number; num: number } => {
-    if (!tag) return { rank: 99, num: 0 }; // stable release sorts last (highest)
-    const m = tag.match(/^(alpha|beta|rc)(\d*)$/i);
-    if (!m) return { rank: 50, num: 0 }; // unknown pre-release tag
-    const ranks: Record<string, number> = { alpha: 1, beta: 2, rc: 3 };
-    return { rank: ranks[m[1].toLowerCase()] ?? 50, num: Number(m[2]) || 0 };
-  };
-
-  const pa = parse(a);
-  const pb = parse(b);
-
-  const majorDiff = pa.major - pb.major;
-  if (majorDiff !== 0) return majorDiff;
-  const minorDiff = pa.minor - pb.minor;
-  if (minorDiff !== 0) return minorDiff;
-  const patchDiff = pa.patch - pb.patch;
-  if (patchDiff !== 0) return patchDiff;
-
-  const preA = preOrder(pa.pre);
-  const preB = preOrder(pb.pre);
-  if (preA.rank !== preB.rank) return preA.rank - preB.rank;
-  return preA.num - preB.num;
 }
 
 // ── Services ─────────────────────────────────────────────────────

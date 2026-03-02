@@ -30,7 +30,6 @@ jobs:
           echo "Injecting version: $VERSION"
           sed -i '' "s/\"version\": \"0.0.1\"/\"version\": \"$VERSION\"/" package.json
           sed -i '' "s/version: \"0.0.1\"/version: \"$VERSION\"/" electrobun.config.ts
-          sed -i '' "s/const APP_VERSION = \"0.0.0\"/const APP_VERSION = \"$VERSION\"/" src/bun/index.ts
 
       - name: Build app
         working-directory: desktop
