@@ -1295,10 +1295,38 @@ function init(): void {
     panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
   }
 
-  // Update button — opens release page
-  qs("#btn-update")?.addEventListener("click", () => {
-    if (_updateDownloadUrl) {
-      (rpc as any).request.openExternalUrl({ url: _updateDownloadUrl });
+  // Update button — downloads, installs, and relaunches
+  qs("#btn-update")?.addEventListener("click", async () => {
+    if (!_updateDownloadUrl) return;
+    const btn = qs("#btn-update") as HTMLButtonElement | null;
+    if (!btn) return;
+
+    const originalText = btn.textContent;
+    btn.textContent = "Updating…";
+    btn.setAttribute("disabled", "true");
+    btn.style.pointerEvents = "none";
+    btn.style.opacity = "0.6";
+
+    try {
+      const result = await (rpc as any).request.performUpdate({ downloadUrl: _updateDownloadUrl });
+      if (!result.success) {
+        btn.textContent = result.error ?? "Update failed";
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.removeAttribute("disabled");
+          btn.style.pointerEvents = "";
+          btn.style.opacity = "";
+        }, 3000);
+      }
+      // On success the app will quit and relaunch — no UI update needed.
+    } catch {
+      btn.textContent = "Update failed";
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.removeAttribute("disabled");
+        btn.style.pointerEvents = "";
+        btn.style.opacity = "";
+      }, 3000);
     }
   });
 

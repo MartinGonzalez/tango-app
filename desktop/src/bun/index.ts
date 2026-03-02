@@ -2,7 +2,7 @@ import { BrowserWindow, BrowserView, ApplicationMenu, Utils } from "electrobun/b
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WatcherClient } from "./watcher-client.ts";
 import { SessionManager, resolveClaudeBinary, buildSpawnPath } from "./session-manager.ts";
@@ -1386,21 +1386,84 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
           // Find the newest release (by semver) that's newer than current.
           let bestVersion = currentVersion;
-          let bestUrl = `https://github.com/${repo}/releases/latest`;
           for (const rel of releases) {
             if (rel.draft) continue;
             const ver = (rel.tag_name ?? "").replace(/^v/, "");
             if (!ver) continue;
             if (compareSemver(ver, bestVersion) > 0) {
               bestVersion = ver;
-              bestUrl = rel.html_url ?? bestUrl;
             }
           }
 
           const available = compareSemver(currentVersion, bestVersion) < 0;
-          return { available, latestVersion: bestVersion, downloadUrl: bestUrl };
+          const downloadUrl = available
+            ? `https://github.com/${repo}/releases/download/v${bestVersion}/Tango-macos-arm64.zip`
+            : "";
+          return { available, latestVersion: bestVersion, downloadUrl };
         } catch {
           return { available: false, latestVersion: currentVersion, downloadUrl: "" };
+        }
+      },
+
+      performUpdate: async ({ downloadUrl }) => {
+        const appName = "Tango-dev.app";
+        const installDir = "/Applications";
+        const appPath = join(installDir, appName);
+
+        try {
+          // 1. Download zip
+          const res = await fetch(downloadUrl);
+          if (!res.ok) {
+            return { success: false, error: `Download failed: HTTP ${res.status}` };
+          }
+          const zipBytes = new Uint8Array(await res.arrayBuffer());
+
+          // 2. Write to temp file and extract
+          const tmp = join(tmpdir(), `tango-update-${Date.now()}`);
+          mkdirSync(tmp, { recursive: true });
+          const zipPath = join(tmp, "update.zip");
+          await Bun.write(zipPath, zipBytes);
+
+          const unzip = Bun.spawn(["unzip", "-q", "-o", zipPath, "-d", tmp], {
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const unzipExit = await unzip.exited;
+          if (unzipExit !== 0) {
+            const stderr = await new Response(unzip.stderr).text();
+            return { success: false, error: `Unzip failed (exit ${unzipExit}): ${stderr}` };
+          }
+
+          // 3. Remove existing app
+          const rm = Bun.spawn(["rm", "-rf", appPath], { stdout: "pipe", stderr: "pipe" });
+          await rm.exited;
+
+          // 4. Move extracted app to /Applications
+          const extractedApp = join(tmp, appName);
+          const mv = Bun.spawn(["mv", extractedApp, appPath], {
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const mvExit = await mv.exited;
+          if (mvExit !== 0) {
+            const stderr = await new Response(mv.stderr).text();
+            return { success: false, error: `Move failed (exit ${mvExit}): ${stderr}` };
+          }
+
+          // 5. Remove quarantine attribute
+          Bun.spawn(["xattr", "-cr", appPath], { stdout: "pipe", stderr: "pipe" });
+
+          // 6. Cleanup temp dir
+          Bun.spawn(["rm", "-rf", tmp], { stdout: "pipe", stderr: "pipe" });
+
+          // 7. Relaunch and quit
+          Bun.spawn(["open", "-a", appName]);
+          setTimeout(() => Utils.quit(), 500);
+
+          return { success: true };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { success: false, error: message };
         }
       },
 
