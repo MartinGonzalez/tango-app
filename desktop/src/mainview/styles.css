@@ -326,6 +326,14 @@ button {
   padding: 10px 8px 14px;
 }
 
+.sidebar-version {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  flex-shrink: 0;
+}
+
 .ws-empty {
   padding: 32px 16px;
   text-align: center;
