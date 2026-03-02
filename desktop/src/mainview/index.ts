@@ -758,7 +758,7 @@ function init(): void {
       loadSessionTranscript(canonicalSessionId);
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
-      void loadCommitContext(stagePath); // populates activeStageInfo when done
+      void loadCommitContext(stagePath, "selected");
     },
     onNewSession: (stagePath) => {
       appState.update((s) => ({
@@ -771,7 +771,7 @@ function init(): void {
       chatView.focus();
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
-      void loadCommitContext(stagePath);
+      void loadCommitContext(stagePath, "selected");
     },
     onAddStage: () => openStage(),
     onRemoveStage: (path) => removeStage(path),
@@ -2003,7 +2003,7 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
           void loadSessionHistory(normalizedCwd);
           await loadDiff(normalizedCwd);
           ensureBranchHistory(normalizedCwd);
-          void loadCommitContext(normalizedCwd);
+          void loadCommitContext(normalizedCwd, "selected");
         }
       },
     },
@@ -2292,7 +2292,10 @@ function stageInfoFromCommitContext(path: string, ctx: CommitContext): StageInfo
   };
 }
 
-async function loadCommitContext(cwd: string): Promise<void> {
+async function loadCommitContext(
+  cwd: string,
+  reason: "selected" | "updated" = "updated",
+): Promise<void> {
   if (!cwd) return;
   try {
     const context: CommitContext = await (rpc as any).request.getCommitContext({ cwd });
@@ -2306,7 +2309,10 @@ async function loadCommitContext(cwd: string): Promise<void> {
       },
     }));
     if (appState.get().activeStage === cwd) {
-      publishFrontendHostEvent("stage.selected", info);
+      publishFrontendHostEvent(
+        reason === "selected" ? "stage.selected" : "stage.updated",
+        info,
+      );
     }
   } catch (err) {
     console.error("Failed to load commit context:", err);
@@ -2661,7 +2667,7 @@ async function loadStages(): Promise<void> {
       loadDiff(stages[0], appState.get().diffScope);
       loadSessionHistory(stages[0]);
       loadStageConnectors(stages[0], false);
-      void loadCommitContext(stages[0]);
+      void loadCommitContext(stages[0], "selected");
       for (const wsPath of stages) {
         ensureBranchHistory(wsPath);
       }
@@ -3552,7 +3558,7 @@ async function openStage(): Promise<void> {
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
     ensureBranchHistory(dir);
-    void loadCommitContext(dir);
+    void loadCommitContext(dir, "selected");
     loadStageConnectors(dir, true);
   } catch (err) {
     console.error("Failed to pick directory:", err);
@@ -3607,7 +3613,7 @@ async function removeStage(path: string): Promise<void> {
     if (nextStage) {
       ensureBranchHistory(nextStage);
       void loadStageConnectors(nextStage, false);
-      void loadCommitContext(nextStage);
+      void loadCommitContext(nextStage, "selected");
     }
   } catch (err) {
     console.error("Failed to remove stage:", err);

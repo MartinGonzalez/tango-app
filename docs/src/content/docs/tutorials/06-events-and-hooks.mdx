@@ -127,7 +127,7 @@ useHostEvent("stage.removed", useCallback((payload) => {
 
 ### `stage.selected`
 
-Fires when a stage's metadata is loaded or refreshed (on selection, after commits, or when files change during a session). Provides full git/VCS context.
+Fires when the user switches to a different stage. Provides full git/VCS context for the newly selected stage.
 
 ```tsx
 useHostEvent("stage.selected", useCallback((stageInfo) => {
@@ -138,6 +138,17 @@ useHostEvent("stage.selected", useCallback((stageInfo) => {
   // stageInfo.hasChanges — true if any uncommitted changes
   // stageInfo.additions — total line additions
   // stageInfo.deletions — total line deletions
+}, []));
+```
+
+### `stage.updated`
+
+Fires when the active stage's metadata is refreshed without switching stages — e.g. after a commit, when files change during a session, or when the commit dialog loads fresh context. Same `StageInfo` payload as `stage.selected`.
+
+```tsx
+useHostEvent("stage.updated", useCallback((stageInfo) => {
+  // Same shape as stage.selected
+  console.log(`Stage updated: ${stageInfo.branch}@${stageInfo.headSha?.slice(0, 7)}`);
 }, []));
 ```
 
@@ -315,7 +326,8 @@ export default defineReactInstrument({
 | `instrument.event` | Any instrument emits a custom event |
 | `stage.added` | User opens a stage |
 | `stage.removed` | A stage is removed |
-| `stage.selected` | Stage metadata loaded (branch, HEAD, changes) |
+| `stage.selected` | User switched to a different stage |
+| `stage.updated` | Active stage metadata refreshed |
 | `connector.auth.changed` | Connector auth state changes |
 | `pullRequest.agentReviewChanged` | PR review status changes |
 

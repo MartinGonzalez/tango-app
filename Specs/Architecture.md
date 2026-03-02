@@ -280,7 +280,8 @@ subscribeFrontendHostEvent(entry, event, handler)  // Subscribe (permission-chec
 | `instrument.event`              | `stages.observe`       | Cross-instrument event               |
 | `stage.added`                   | `stages.observe`       | New stage opened                     |
 | `stage.removed`                 | `stages.observe`       | Stage closed                         |
-| `stage.selected`                | `stages.observe`       | Stage metadata loaded (branch, HEAD SHA, change counts) |
+| `stage.selected`                | `stages.observe`       | User switched to a different stage   |
+| `stage.updated`                 | `stages.observe`       | Active stage metadata refreshed (post-commit, file changes) |
 | `connector.auth.changed`        | `connectors.read`      | OAuth connector status changed       |
 
 ### Cross-Instrument Events
