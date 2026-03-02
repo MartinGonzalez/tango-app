@@ -19,6 +19,7 @@ import {
 import { getBranchHistory, getCommitDiff } from "./branch-history.ts";
 import { getVcsStrategy, getVcsInfo, invalidateVcsCache } from "./vcs/vcs-provider.ts";
 import { compareSemver } from "../shared/version.ts";
+import { resolveModel } from "./models.ts";
 import {
   generateCommitMessage,
   getCommitContext,
@@ -1911,8 +1912,9 @@ async function queryClaudeSession(params: {
     "--dangerously-skip-permissions",
   ];
 
-  if (params.model && params.model.trim()) {
-    args.push("--model", params.model.trim());
+  const resolvedModel = resolveModel(params.model);
+  if (resolvedModel) {
+    args.push("--model", resolvedModel);
   }
 
   if (Array.isArray(params.tools)) {

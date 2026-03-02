@@ -44,6 +44,7 @@ import type {
   DiffScope,
   BranchCommit,
   CommitContext,
+  StageInfo,
   Activity,
   HistorySession,
   ToolApprovalRequest,
@@ -370,6 +371,7 @@ type AppState = {
   branchHistory: Record<string, BranchCommit[]>; // stage path → commit history
   vcsInfoByStage: Record<string, VcsInfo>; // stage path → VCS kind + branch
   loadedBranchHistory: Set<string>; // stage paths that have fetched branch history
+  activeStageInfo: StageInfo | null; // info about the currently selected stage
   commitContextByStage: Record<string, CommitContext>; // stage path → commit context
   historySessions: Record<string, HistorySession[]>; // stage path → history
   liveSessions: Set<string>; // session IDs with running processes
@@ -431,6 +433,7 @@ const appState = new Store<AppState>({
   branchHistory: {},
   vcsInfoByStage: {},
   loadedBranchHistory: new Set(),
+  activeStageInfo: null,
   commitContextByStage: {},
   historySessions: {},
   liveSessions: new Set(),
@@ -750,21 +753,25 @@ function init(): void {
         ...s,
         activeSessionId: canonicalSessionId,
         activeStage: stagePath,
+        activeStageInfo: null, // clear immediately — button hides until fresh load
       }));
       loadSessionTranscript(canonicalSessionId);
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
+      void loadCommitContext(stagePath); // populates activeStageInfo when done
     },
     onNewSession: (stagePath) => {
       appState.update((s) => ({
         ...s,
         activeSessionId: null,
         activeStage: stagePath,
+        activeStageInfo: null,
       }));
       chatView.clear();
       chatView.focus();
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
+      void loadCommitContext(stagePath);
     },
     onAddStage: () => openStage(),
     onRemoveStage: (path) => removeStage(path),
@@ -1032,6 +1039,7 @@ function init(): void {
               ...s,
               activeSessionId: canonicalSessionId,
               activeStage: cwd,
+              activeStageInfo: s.activeStage === cwd ? s.activeStageInfo : null,
               liveSessions: live,
               expandedStages: expanded,
             };
@@ -1980,10 +1988,12 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
           if (normalizedCwd) {
             expanded.add(normalizedCwd);
           }
+          const newActiveStage = normalizedCwd || s.activeStage;
           return {
             ...s,
             viewMode: "stages",
-            activeStage: normalizedCwd || s.activeStage,
+            activeStage: newActiveStage,
+            activeStageInfo: newActiveStage !== s.activeStage ? null : s.activeStageInfo,
             activeSessionId: canonicalSessionId,
             expandedStages: expanded,
           };
@@ -1993,6 +2003,7 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
           void loadSessionHistory(normalizedCwd);
           await loadDiff(normalizedCwd);
           ensureBranchHistory(normalizedCwd);
+          void loadCommitContext(normalizedCwd);
         }
       },
     },
@@ -2269,12 +2280,25 @@ function ensureBranchHistory(cwd: string): void {
   void loadBranchHistory(cwd, false);
 }
 
+function stageInfoFromCommitContext(path: string, ctx: CommitContext): StageInfo {
+  return {
+    path,
+    hasVersionControl: ctx.isGitRepo,
+    hasChanges: ctx.hasChanges,
+    additions: ctx.totalAdditions,
+    deletions: ctx.totalDeletions,
+  };
+}
+
 async function loadCommitContext(cwd: string): Promise<void> {
   if (!cwd) return;
   try {
     const context: CommitContext = await (rpc as any).request.getCommitContext({ cwd });
     appState.update((s) => ({
       ...s,
+      activeStageInfo: s.activeStage === cwd
+        ? stageInfoFromCommitContext(cwd, context)
+        : s.activeStageInfo,
       commitContextByStage: {
         ...s.commitContextByStage,
         [cwd]: context,
@@ -2282,11 +2306,15 @@ async function loadCommitContext(cwd: string): Promise<void> {
     }));
   } catch (err) {
     console.error("Failed to load commit context:", err);
+    const empty = emptyCommitContext();
     appState.update((s) => ({
       ...s,
+      activeStageInfo: s.activeStage === cwd
+        ? stageInfoFromCommitContext(cwd, empty)
+        : s.activeStageInfo,
       commitContextByStage: {
         ...s.commitContextByStage,
-        [cwd]: emptyCommitContext(),
+        [cwd]: empty,
       },
     }));
   }
@@ -2303,14 +2331,11 @@ function scheduleCommitContextRefresh(cwd: string, delayMs: number): void {
 }
 
 function syncCommitButtonVisibility(state: AppState): void {
-  const activeStage = state.activeStage;
-  const commitContext = activeStage
-    ? state.commitContextByStage[activeStage]
-    : null;
+  const info = state.activeStageInfo;
   const visible = state.viewMode === "stages"
-    && Boolean(activeStage)
-    && Boolean(commitContext?.isGitRepo)
-    && Boolean(commitContext?.hasChanges);
+    && Boolean(state.activeStage)
+    && Boolean(info?.hasVersionControl)
+    && Boolean(info?.hasChanges);
   diffView.setCommitButtonVisible(visible);
 }
 
@@ -2427,8 +2452,6 @@ async function loadDiff(cwd: string, scope?: DiffScope): Promise<void> {
     console.error("Failed to load diff:", err);
     filesPanel.clear();
     diffView.clear();
-  } finally {
-    void loadCommitContext(cwd);
   }
 }
 
@@ -2443,8 +2466,6 @@ async function loadCommitDiff(cwd: string, commitHash: string): Promise<void> {
     console.error("Failed to load commit diff:", err);
     filesPanel.clear();
     diffView.clear();
-  } finally {
-    void loadCommitContext(cwd);
   }
 }
 
@@ -2597,6 +2618,7 @@ function extractHookEventName(value: unknown, depth = 0): string {
 
 function emptyCommitContext(): CommitContext {
   return {
+    isGitRepo: false,
     branch: "(unknown)",
     hasChanges: false,
     stagedFiles: 0,
@@ -2625,6 +2647,7 @@ async function loadStages(): Promise<void> {
       stages,
       expandedStages: expanded,
       activeStage: stages[0] ?? null,
+      activeStageInfo: null,
     }));
     // Auto-show stages panel if we have stages
     if (stages.length > 0) {
@@ -2634,6 +2657,7 @@ async function loadStages(): Promise<void> {
       loadDiff(stages[0], appState.get().diffScope);
       loadSessionHistory(stages[0]);
       loadStageConnectors(stages[0], false);
+      void loadCommitContext(stages[0]);
       for (const wsPath of stages) {
         ensureBranchHistory(wsPath);
       }
@@ -3515,6 +3539,7 @@ async function openStage(): Promise<void> {
       stages: [dir, ...s.stages.filter((w) => w !== dir)],
       expandedStages: expanded,
       activeStage: dir,
+      activeStageInfo: null,
     }));
     publishFrontendHostEvent("stage.added", { path: dir });
 
@@ -3523,6 +3548,7 @@ async function openStage(): Promise<void> {
     loadDiff(dir, appState.get().diffScope);
     loadSessionHistory(dir);
     ensureBranchHistory(dir);
+    void loadCommitContext(dir);
     loadStageConnectors(dir, true);
   } catch (err) {
     console.error("Failed to pick directory:", err);
@@ -3569,6 +3595,7 @@ async function removeStage(path: string): Promise<void> {
         activeStage: s.activeStage === path
           ? (stages[0] ?? null)
           : s.activeStage,
+        activeStageInfo: s.activeStage === path ? null : s.activeStageInfo,
       };
     });
 
@@ -3576,6 +3603,7 @@ async function removeStage(path: string): Promise<void> {
     if (nextStage) {
       ensureBranchHistory(nextStage);
       void loadStageConnectors(nextStage, false);
+      void loadCommitContext(nextStage);
     }
   } catch (err) {
     console.error("Failed to remove stage:", err);
