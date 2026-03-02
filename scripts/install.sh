@@ -33,12 +33,17 @@ fi
 # --- Fetch latest release (includes pre-releases) ---
 
 echo "Fetching latest release from $REPO..."
-TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" \
-  | grep -m1 '"tag_name"' \
-  | sed 's/.*: "//;s/".*//')"
+RELEASES="$(curl -fsSL "https://api.github.com/repos/$REPO/releases" 2>&1)" || {
+  echo "Error: Failed to fetch releases. GitHub API may be rate-limiting this IP."
+  echo "Try again later or download manually from: https://github.com/$REPO/releases"
+  exit 1
+}
+
+TAG="$(echo "$RELEASES" | grep -m1 '"tag_name"' | sed 's/.*: "//;s/".*//' || true)"
 
 if [ -z "$TAG" ]; then
   echo "Error: No releases found for $REPO"
+  echo "Check: https://github.com/$REPO/releases"
   exit 1
 fi
 
