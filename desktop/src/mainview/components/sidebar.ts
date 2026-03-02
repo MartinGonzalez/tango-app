@@ -73,10 +73,12 @@ export class Sidebar {
   }
 
   setVersion(version: string): void {
-    this.#versionEl.textContent = version ? `v${version}` : "";
-    const isRc = version.includes("-rc");
-    this.#versionEl.style.color = isRc ? "var(--color-danger, #e53935)" : "";
-    this.#versionEl.style.fontWeight = isRc ? "bold" : "";
+    this.#versionEl.innerHTML = "";
+    if (!version) return;
+    const pill = document.createElement("span");
+    pill.className = `version-pill${version.includes("-rc") ? " rc" : ""}`;
+    pill.textContent = `v${version}`;
+    this.#versionEl.appendChild(pill);
   }
 
   setActiveSession(sessionId: string | null): void {
