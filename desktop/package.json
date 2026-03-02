@@ -1,6 +1,6 @@
 {
   "name": "tango",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "Desktop app for managing Claude Code sessions",
   "type": "module",
   "scripts": {

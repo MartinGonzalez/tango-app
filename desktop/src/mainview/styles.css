@@ -149,6 +149,31 @@ button {
   background: var(--bg-active);
 }
 
+.update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  margin-left: 8px;
+  padding: 0 10px 0 6px;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.15s;
+}
+
+.update-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.update-btn:hover {
+  opacity: 0.85;
+}
+
 /* Material Symbols base class */
 .material-symbols-outlined {
   font-family: "Material Symbols Outlined";

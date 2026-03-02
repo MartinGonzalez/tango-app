@@ -1290,6 +1290,13 @@ function init(): void {
     panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
   }
 
+  // Update button — opens release page
+  qs("#btn-update")?.addEventListener("click", () => {
+    if (_updateDownloadUrl) {
+      (rpc as any).request.openExternalUrl({ url: _updateDownloadUrl });
+    }
+  });
+
   // Toggle stages button
   qs("#btn-toggle-stages")?.addEventListener("click", () => {
     panelLayout.togglePanel("sidebar");
@@ -1681,14 +1688,18 @@ function init(): void {
   loadSessionNames();
   loadPlugins();
   loadInstruments();
+  checkForUpdate();
 
   // Keep instrument registry fresh when app regains focus.
+  // Also re-check for updates on focus/visibility.
   window.addEventListener("focus", () => {
     void loadInstruments(true);
+    checkForUpdate();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       void loadInstruments(true);
+      checkForUpdate();
     }
   });
     pushBootTrace("init:ready");
@@ -2629,6 +2640,26 @@ async function loadPlugins(force = false): Promise<void> {
       ...s,
       pluginsLoading: false,
     }));
+  }
+}
+
+let _updateDownloadUrl = "";
+
+async function checkForUpdate(): Promise<void> {
+  try {
+    const result = await (rpc as any).request.checkForUpdate({});
+    const btn = qs("#btn-update") as HTMLButtonElement | null;
+    if (!btn) return;
+
+    if (result.available) {
+      _updateDownloadUrl = result.downloadUrl;
+      btn.style.display = "";
+      btn.title = `Update to Tango v${result.latestVersion}`;
+    } else {
+      btn.style.display = "none";
+    }
+  } catch {
+    // Silently ignore — non-critical
   }
 }
 

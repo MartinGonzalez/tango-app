@@ -387,6 +387,18 @@ export type AppRPC = {
         };
         response: { result: unknown };
       };
+      getAppVersion: {
+        params: {};
+        response: { version: string };
+      };
+      checkForUpdate: {
+        params: {};
+        response: {
+          available: boolean;
+          latestVersion: string;
+          downloadUrl: string;
+        };
+      };
       logClient: {
         params: {
           ts?: string;

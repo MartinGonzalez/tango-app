@@ -73,6 +73,9 @@ import type {
 
 console.log("Tango starting...");
 
+// Baked in at build time — CI patches this value from the git tag.
+const APP_VERSION = "0.0.0";
+
 const MAINVIEW_LOG_PATH = join(homedir(), ".tango", "logs", "mainview.log");
 
 function writeMainviewLogLine(line: string): void {
@@ -82,6 +85,42 @@ function writeMainviewLogLine(line: string): void {
   } catch {
     // best-effort only
   }
+}
+
+/**
+ * Compare two semver strings, including pre-release tags.
+ * Supports: 1.2.3, 1.2.3-rc1, 1.2.3-beta2, 1.2.3-alpha3
+ * Pre-release < release (1.0.0-rc1 < 1.0.0).
+ * Pre-release ordering: alpha < beta < rc, then by number.
+ */
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core, pre] = v.split("-", 2);
+    const parts = core.split(".").map(Number);
+    return { major: parts[0] ?? 0, minor: parts[1] ?? 0, patch: parts[2] ?? 0, pre: pre ?? "" };
+  };
+  const preOrder = (tag: string): { rank: number; num: number } => {
+    if (!tag) return { rank: 99, num: 0 }; // stable release sorts last (highest)
+    const m = tag.match(/^(alpha|beta|rc)(\d*)$/i);
+    if (!m) return { rank: 50, num: 0 }; // unknown pre-release tag
+    const ranks: Record<string, number> = { alpha: 1, beta: 2, rc: 3 };
+    return { rank: ranks[m[1].toLowerCase()] ?? 50, num: Number(m[2]) || 0 };
+  };
+
+  const pa = parse(a);
+  const pb = parse(b);
+
+  const majorDiff = pa.major - pb.major;
+  if (majorDiff !== 0) return majorDiff;
+  const minorDiff = pa.minor - pb.minor;
+  if (minorDiff !== 0) return minorDiff;
+  const patchDiff = pa.patch - pb.patch;
+  if (patchDiff !== 0) return patchDiff;
+
+  const preA = preOrder(pa.pre);
+  const preB = preOrder(pb.pre);
+  if (preA.rank !== preB.rank) return preA.rank - preB.rank;
+  return preA.num - preB.num;
 }
 
 // ── Services ─────────────────────────────────────────────────────
@@ -1353,6 +1392,51 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       }) => {
         const result = await instrumentRuntime.callAction(instrumentId, action, input);
         return { result };
+      },
+
+      getAppVersion: async () => {
+        return { version: APP_VERSION };
+      },
+
+      checkForUpdate: async () => {
+        const currentVersion = APP_VERSION;
+
+        const repo = "MartinGonzalez/tango-app";
+        try {
+          // Fetch all releases (not just /latest) so pre-releases (rc, beta, alpha) are included.
+          const res = await fetch(
+            `https://api.github.com/repos/${repo}/releases?per_page=20`,
+            {
+              headers: { Accept: "application/vnd.github.v3+json" },
+            }
+          );
+          if (!res.ok) {
+            return { available: false, latestVersion: currentVersion, downloadUrl: "" };
+          }
+          const releases = (await res.json()) as Array<{
+            tag_name?: string;
+            html_url?: string;
+            draft?: boolean;
+          }>;
+
+          // Find the newest release (by semver) that's newer than current.
+          let bestVersion = currentVersion;
+          let bestUrl = `https://github.com/${repo}/releases/latest`;
+          for (const rel of releases) {
+            if (rel.draft) continue;
+            const ver = (rel.tag_name ?? "").replace(/^v/, "");
+            if (!ver) continue;
+            if (compareSemver(ver, bestVersion) > 0) {
+              bestVersion = ver;
+              bestUrl = rel.html_url ?? bestUrl;
+            }
+          }
+
+          const available = compareSemver(currentVersion, bestVersion) < 0;
+          return { available, latestVersion: bestVersion, downloadUrl: bestUrl };
+        } catch {
+          return { available: false, latestVersion: currentVersion, downloadUrl: "" };
+        }
       },
 
       logClient: async ({
