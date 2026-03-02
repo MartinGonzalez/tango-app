@@ -60,6 +60,8 @@ export type CommitActionMode = "commit" | "commit_and_push";
 
 export type StageInfo = {
   path: string;
+  branch: string | null;
+  headSha: string | null;
   hasVersionControl: boolean;
   hasChanges: boolean;
   additions: number;
@@ -69,6 +71,7 @@ export type StageInfo = {
 export type CommitContext = {
   isGitRepo: boolean;
   branch: string;
+  headSha: string | null;
   hasChanges: boolean;
   stagedFiles: number;
   stagedAdditions: number;

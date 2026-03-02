@@ -2283,6 +2283,8 @@ function ensureBranchHistory(cwd: string): void {
 function stageInfoFromCommitContext(path: string, ctx: CommitContext): StageInfo {
   return {
     path,
+    branch: ctx.isGitRepo ? ctx.branch : null,
+    headSha: ctx.headSha,
     hasVersionControl: ctx.isGitRepo,
     hasChanges: ctx.hasChanges,
     additions: ctx.totalAdditions,
@@ -2294,16 +2296,18 @@ async function loadCommitContext(cwd: string): Promise<void> {
   if (!cwd) return;
   try {
     const context: CommitContext = await (rpc as any).request.getCommitContext({ cwd });
+    const info = stageInfoFromCommitContext(cwd, context);
     appState.update((s) => ({
       ...s,
-      activeStageInfo: s.activeStage === cwd
-        ? stageInfoFromCommitContext(cwd, context)
-        : s.activeStageInfo,
+      activeStageInfo: s.activeStage === cwd ? info : s.activeStageInfo,
       commitContextByStage: {
         ...s.commitContextByStage,
         [cwd]: context,
       },
     }));
+    if (appState.get().activeStage === cwd) {
+      publishFrontendHostEvent("stage.selected", info);
+    }
   } catch (err) {
     console.error("Failed to load commit context:", err);
     const empty = emptyCommitContext();
@@ -2619,6 +2623,7 @@ function emptyCommitContext(): CommitContext {
   return {
     isGitRepo: false,
     branch: "(unknown)",
+    headSha: null,
     hasChanges: false,
     stagedFiles: 0,
     stagedAdditions: 0,
@@ -3969,8 +3974,10 @@ function buildStageData(state: AppState): StageData[] {
 
   return state.stages.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
+    const stageInfo = state.activeStageInfo?.path === wsPath ? state.activeStageInfo : null;
     const vcsInfo = state.vcsInfoByStage[wsPath];
-    const branch = vcsInfo?.branch
+    const branch = stageInfo?.branch
+      ?? vcsInfo?.branch
       ?? resolveStageBranchName(state.branchHistory[wsPath] ?? EMPTY_BRANCH_COMMITS);
     // Live sessions for this stage
     const wsLive = liveSessions.filter((s) => s.cwd === wsPath);
