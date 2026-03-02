@@ -1424,14 +1424,14 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           const zipPath = join(tmp, "update.zip");
           await Bun.write(zipPath, zipBytes);
 
-          const unzip = Bun.spawn(["/usr/bin/unzip", "-q", "-o", zipPath, "-d", tmp], {
+          const unzip = Bun.spawn(["/usr/bin/ditto", "-xk", zipPath, tmp], {
             stdout: "pipe",
             stderr: "pipe",
           });
           const unzipExit = await unzip.exited;
           if (unzipExit !== 0) {
             const stderr = await new Response(unzip.stderr).text();
-            return { success: false, error: `Unzip failed (exit ${unzipExit}): ${stderr}` };
+            return { success: false, error: `Extract failed (exit ${unzipExit}): ${stderr}` };
           }
 
           // 3. Remove existing app
