@@ -2074,6 +2074,7 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
       renderMarkdown: (text: string): string => {
         return renderMarkdown(text);
       },
+      openUrl: (url: string) => { void openExternalUrl(url); },
     },
     registerShortcut: () => {},
     emit: (event) => {
