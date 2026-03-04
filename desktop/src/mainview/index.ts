@@ -311,10 +311,18 @@ const rpc = Electroview.defineRPC<any>({
         if (terminalPanel) {
           terminalPanel.writePtyData(id, data);
         }
+        // Schedule a session history refresh when a PTY first produces output
+        // so new Claude sessions appear in the sidebar
+        schedulePtyHistoryRefresh();
       },
       ptyExit: ({ id, exitCode }: { id: string; exitCode: number }) => {
         if (terminalPanel) {
           terminalPanel.onPtyExit(id, exitCode);
+        }
+        // Refresh history when a terminal process exits — session transcript is finalized
+        const stagePath = appState.get().activeStage;
+        if (stagePath) {
+          loadSessionHistory(stagePath);
         }
       },
     },
@@ -2264,6 +2272,21 @@ async function loadSessionTranscript(sessionId: string): Promise<void> {
     if (!sessionIdsMatch(latestActiveSessionId, canonicalSessionId)) return;
     console.error("Failed to load transcript:", err);
   }
+}
+
+/** Debounced history refresh triggered by PTY data.
+ *  Waits 3s after the last data event so the Claude session has time to
+ *  create its transcript file on disk before we scan for it. */
+let ptyHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+function schedulePtyHistoryRefresh(): void {
+  if (ptyHistoryRefreshTimer) clearTimeout(ptyHistoryRefreshTimer);
+  ptyHistoryRefreshTimer = setTimeout(() => {
+    ptyHistoryRefreshTimer = null;
+    const stagePath = appState.get().activeStage;
+    if (stagePath) {
+      loadSessionHistory(stagePath);
+    }
+  }, 3000);
 }
 
 async function loadSessionHistory(cwd: string): Promise<void> {

@@ -2440,16 +2440,40 @@ function leadingIndentWidth(value: string): number {
 }
 
 function renderInlineMarkdown(text: string): string {
-  let html = escapeHtml(text);
   const placeholders: string[] = [];
   const stash = (value: string): string => {
     const index = placeholders.push(value) - 1;
     return `@@INLINEMDTOKEN${index}@@`;
   };
 
+  // Preserve raw <img> tags before escaping HTML
+  let preprocessed = text.replace(
+    /<img\s+[^>]*src=["']([^"']+)["'][^>]*\/?>/gi,
+    (_match, src) => {
+      const safeSrc = sanitizeLinkHref(String(src));
+      if (!safeSrc) return "";
+      return stash(`<img src="${safeSrc}" />`);
+    }
+  );
+
+  let html = escapeHtml(preprocessed);
+
   html = html.replace(/`([^`\n]+)`/g, (_match, code) => {
     return stash(`<code class="inline-code">${code}</code>`);
   });
+
+  // Markdown images ![alt](url) — must come before link parsing
+  html = html.replace(
+    /!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g,
+    (_match, alt, src, title) => {
+      const safeSrc = sanitizeLinkHref(String(src));
+      if (!safeSrc) return escapeHtml(String(alt));
+      const titleAttr = title ? ` title="${escapeHtml(String(title))}"` : "";
+      return stash(
+        `<img src="${safeSrc}" alt="${escapeHtml(String(alt))}"${titleAttr} />`
+      );
+    }
+  );
 
   html = html.replace(
     /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)/g,
