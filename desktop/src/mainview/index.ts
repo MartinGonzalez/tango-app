@@ -29,6 +29,7 @@ import { DebugLogPanel, type DebugLogEntry } from "./components/debug-log-panel.
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ConnectorsView } from "./components/connectors-view.ts";
 import { ChatView, renderMarkdown } from "./components/chat-view.ts";
+import { TerminalPanel } from "./components/terminal-panel.ts";
 import { DiffView } from "./components/diff-view.ts";
 import { FilesPanel, type FileListView } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
@@ -273,6 +274,16 @@ const rpc = Electroview.defineRPC<any>({
           status,
         });
       },
+      ptyData: ({ id, data }: { id: string; data: string }) => {
+        if (terminalPanel) {
+          terminalPanel.writePtyData(id, data);
+        }
+      },
+      ptyExit: ({ id, exitCode }: { id: string; exitCode: number }) => {
+        if (terminalPanel) {
+          terminalPanel.onPtyExit(id, exitCode);
+        }
+      },
     },
   },
 });
@@ -481,6 +492,7 @@ let pluginsPreview: PluginsPreview;
 let prView: PRView;
 let connectorsView: ConnectorsView;
 let chatView: ChatView;
+let terminalPanel: TerminalPanel;
 let diffView: DiffView;
 let filesPanel: FilesPanel;
 let branchPanel: BranchPanel;
@@ -755,7 +767,8 @@ function init(): void {
         activeStage: stagePath,
         activeStageInfo: null, // clear immediately — button hides until fresh load
       }));
-      loadSessionTranscript(canonicalSessionId);
+      // Spawn claude --resume in the terminal
+      void terminalPanel.spawnSession(canonicalSessionId, stagePath);
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
       void loadCommitContext(stagePath, "selected");
@@ -767,8 +780,9 @@ function init(): void {
         activeStage: stagePath,
         activeStageInfo: null,
       }));
-      chatView.clear();
-      chatView.focus();
+      // Spawn a shell at the stage cwd — user can type `claude` or anything
+      void terminalPanel.spawnShell(stagePath);
+      terminalPanel.focus();
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
       void loadCommitContext(stagePath, "selected");
@@ -831,7 +845,7 @@ function init(): void {
 
       const next = appState.get();
       if (!next.activeSessionId) {
-        chatView.clear();
+        terminalPanel.killSession(canonicalSessionId);
       }
       loadDiff(stagePath);
       loadSessionHistory(stagePath);
@@ -1072,6 +1086,10 @@ function init(): void {
       return searchSlashCommands(cwd, query, 30);
     },
   });
+
+  // Terminal panel — replaces chat view in the first slot
+  terminalPanel = new TerminalPanel(rpc as any);
+
   pluginsPreview = new PluginsPreview(null, {
     onSelect: (selection) => {
       appState.update((s) => ({
@@ -1258,12 +1276,13 @@ function init(): void {
   async function activateStagesMode(): Promise<void> {
     await slotManager.unmountAll();
     await slotManager.mount("sidebar", "app", { node: sidebarShell });
-    await slotManager.mount("first", "stages", { node: chatView.element });
+    await slotManager.mount("first", "stages", { node: terminalPanel.element });
     await slotManager.mountHeader("second", "stages", { node: diffView.toolbarElement });
     await slotManager.mount("second", "stages", { node: diffView.element });
     panelLayout.showPanel("first");
     panelLayout.showPanel("second");
     panelLayout.setPanelSizing("first", { fixedPercent: 35, resizable: false });
+    terminalPanel.mount();
   }
 
   async function activatePluginsMode(): Promise<void> {
@@ -1401,8 +1420,8 @@ function init(): void {
       const state = appState.get();
       if (state.activeStage) {
         appState.update((s) => ({ ...s, activeSessionId: null }));
-        chatView.clear();
-        chatView.focus();
+        void terminalPanel.spawnShell(state.activeStage);
+        terminalPanel.focus();
       } else {
         openStage();
       }
@@ -1675,16 +1694,9 @@ function init(): void {
       return;
     }
 
-    chatView.setHeader(
+    terminalPanel.setHeader(
       resolveActiveSessionTitle(state),
       state.activeStage
-    );
-    const contextInfo = resolveActiveContextUsage(state);
-    chatView.setContextUsage(
-      contextInfo?.contextPercentage ?? null,
-      contextInfo?.model ?? null,
-      contextInfo?.activity ?? null,
-      contextInfo?.promptTokens ?? null
     );
 
     const activeStage = state.activeStage;
@@ -2210,13 +2222,12 @@ async function loadSessionTranscript(sessionId: string): Promise<void> {
     if (loadSeq !== transcriptLoadSeq) return;
     const latestActiveSessionId = resolveCanonicalSessionId(appState.get().activeSessionId);
     if (!sessionIdsMatch(latestActiveSessionId, canonicalSessionId)) return;
-    chatView.renderTranscript(messages);
+    // Terminal handles transcript via `claude --resume` — no rendering needed
   } catch (err) {
     if (loadSeq !== transcriptLoadSeq) return;
     const latestActiveSessionId = resolveCanonicalSessionId(appState.get().activeSessionId);
     if (!sessionIdsMatch(latestActiveSessionId, canonicalSessionId)) return;
     console.error("Failed to load transcript:", err);
-    chatView.clear();
   }
 }
 
@@ -2672,6 +2683,8 @@ async function loadStages(): Promise<void> {
       for (const wsPath of stages) {
         ensureBranchHistory(wsPath);
       }
+      // Auto-spawn a shell in the terminal for the first stage
+      void terminalPanel.spawnShell(stages[0]);
     }
   } catch {
     // First run — no stages yet

@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WatcherClient } from "./watcher-client.ts";
 import { SessionManager, resolveClaudeBinary, buildSpawnPath } from "./session-manager.ts";
+import { PtyManager } from "./pty-manager.ts";
 import { readTranscript } from "./transcript-reader.ts";
 import {
   getDiff,
@@ -93,6 +94,7 @@ function writeMainviewLogLine(line: string): void {
 
 const watcher = new WatcherClient();
 const sessions = new SessionManager();
+const ptyManager = new PtyManager();
 const stages = new StageStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
@@ -417,6 +419,14 @@ sessions.onError((sessionId, error) => {
     sessionId,
     event: { type: "error", error: { message: error } },
   });
+});
+
+// ── PTY event forwarding ────────────────────────────────────────
+ptyManager.onData((id, data) => {
+  mainRPC?.send.ptyData({ id, data });
+});
+ptyManager.onExit((id, exitCode) => {
+  mainRPC?.send.ptyExit({ id, exitCode });
 });
 
 // ── RPC handlers ─────────────────────────────────────────────────
@@ -1500,6 +1510,21 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         else console.log(line);
         writeMainviewLogLine(line);
       },
+
+      ptySpawn: async ({ id, cwd, cols, rows, sessionId }: {
+        id: string; cwd: string; cols?: number; rows?: number; sessionId?: string;
+      }) => {
+        ptyManager.spawn(id, cwd, cols ?? 80, rows ?? 24, sessionId);
+      },
+      ptyInput: async ({ id, data }: { id: string; data: string }) => {
+        ptyManager.write(id, data);
+      },
+      ptyResize: async ({ id, cols, rows }: { id: string; cols: number; rows: number }) => {
+        ptyManager.resize(id, cols, rows);
+      },
+      ptyKill: async ({ id }: { id: string }) => {
+        ptyManager.kill(id);
+      },
     },
     messages: {
       "*": (messageName: string | number | symbol, payload: unknown) => {
@@ -2121,6 +2146,7 @@ const mainWindow = new BrowserWindow({
 mainRPC = mainWindow.webview.rpc;
 
 mainWindow.on("close", () => {
+  ptyManager.killAll();
   watcher.stop();
   approvals.stop();
   connectors.close();

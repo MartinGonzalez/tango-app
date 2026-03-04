@@ -416,6 +416,22 @@ export type AppRPC = {
         };
         response: void;
       };
+      ptySpawn: {
+        params: { id: string; cwd: string; cols?: number; rows?: number; sessionId?: string };
+        response: void;
+      };
+      ptyInput: {
+        params: { id: string; data: string };
+        response: void;
+      };
+      ptyResize: {
+        params: { id: string; cols: number; rows: number };
+        response: void;
+      };
+      ptyKill: {
+        params: { id: string };
+        response: void;
+      };
     };
     messages: {};
   }>;
@@ -450,6 +466,14 @@ export type AppRPC = {
       instrumentDevReload: {
         instrumentId: string;
         entries?: InstrumentRegistryEntry[];
+      };
+      ptyData: {
+        id: string;
+        data: string;
+      };
+      ptyExit: {
+        id: string;
+        exitCode: number;
       };
     };
   }>;
