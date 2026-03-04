@@ -3,4 +3,5 @@ export type Activity =
   | "waiting"
   | "waiting_for_input"
   | "idle"
-  | "finished";
+  | "finished"
+  | "stopped";

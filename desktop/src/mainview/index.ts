@@ -301,6 +301,12 @@ const rpc = Electroview.defineRPC<any>({
           scheduleBranchHistoryRefresh(cwd, 500);
         }
       },
+      sessionActivity: ({ sessionId, activity }: { sessionId: string; activity: string }) => {
+        hookSessionActivities.set(sessionId, activity as any);
+        // Trigger sidebar re-render
+        const state = appState.get();
+        appState.update((s) => ({ ...s }));
+      },
       ptyData: ({ id, data }: { id: string; data: string }) => {
         if (terminalPanel) {
           terminalPanel.writePtyData(id, data);
@@ -546,6 +552,8 @@ let commitContextRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let connectorAuthPollTimer: ReturnType<typeof setTimeout> | null = null;
 const STAGE_FILE_CACHE_MS = 30_000;
 const PULL_REQUEST_CACHE_TTL_MS = 5 * 60_000;
+/** Hook-driven activity overrides for PTY sessions (sessionId → Activity). */
+const hookSessionActivities = new Map<string, import("../shared/types/activity.ts").Activity>();
 const stageFileCache = new Map<string, {
   files: string[];
   loadedAt: number;
@@ -4042,10 +4050,11 @@ function buildStageData(state: AppState): StageData[] {
       normalizedLiveSessionIds
     );
 
-    // Apply custom names to all sessions
+    // Apply custom names and hook-driven activity overrides to all sessions
     const allSessions = [...wsLive, ...optimistic, ...history].map((s) => ({
       ...s,
       topic: state.customSessionNames[s.sessionId] ?? s.topic,
+      activity: hookSessionActivities.get(s.sessionId) ?? s.activity,
     }));
 
     return {

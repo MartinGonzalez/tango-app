@@ -8,6 +8,7 @@ const ACTIVITY_DOTS: Record<string, { char: string; cls: string }> = {
   waiting_for_input: { char: "\u25D0", cls: "dot-waiting-input" },
   idle: { char: "\u25CB", cls: "dot-idle" },
   finished: { char: "\u25CB", cls: "dot-finished" },
+  stopped: { char: "\u25CF", cls: "dot-stopped" },
 };
 function materialIcon(name: string): HTMLElement {
   return h("span", {

@@ -2172,11 +2172,18 @@ approvals.onHookEvent((event) => {
 
   // Turn-diff lifecycle for PTY sessions (mirrors stream-JSON behavior)
   if (hookEventName === "UserPromptSubmit" && resolvedCwd && sessionId) {
+    mainRPC?.send.sessionActivity({ sessionId, activity: "working" });
     void beginTurnDiff(resolvedCwd, sessionId).catch((err) => {
       console.warn("Failed to begin turn diff from hook:", err);
     });
   }
   if (hookEventName === "Stop" && resolvedCwd && sessionId) {
+    mainRPC?.send.sessionActivity({ sessionId, activity: "stopped" });
+    const stageName = resolvedCwd.split("/").pop() ?? resolvedCwd;
+    Utils.showNotification({
+      title: stageName,
+      body: "Claude finished working",
+    });
     void finalizeTurnDiff(resolvedCwd, sessionId).then(() => {
       // Refresh diff after finalization so last_turn scope picks up the new data
       mainRPC?.send.stageFileChanged({ cwd: resolvedCwd, toolName: "Stop" });

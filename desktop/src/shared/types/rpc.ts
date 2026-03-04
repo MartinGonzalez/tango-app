@@ -471,6 +471,10 @@ export type AppRPC = {
         cwd: string;
         toolName: string;
       };
+      sessionActivity: {
+        sessionId: string;
+        activity: import("./activity.ts").Activity;
+      };
       ptyData: {
         id: string;
         data: string;
