@@ -17,15 +17,29 @@ type PendingApproval = ToolApprovalRequest & {
   resolve: (response: Response) => void;
 };
 
+export type HookEvent = {
+  hookEventName: string;
+  sessionId: string;
+  toolName: string;
+  cwd: string;
+};
+
 export class ApprovalServer {
   #pending = new Map<string, PendingApproval>();
   #onRequest: ((req: ToolApprovalRequest) => void) | null = null;
+  #onHookEvent: ((event: HookEvent) => void) | null = null;
   #server: ReturnType<typeof Bun.serve> | null = null;
   #managedSessions = new Set<string>(); // Session IDs spawned by the app
   #autoAllowSessions = new Set<string>(); // Session IDs with full access enabled
 
   onApprovalRequest(cb: (req: ToolApprovalRequest) => void): this {
     this.#onRequest = cb;
+    return this;
+  }
+
+  /** Called for every hook event forwarded from on-hook.sh (PostToolUse, Stop, etc.) */
+  onHookEvent(cb: (event: HookEvent) => void): this {
+    this.#onHookEvent = cb;
     return this;
   }
 
@@ -83,16 +97,6 @@ export class ApprovalServer {
             const toolInput = body.tool_input ?? {};
             const sessionId = body.session_id ?? "";
 
-            console.log("\n" + "─".repeat(60));
-            console.log(
-              `[tool-hook] PreToolUse ${toolName ? `→ ${toolName}` : ""} (session: ${String(sessionId).slice(0, 8)}…)`
-            );
-            console.log(
-              `[tool-hook-meta] toolUseId=${toolUseId || "—"} managed=${this.#managedSessions.has(sessionId)} autoAllow=${this.#autoAllowSessions.has(sessionId)}`
-            );
-            console.log("[tool-hook-payload]");
-            console.log(safeStringify(body));
-
             if (!toolUseId) {
               return new Response(JSON.stringify({ allow: true }), {
                 headers: { "Content-Type": "application/json" },
@@ -144,6 +148,28 @@ export class ApprovalServer {
               headers: { "Content-Type": "application/json" },
             });
           }
+        }
+
+        // All hook events forwarded from on-hook.sh (fire-and-forget)
+        if (req.method === "POST" && url.pathname === "/api/hook-event") {
+          try {
+            const body = JSON.parse(await req.text());
+            const hookEventName = body.hook_event_name ?? "";
+            const sessionId = body.session_id ?? "";
+            const toolName = body.tool_name ?? "";
+            const cwd = body.cwd ?? "";
+
+            const sid = String(sessionId).slice(0, 8);
+            const tool = toolName ? ` tool=${toolName}` : "";
+            console.log(`\n${"─".repeat(60)}`);
+            console.log(`[hook-event] ${hookEventName}${tool} (session: ${sid}…)`);
+            console.log(safeStringify(body));
+
+            if (hookEventName) {
+              this.#onHookEvent?.({ hookEventName, sessionId, toolName, cwd });
+            }
+          } catch { /* ignore malformed */ }
+          return new Response("ok");
         }
 
         if (req.method === "POST" && url.pathname === "/api/instruments/dev-reload") {

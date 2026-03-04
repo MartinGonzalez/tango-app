@@ -1514,6 +1514,10 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       ptySpawn: async ({ id, cwd, cols, rows, sessionId }: {
         id: string; cwd: string; cols?: number; rows?: number; sessionId?: string;
       }) => {
+        // Register session→cwd mapping so PreToolUse hook can resolve the stage
+        if (sessionId) {
+          sessionCwds.set(sessionId, cwd);
+        }
         ptyManager.spawn(id, cwd, cols ?? 80, rows ?? 24, sessionId);
       },
       ptyInput: async ({ id, data }: { id: string; data: string }) => {
@@ -2159,6 +2163,32 @@ approvals.onApprovalRequest((req) => {
   console.log(`Tool approval requested: ${req.toolName} (${req.toolUseId})`);
   mainRPC?.send.toolApproval(req);
   instrumentRuntime.emitHostEvent("tool.approval", req);
+});
+
+// Hook events from on-hook.sh — triggers turn-diff lifecycle and UI refresh for PTY sessions.
+approvals.onHookEvent((event) => {
+  const { hookEventName, sessionId, toolName, cwd } = event;
+  const resolvedCwd = cwd || resolveSessionCwd(sessionId);
+
+  // Turn-diff lifecycle for PTY sessions (mirrors stream-JSON behavior)
+  if (hookEventName === "UserPromptSubmit" && resolvedCwd && sessionId) {
+    void beginTurnDiff(resolvedCwd, sessionId).catch((err) => {
+      console.warn("Failed to begin turn diff from hook:", err);
+    });
+  }
+  if (hookEventName === "Stop" && resolvedCwd && sessionId) {
+    void finalizeTurnDiff(resolvedCwd, sessionId).then(() => {
+      // Refresh diff after finalization so last_turn scope picks up the new data
+      mainRPC?.send.stageFileChanged({ cwd: resolvedCwd, toolName: "Stop" });
+    }).catch((err) => {
+      console.warn("Failed to finalize turn diff from hook:", err);
+    });
+  }
+
+  // Notify webview for immediate UI refresh (diff, commit context, branch history)
+  if (resolvedCwd) {
+    mainRPC?.send.stageFileChanged({ cwd: resolvedCwd, toolName: toolName || hookEventName });
+  }
 });
 
 // ── Start ────────────────────────────────────────────────────────

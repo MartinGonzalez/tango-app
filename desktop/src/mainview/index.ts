@@ -96,11 +96,18 @@ const rpc = Electroview.defineRPC<any>({
         const hasPinnedCommitDiff = activeCommitDiff
           ? activeCommitDiff.cwd === state.activeStage
           : false;
+
+        // Check if this session belongs to the currently active stage
+        // (any session in the same stage should trigger diff/history refreshes)
+        const isActiveStageEvent = state.activeStage
+          ? isSessionInStage(sessionId, state.activeStage, state)
+          : false;
+
         if (isActiveSessionEvent && chatView) {
           chatView.appendStreamEvent(event);
         }
         if (
-          isActiveSessionEvent
+          isActiveStageEvent
           && state.activeStage
           && state.viewMode === "stages"
           && !hasPinnedCommitDiff
@@ -114,7 +121,7 @@ const rpc = Electroview.defineRPC<any>({
           );
         }
         if (
-          isActiveSessionEvent
+          isActiveStageEvent
           && state.activeStage
           && state.viewMode === "stages"
           && diffView?.isBranchPanelVisible
@@ -126,7 +133,7 @@ const rpc = Electroview.defineRPC<any>({
           );
         }
         if (
-          isActiveSessionEvent
+          isActiveStageEvent
           && state.activeStage
           && state.viewMode === "stages"
           && (isResultEvent || isStopHook || isDiffMutation)
@@ -273,6 +280,26 @@ const rpc = Electroview.defineRPC<any>({
           runId,
           status,
         });
+      },
+      stageFileChanged: ({ cwd, toolName }: { cwd: string; toolName: string }) => {
+        const state = appState.get();
+        if (state.activeStage !== cwd || state.viewMode !== "stages") return;
+        const hasPinnedCommitDiff = activeCommitDiff
+          ? activeCommitDiff.cwd === cwd
+          : false;
+        const FILE_MUTATORS = new Set([
+          "Write", "Edit", "MultiEdit", "Bash", "NotebookEdit",
+          "write", "edit", "multiedit", "bash", "notebookedit",
+        ]);
+        if (FILE_MUTATORS.has(toolName) && !hasPinnedCommitDiff) {
+          stageFileCache.delete(cwd);
+          scheduleDiffRefresh(cwd, state.diffScope, 500);
+        }
+        // Always refresh commit context (catches commits via Bash)
+        scheduleCommitContextRefresh(cwd, 500);
+        if (diffView?.isBranchPanelVisible) {
+          scheduleBranchHistoryRefresh(cwd, 500);
+        }
       },
       ptyData: ({ id, data }: { id: string; data: string }) => {
         if (terminalPanel) {
@@ -4294,6 +4321,37 @@ function sessionIdsMatch(
   const leftCanonical = resolveCanonicalSessionId(left);
   const rightCanonical = resolveCanonicalSessionId(right);
   return Boolean(leftCanonical && rightCanonical && leftCanonical === rightCanonical);
+}
+
+/** Check if a session belongs to a given stage (by cwd).
+ *  Looks at app-spawned sessions, snapshot tasks, and history sessions. */
+function isSessionInStage(sessionId: string, stagePath: string, state: AppState): boolean {
+  const canonical = resolveCanonicalSessionId(sessionId) ?? sessionId;
+
+  // 1. Check app-spawned sessions (most reliable for live sessions)
+  const meta = appSpawnedSessions.get(canonical)
+    ?? appSpawnedSessions.get(sessionId);
+  if (meta?.cwd === stagePath) return true;
+
+  // 2. Check snapshot (live process list from watcher)
+  if (state.snapshot) {
+    for (const task of state.snapshot.tasks) {
+      if ((task.sessionId === canonical || task.sessionId === sessionId)
+        && task.cwd === stagePath) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Check history sessions
+  const history = state.historySessions[stagePath];
+  if (history) {
+    for (const h of history) {
+      if (h.sessionId === canonical || h.sessionId === sessionId) return true;
+    }
+  }
+
+  return false;
 }
 
 function remapLiveSessionIds(liveIds: Set<string>): Set<string> {

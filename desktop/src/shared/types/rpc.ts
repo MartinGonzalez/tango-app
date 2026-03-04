@@ -467,6 +467,10 @@ export type AppRPC = {
         instrumentId: string;
         entries?: InstrumentRegistryEntry[];
       };
+      stageFileChanged: {
+        cwd: string;
+        toolName: string;
+      };
       ptyData: {
         id: string;
         data: string;
