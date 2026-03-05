@@ -22,6 +22,7 @@ export type HookEvent = {
   sessionId: string;
   toolName: string;
   cwd: string;
+  body: Record<string, unknown>;
 };
 
 export class ApprovalServer {
@@ -166,7 +167,7 @@ export class ApprovalServer {
             console.log(safeStringify(body));
 
             if (hookEventName) {
-              this.#onHookEvent?.({ hookEventName, sessionId, toolName, cwd });
+              this.#onHookEvent?.({ hookEventName, sessionId, toolName, cwd, body });
             }
           } catch { /* ignore malformed */ }
           return new Response("ok");

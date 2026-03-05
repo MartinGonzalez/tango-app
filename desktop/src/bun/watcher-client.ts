@@ -31,6 +31,11 @@ export class WatcherClient {
     return this;
   }
 
+  /** Single one-shot fetch — no polling loop. */
+  fetchOnce(): void {
+    this.#poll();
+  }
+
   start(): void {
     if (this.#timer) return;
     // Fire immediately, then poll

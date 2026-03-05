@@ -105,6 +105,9 @@ const prAgentReviewProvider = new PRAgentReviewProvider({
   getStagePaths: () => stages.getAll(),
 });
 
+/** Session IDs from fire-and-forget queries — suppress hook events for these */
+const querySessionIds = new Set<string>();
+
 const instrumentRuntime = new InstrumentRuntime({
   bundledInstallPaths: resolveBundledInstrumentInstallPaths(),
   onEvent: (event) => {
@@ -150,9 +153,9 @@ const instrumentRuntime = new InstrumentRuntime({
         if (!latestSnapshot) return [];
         return buildSessionList(latestSnapshot);
       },
-      query: async ({ prompt, cwd, model, tools }) => {
+      query: async ({ prompt, cwd, model, tools, sessionId }) => {
         const resolvedCwd = cwd || process.cwd();
-        return queryClaudeSession({ prompt, cwd: resolvedCwd, model, tools });
+        return queryClaudeSession({ prompt, cwd: resolvedCwd, model, tools, sessionId });
       },
     },
     connectors: {
@@ -1566,6 +1569,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 });
 
 async function handleSessionEvent(sessionId: string, event: any): Promise<void> {
+  // Skip events from fire-and-forget query sessions
+  if (querySessionIds.has(sessionId)) return;
+
   const prAgentRun = prAgentRunsBySession.get(sessionId);
   if (prAgentRun) {
     const consumed = await finalizeAgentReviewRunFromEvent(
@@ -1931,112 +1937,114 @@ async function queryClaudeSession(params: {
   cwd: string;
   model?: string;
   tools?: string[];
+  sessionId?: string;
 }): Promise<{ text: string; durationMs: number; costUsd: number }> {
   const startTime = Date.now();
-  const claudeBin = resolveClaudeBinary();
-  const args = [
-    "-p",
-    "--output-format", "stream-json",
-    "--verbose",
-    "--dangerously-skip-permissions",
-  ];
+  const sessionId = params.sessionId || crypto.randomUUID();
 
-  const resolvedModel = resolveModel(params.model);
-  if (resolvedModel) {
-    args.push("--model", resolvedModel);
-  }
+  // Pre-register BEFORE spawn — eliminates the race between hook events and stdout parsing
+  querySessionIds.add(sessionId);
 
-  if (Array.isArray(params.tools)) {
-    if (params.tools.length === 0) {
-      args.push("--tools", "");
-    } else {
-      args.push("--tools", params.tools.join(","));
+  try {
+    const claudeBin = resolveClaudeBinary();
+    const args = [
+      "-p",
+      "--output-format", "stream-json",
+      "--verbose",
+      "--dangerously-skip-permissions",
+      "--session-id", sessionId,
+    ];
+
+    const resolvedModel = resolveModel(params.model);
+    if (resolvedModel) {
+      args.push("--model", resolvedModel);
     }
-  }
 
-  const proc = Bun.spawn([claudeBin, ...args], {
-    cwd: params.cwd,
-    env: {
-      ...process.env,
-      PATH: buildSpawnPath(process.env.PATH, claudeBin),
-    },
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    if (Array.isArray(params.tools)) {
+      if (params.tools.length === 0) {
+        args.push("--tools", "");
+      } else {
+        args.push("--tools", params.tools.join(","));
+      }
+    }
 
-  const stdin = proc.stdin;
-  if (stdin && typeof stdin !== "number") {
-    (stdin as any).write(params.prompt + "\n");
-    (stdin as any).end();
-  }
+    const proc = Bun.spawn([claudeBin, ...args], {
+      cwd: params.cwd,
+      env: {
+        ...process.env,
+        PATH: buildSpawnPath(process.env.PATH, claudeBin),
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const chunks: string[] = [];
-  let costUsd = 0;
-  let sessionId: string | null = null;
+    const stdin = proc.stdin;
+    if (stdin && typeof stdin !== "number") {
+      (stdin as any).write(params.prompt + "\n");
+      (stdin as any).end();
+    }
 
-  if (proc.stdout && typeof proc.stdout !== "number") {
-    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const chunks: string[] = [];
+    let costUsd = 0;
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+    if (proc.stdout && typeof proc.stdout !== "number") {
+      const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const event = JSON.parse(trimmed);
-            // Capture session_id from any event that carries it
-            if (!sessionId && event.session_id) {
-              sessionId = String(event.session_id);
-            }
-            if (event.type === "assistant" && event.message?.content) {
-              for (const block of event.message.content) {
-                if (block.type === "text" && block.text) {
-                  chunks.push(block.text);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const event = JSON.parse(trimmed);
+              if (event.type === "assistant" && event.message?.content) {
+                for (const block of event.message.content) {
+                  if (block.type === "text" && block.text) {
+                    chunks.push(block.text);
+                  }
                 }
               }
-            }
-            if (event.type === "result") {
-              if (event.cost_usd != null) {
-                costUsd = Number(event.cost_usd);
+              if (event.type === "result") {
+                if (event.cost_usd != null) {
+                  costUsd = Number(event.cost_usd);
+                }
+                if (event.result && chunks.length === 0) {
+                  chunks.push(String(event.result));
+                }
               }
-              if (event.result && chunks.length === 0) {
-                chunks.push(String(event.result));
-              }
+            } catch {
+              // skip malformed lines
             }
-          } catch {
-            // skip malformed lines
           }
         }
+      } catch {
+        // stream read error
       }
-    } catch {
-      // stream read error
     }
-  }
 
-  const exitCode = await proc.exited;
-  if (exitCode !== 0 && chunks.length === 0) {
-    let stderrText = "";
-    try {
-      if (proc.stderr && typeof proc.stderr !== "number") {
-        stderrText = await new Response(proc.stderr as ReadableStream).text();
-      }
-    } catch {}
-    throw new Error(
-      stderrText.trim() || `querySession failed with exit code ${exitCode}`
-    );
-  }
+    const exitCode = await proc.exited;
+    if (exitCode !== 0 && chunks.length === 0) {
+      let stderrText = "";
+      try {
+        if (proc.stderr && typeof proc.stderr !== "number") {
+          stderrText = await new Response(proc.stderr as ReadableStream).text();
+        }
+      } catch {}
+      throw new Error(
+        stderrText.trim() || `querySession failed with exit code ${exitCode}`
+      );
+    }
 
-  // Clean up transcript file — query sessions are fire-and-forget
-  if (sessionId) {
+    // Clean up transcript file — query sessions are fire-and-forget
     const resolvedCwd = params.cwd;
     const variants = getStagePathVariantsSync(resolvedCwd);
     for (const variant of variants) {
@@ -2053,13 +2061,16 @@ async function queryClaudeSession(params: {
         }
       }
     }
-  }
 
-  return {
-    text: chunks.join(""),
-    durationMs: Date.now() - startTime,
-    costUsd,
-  };
+    return {
+      text: chunks.join(""),
+      durationMs: Date.now() - startTime,
+      costUsd,
+    };
+  } finally {
+    // Clean up query session tracking after a delay to catch late hook events
+    setTimeout(() => querySessionIds.delete(sessionId), 10_000);
+  }
 }
 
 // ── Window ───────────────────────────────────────────────────────
@@ -2151,10 +2162,13 @@ mainRPC = mainWindow.webview.rpc;
 
 mainWindow.on("close", () => {
   ptyManager.killAll();
-  watcher.stop();
   approvals.stop();
   connectors.close();
   Utils.quit();
+});
+
+mainWindow.on("focus", () => {
+  watcher.fetchOnce();
 });
 
 // ── Approval server callback ─────────────────────────────────────
@@ -2167,7 +2181,11 @@ approvals.onApprovalRequest((req) => {
 
 // Hook events from on-hook.sh — triggers turn-diff lifecycle and UI refresh for PTY sessions.
 approvals.onHookEvent((event) => {
-  const { hookEventName, sessionId, toolName, cwd } = event;
+  const { hookEventName, sessionId, toolName, cwd, body } = event;
+
+  // Skip hook events from fire-and-forget query sessions (instrument queries, etc.)
+  if (sessionId && querySessionIds.has(sessionId)) return;
+
   const resolvedCwd = cwd || resolveSessionCwd(sessionId);
 
   // Turn-diff lifecycle for PTY sessions (mirrors stream-JSON behavior)
@@ -2175,6 +2193,12 @@ approvals.onHookEvent((event) => {
     mainRPC?.send.sessionActivity({ sessionId, activity: "working" });
     void beginTurnDiff(resolvedCwd, sessionId).catch((err) => {
       console.warn("Failed to begin turn diff from hook:", err);
+    });
+    // Forward to instruments as a synthetic session.stream user event
+    const userText = String(body.prompt ?? body.message ?? body.user_prompt ?? "");
+    instrumentRuntime.emitHostEvent("session.stream", {
+      sessionId,
+      event: { type: "user", cwd: resolvedCwd, message: { role: "user", content: [{ type: "text", text: userText }] } } as any,
     });
   }
   if (hookEventName === "Stop" && resolvedCwd && sessionId) {
@@ -2190,7 +2214,20 @@ approvals.onHookEvent((event) => {
     }).catch((err) => {
       console.warn("Failed to finalize turn diff from hook:", err);
     });
+    // Forward to instruments as a synthetic session.stream result event
+    const lastAssistantMessage = String(body.last_assistant_message ?? "");
+    instrumentRuntime.emitHostEvent("session.stream", {
+      sessionId,
+      event: { type: "result", subtype: "success", cwd: resolvedCwd, result: lastAssistantMessage } as any,
+    });
   }
+
+  // Forward all hook events to instruments for observability
+  instrumentRuntime.emitHostEvent("instrument.event", {
+    instrumentId: "system",
+    event: `hook.${hookEventName}`,
+    payload: body,
+  });
 
   // Notify webview for immediate UI refresh (diff, commit context, branch history)
   if (resolvedCwd) {
@@ -2223,9 +2260,9 @@ if (process.env.TANGO_DISABLE_WATCHER_AUTOSTART === "1") {
   console.warn("Watcher polling disabled (TANGO_DISABLE_WATCHER_AUTOSTART=1)");
 } else {
   try {
-    watcher.start();
+    watcher.fetchOnce();
   } catch (err) {
-    console.warn("Watcher failed to start; running without live snapshots:", err);
+    console.warn("Watcher failed to fetch initial snapshot:", err);
   }
 }
 

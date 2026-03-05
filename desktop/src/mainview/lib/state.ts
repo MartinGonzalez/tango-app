@@ -16,6 +16,7 @@ export class Store<T> {
   }
 
   set(next: T): void {
+    if (next === this.#state) return;
     this.#state = next;
     for (const fn of this.#listeners) {
       fn(next);

@@ -303,9 +303,12 @@ const rpc = Electroview.defineRPC<any>({
       },
       sessionActivity: ({ sessionId, activity }: { sessionId: string; activity: string }) => {
         hookSessionActivities.set(sessionId, activity as any);
-        // Trigger sidebar re-render
+        // Re-render sidebar activity dots directly (no full state update needed)
         const state = appState.get();
-        appState.update((s) => ({ ...s }));
+        if (state.viewMode === "stages" || (!state.viewMode)) {
+          const wsData = buildStageData(state);
+          sidebar.render(wsData);
+        }
       },
       ptyData: ({ id, data }: { id: string; data: string }) => {
         if (terminalPanel) {
@@ -587,6 +590,7 @@ let cachedPullRequestDiff: {
   loadedAt: number;
 } | null = null;
 let prevViewMode: AppState["viewMode"] | null = null;
+let prevShortcutFingerprint = "";
 let transcriptLoadSeq = 0;
 const frontendHostEventSubscribers = new Map<
   keyof HostEventMap,
@@ -1519,42 +1523,97 @@ function init(): void {
       }
     }
 
-    // ── Sidebar sub-view toggling (internal to sidebar shell) ──
-    const wsData = buildStageData(state);
-    sidebar.render(wsData);
-    sidebar.setActiveSession(resolveCanonicalSessionId(state.activeSessionId));
-
-    const pluginsSelection = resolvePluginSelection(
-      state.plugins,
-      state.pluginSelection
-    );
+    // ── Compute view mode flags (shared by all sections below) ──
     const isPluginsMode = state.viewMode === "plugins";
     const isInstrumentsMode = state.viewMode === "instruments";
     const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
+    const isStagesMode = !isPluginsMode && !isInstrumentsMode && !isPRMode && !isConnectorsMode;
     const runtimeInstrumentId = state.activeInstrumentId ?? activeRuntimeInstrumentId;
     const isRuntimeInstrumentMode = isInstrumentsMode
       && Boolean(activeRuntimeDefinition)
       && Boolean(runtimeInstrumentId);
-    const runtimeEntry = isRuntimeInstrumentMode
-      ? (state.instrumentEntries.find((entry) => entry.id === runtimeInstrumentId) ?? null)
-      : null;
-    const runtimeShowsRight = Boolean(runtimeEntry?.panels.right);
-    const pullRequestSections = buildPullRequestSidebarSections(state);
-    const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
-    const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
-    const pullRequestTotalFiles = state.selectedPullRequestDetail?.files.length ?? 0;
-    const activeStageConnectors = resolveActiveStageConnectors(state);
-    const activeStageAuthSession = state.connectorAuthSession?.stagePath === state.activeStage
-      ? state.connectorAuthSession
-      : null;
 
+    // ── Deactivation check (must run before early return) ──────
     if (
       activeRuntimeInstrumentId
       && !runtimeInstrumentDeactivating
       && (!isInstrumentsMode || state.activeInstrumentId !== activeRuntimeInstrumentId)
     ) {
       void deactivateRuntimeInstrument();
+    }
+
+    // ── Connector auth poll (must run in all modes) ────────────
+    if (state.activeStage && state.activeStage !== prevConnectorsStage) {
+      prevConnectorsStage = state.activeStage;
+      void loadStageConnectors(state.activeStage, false);
+    } else if (!state.activeStage) {
+      prevConnectorsStage = null;
+    }
+    syncConnectorAuthPollTimer(state);
+
+    // ── Sidebar shortcut buttons (memoized) ────────────────────
+    if (sidebarPrimaryRuntimeInstrumentsHost) {
+      const shortcuts = state.instrumentEntries.filter((entry) =>
+        entry.enabled
+        && entry.status !== "blocked"
+        && entry.launcher?.sidebarShortcut?.enabled
+      );
+      const sortedShortcuts = shortcuts.slice().sort((left, right) => {
+        const leftOrder = Number.isFinite(Number(left.launcher?.sidebarShortcut?.order))
+          ? Number(left.launcher?.sidebarShortcut?.order)
+          : Number.POSITIVE_INFINITY;
+        const rightOrder = Number.isFinite(Number(right.launcher?.sidebarShortcut?.order))
+          ? Number(right.launcher?.sidebarShortcut?.order)
+          : Number.POSITIVE_INFINITY;
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+        return left.name.localeCompare(right.name);
+      });
+      const fingerprint = sortedShortcuts.map((entry) =>
+        `${entry.id}|${entry.launcher?.sidebarShortcut?.order ?? ""}|${entry.launcher?.sidebarShortcut?.label ?? entry.name}|${state.viewMode === "instruments" && state.activeInstrumentId === entry.id}`
+      ).join("\n");
+      if (fingerprint !== prevShortcutFingerprint) {
+        prevShortcutFingerprint = fingerprint;
+        sidebarPrimaryRuntimeInstrumentsHost.hidden = sortedShortcuts.length === 0;
+        clearChildren(sidebarPrimaryRuntimeInstrumentsHost);
+        for (const entry of sortedShortcuts) {
+          const baseLabel = entry.launcher?.sidebarShortcut?.label?.trim() || entry.name;
+          const shortcutLabel = entry.devMode ? `${baseLabel} [dev]` : baseLabel;
+          const shortcutBtn = h("button", {
+            class: "sidebar-primary-btn",
+            title: `Open ${shortcutLabel}`,
+            onclick: () => {
+              void activateInstrument(entry.id);
+            },
+          }, [
+            renderLauncherIcon(entry.launcher?.sidebarShortcut?.icon, "sidebar-primary-icon"),
+            h("span", { class: "sidebar-primary-label" }, [shortcutLabel]),
+          ]) as HTMLButtonElement;
+          shortcutBtn.classList.toggle(
+            "active",
+            state.viewMode === "instruments" && state.activeInstrumentId === entry.id
+          );
+          sidebarPrimaryRuntimeInstrumentsHost.appendChild(shortcutBtn);
+        }
+      }
+    }
+
+    // ── Runtime instrument early return ────────────────────────
+    // When an instrument is actively running (e.g. diaries), skip ALL
+    // component renders to avoid destroying the instrument's DOM/state.
+    if (isRuntimeInstrumentMode) {
+      if (commitModal.isOpen) {
+        commitModal.close();
+      }
+      prevViewMode = state.viewMode;
+      return;
+    }
+
+    // ── Sidebar sub-view toggling (internal to sidebar shell) ──
+    const wsData = buildStageData(state);
+    if (isStagesMode) {
+      sidebar.render(wsData);
+      sidebar.setActiveSession(resolveCanonicalSessionId(state.activeSessionId));
     }
 
     // Sidebar sub-view visibility
@@ -1574,128 +1633,76 @@ function init(): void {
     sidebarPrimaryInstrumentsBtn?.classList.toggle("active", isInstrumentsMode);
     sidebarPrimaryPRsBtn?.classList.toggle("active", isPRMode);
     sidebarPrimaryConnectorsBtn?.classList.toggle("active", isConnectorsMode);
-    if (sidebarPrimaryRuntimeInstrumentsHost) {
-      const shortcuts = state.instrumentEntries.filter((entry) =>
-        entry.enabled
-        && entry.status !== "blocked"
-        && entry.launcher?.sidebarShortcut?.enabled
+
+    // ── Data rendering (only render components for active mode) ──
+    if (isPluginsMode) {
+      const pluginsSelection = resolvePluginSelection(
+        state.plugins,
+        state.pluginSelection
       );
-      sidebarPrimaryRuntimeInstrumentsHost.hidden = shortcuts.length === 0;
-      clearChildren(sidebarPrimaryRuntimeInstrumentsHost);
-      const sortedShortcuts = shortcuts.slice().sort((left, right) => {
-        const leftOrder = Number.isFinite(Number(left.launcher?.sidebarShortcut?.order))
-          ? Number(left.launcher?.sidebarShortcut?.order)
-          : Number.POSITIVE_INFINITY;
-        const rightOrder = Number.isFinite(Number(right.launcher?.sidebarShortcut?.order))
-          ? Number(right.launcher?.sidebarShortcut?.order)
-          : Number.POSITIVE_INFINITY;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-        return left.name.localeCompare(right.name);
+      pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
+      pluginsSidebar.setSelection(pluginsSelection);
+      pluginsPreview.render(state.plugins, pluginsSelection, {
+        loading: state.pluginsLoading,
       });
-      for (const entry of sortedShortcuts) {
-        const baseLabel = entry.launcher?.sidebarShortcut?.label?.trim() || entry.name;
-        const shortcutLabel = entry.devMode ? `${baseLabel} [dev]` : baseLabel;
-        const shortcutBtn = h("button", {
-          class: "sidebar-primary-btn",
-          title: `Open ${shortcutLabel}`,
-          onclick: () => {
-            void activateInstrument(entry.id);
-          },
-        }, [
-          renderLauncherIcon(entry.launcher?.sidebarShortcut?.icon, "sidebar-primary-icon"),
-          h("span", { class: "sidebar-primary-label" }, [shortcutLabel]),
-        ]) as HTMLButtonElement;
-        shortcutBtn.classList.toggle(
-          "active",
-          state.viewMode === "instruments" && state.activeInstrumentId === entry.id
-        );
-        sidebarPrimaryRuntimeInstrumentsHost.appendChild(shortcutBtn);
+    } else if (isInstrumentsMode) {
+      instrumentsSidebar.render(state.instrumentEntries, {
+        loading: state.instrumentsLoading,
+        error: state.instrumentsError,
+      });
+      instrumentsSidebar.setActive(state.activeInstrumentId);
+      if (instrumentsSidebar.element) {
+        instrumentsSidebar.element.hidden = false;
       }
-    }
-
-    // ── Data rendering (pass state to components) ──────────────
-    pluginsSidebar.render(state.plugins, { loading: state.pluginsLoading });
-    pluginsSidebar.setSelection(pluginsSelection);
-    instrumentsSidebar.render(state.instrumentEntries, {
-      loading: state.instrumentsLoading,
-      error: state.instrumentsError,
-    });
-    instrumentsSidebar.setActive(state.activeInstrumentId);
-    const runtimeUsesSidebar = Boolean(runtimeEntry?.panels.sidebar);
-    if (instrumentsSidebar.element) {
-      instrumentsSidebar.element.hidden = !isInstrumentsMode
-        || (isRuntimeInstrumentMode && runtimeUsesSidebar);
-    }
-    if (instrumentRuntimeSidebarTitleEl) {
-      const runtimeTitle = runtimeEntry?.name
-        ?? (
-          activeRuntimeInstrumentId
-            ? state.instrumentEntries.find((entry) => entry.id === activeRuntimeInstrumentId)?.name
-            : null
-        )
-        ?? "Instrument";
-      instrumentRuntimeSidebarTitleEl.textContent = runtimeTitle;
-    }
-    // Right panel visibility (out of slot manager scope)
-    if (instrumentRightPanelHost) {
-      instrumentRightPanelHost.hidden = !(isRuntimeInstrumentMode && runtimeShowsRight);
-    }
-    prsSidebar.render(pullRequestSections, {
-      loading: state.pullRequestsLoading,
-      error: state.pullRequestsError,
-    });
-    prsSidebar.setSelection(state.selectedPullRequest);
-    pluginsPreview.render(state.plugins, pluginsSelection, {
-      loading: state.pluginsLoading,
-    });
-    prView.render(state.selectedPullRequestDetail, {
-      loading: state.pullRequestDetailLoading,
-      error: state.pullRequestDetailError,
-      selectedCommitSha: state.selectedPullRequestCommitSha,
-      seenCount: pullRequestSeenCount,
-      totalFiles: pullRequestTotalFiles,
-      fileReviewState: pullRequestReviewMap,
-      filesViewMode: state.filesListViewMode,
-      agentReviews: state.pullRequestAgentReviews,
-      agentReviewsLoading: state.pullRequestAgentReviewsLoading,
-      agentReviewsError: state.pullRequestAgentReviewsError,
-      selectedAgentReviewVersion: state.selectedPullRequestAgentReviewVersion,
-      selectedAgentReviewDocument: state.selectedPullRequestAgentReviewDocument,
-      agentReviewStarting: state.pullRequestAgentReviewStarting,
-    });
-    connectorsView.render(activeStageConnectors, {
-      loading: state.connectorsLoading,
-      authSession: activeStageAuthSession,
-      stagePath: state.activeStage,
-    });
-
-    if (state.activeStage && state.activeStage !== prevConnectorsStage) {
-      prevConnectorsStage = state.activeStage;
-      void loadStageConnectors(state.activeStage, false);
-    } else if (!state.activeStage) {
-      prevConnectorsStage = null;
-    }
-
-    syncConnectorAuthPollTimer(state);
-
-    // ── Mode-specific data updates ─────────────────────────────
-    if (isRuntimeInstrumentMode) {
-      if (commitModal.isOpen) {
-        commitModal.close();
+      if (instrumentRuntimeSidebarTitleEl) {
+        instrumentRuntimeSidebarTitleEl.textContent = "Instrument";
       }
-      prevViewMode = state.viewMode;
-      return;
+      if (instrumentRightPanelHost) {
+        instrumentRightPanelHost.hidden = true;
+      }
+    } else if (isPRMode) {
+      const pullRequestSections = buildPullRequestSidebarSections(state);
+      const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
+      const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
+      const pullRequestTotalFiles = state.selectedPullRequestDetail?.files.length ?? 0;
+      prsSidebar.render(pullRequestSections, {
+        loading: state.pullRequestsLoading,
+        error: state.pullRequestsError,
+      });
+      prsSidebar.setSelection(state.selectedPullRequest);
+      prView.render(state.selectedPullRequestDetail, {
+        loading: state.pullRequestDetailLoading,
+        error: state.pullRequestDetailError,
+        selectedCommitSha: state.selectedPullRequestCommitSha,
+        seenCount: pullRequestSeenCount,
+        totalFiles: pullRequestTotalFiles,
+        fileReviewState: pullRequestReviewMap,
+        filesViewMode: state.filesListViewMode,
+        agentReviews: state.pullRequestAgentReviews,
+        agentReviewsLoading: state.pullRequestAgentReviewsLoading,
+        agentReviewsError: state.pullRequestAgentReviewsError,
+        selectedAgentReviewVersion: state.selectedPullRequestAgentReviewVersion,
+        selectedAgentReviewDocument: state.selectedPullRequestAgentReviewDocument,
+        agentReviewStarting: state.pullRequestAgentReviewStarting,
+      });
+    } else if (isConnectorsMode) {
+      const activeStageConnectors = resolveActiveStageConnectors(state);
+      const activeStageAuthSession = state.connectorAuthSession?.stagePath === state.activeStage
+        ? state.connectorAuthSession
+        : null;
+      connectorsView.render(activeStageConnectors, {
+        loading: state.connectorsLoading,
+        authSession: activeStageAuthSession,
+        stagePath: state.activeStage,
+      });
     }
 
     filesPanel.setReviewMode(isPRMode);
     filesPanel.setViewMode(state.filesListViewMode);
-    filesPanel.setFileReviewState(
-      isPRMode ? pullRequestReviewMap : new Map()
-    );
+    const reviewMap = isPRMode ? resolveSelectedPullRequestReviewMap(state) : new Map();
+    filesPanel.setFileReviewState(reviewMap);
     diffView.setReviewMode(isPRMode);
-    diffView.setFileReviewState(
-      isPRMode ? pullRequestReviewMap : new Map()
-    );
+    diffView.setFileReviewState(reviewMap);
     syncCommitButtonVisibility(state);
     if (state.viewMode !== "stages" && commitModal.isOpen) {
       commitModal.close();

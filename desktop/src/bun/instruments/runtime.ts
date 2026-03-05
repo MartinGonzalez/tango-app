@@ -51,6 +51,7 @@ type HostApi = {
       cwd?: string;
       model?: string;
       tools?: string[];
+      sessionId?: string;
     }) => Promise<{
       text: string;
       durationMs: number;
@@ -454,14 +455,19 @@ export class InstrumentRuntime {
   }
 
   emitHostEvent<E extends keyof HostEventMap>(event: E, payload: HostEventMap[E]): void {
+    if (this.#backendSubscriptions.size === 0) {
+      console.log(`[emitHostEvent] ${String(event)} — NO subscriptions at all (map empty)`);
+    }
     for (const [instrumentId, byEvent] of this.#backendSubscriptions) {
       const handlers = byEvent.get(event);
       if (!handlers || handlers.size === 0) continue;
       const entry = this.#registry.get(instrumentId);
       if (!entry || !entry.enabled || entry.status === "disabled" || entry.status === "blocked") {
+        console.log(`[emitHostEvent] ${String(event)} — SKIPPED ${instrumentId}: entry=${!!entry} enabled=${entry?.enabled} status=${entry?.status}`);
         continue;
       }
       for (const handler of handlers) {
+        console.log(`[emitHostEvent] ${String(event)} — DISPATCHING to ${instrumentId}`);
         Promise.resolve()
           .then(() => handler(payload))
           .catch((err) => {
@@ -486,6 +492,7 @@ export class InstrumentRuntime {
       handlers.add(wrapped);
       byEvent.set(event, handlers);
       this.#backendSubscriptions.set(entry.id, byEvent);
+      console.log(`[subscribe] ${entry.id} → ${String(event)} (total handlers: ${handlers.size}, total instruments: ${this.#backendSubscriptions.size})`);
       return () => {
         const currentByEvent = this.#backendSubscriptions.get(entry.id);
         if (!currentByEvent) return;
