@@ -171,6 +171,18 @@ const rpc = Electroview.defineRPC<any>({
         }
         publishFrontendHostEvent("session.idResolved", { tempId, realId });
       },
+      sessionNameGenerated: ({
+        sessionId,
+        name,
+      }: {
+        sessionId: string;
+        name: string;
+      }) => {
+        appState.update((s) => ({
+          ...s,
+          customSessionNames: { ...s.customSessionNames, [sessionId]: name },
+        }));
+      },
       toolApproval: (req: ToolApprovalRequest) => {
         console.log("[webview] Tool approval request:", req.toolName, req.toolUseId, req.sessionId);
         const state = appState.get();
@@ -827,8 +839,10 @@ function init(): void {
         activeStage: stagePath,
         activeStageInfo: null,
       }));
-      // Spawn a shell at the stage cwd — user can type `claude` or anything
-      void terminalPanel.spawnShell(stagePath);
+      // Spawn a new Claude session with a pre-assigned ID
+      void terminalPanel.spawnNewSession(stagePath).then((sessionId) => {
+        appState.update((s) => ({ ...s, activeSessionId: sessionId }));
+      });
       terminalPanel.focus();
       loadDiff(stagePath);
       ensureBranchHistory(stagePath);
@@ -1135,7 +1149,15 @@ function init(): void {
   });
 
   // Terminal panel — replaces chat view in the first slot
-  terminalPanel = new TerminalPanel(rpc as any);
+  terminalPanel = new TerminalPanel(rpc as any, {
+    onOpenInFinder: async (path) => {
+      try {
+        await (rpc as any).request.openInFinder({ path });
+      } catch (err) {
+        console.error("Failed to open Finder:", err);
+      }
+    },
+  });
 
   pluginsPreview = new PluginsPreview(null, {
     onSelect: (selection) => {
@@ -1467,7 +1489,9 @@ function init(): void {
       const state = appState.get();
       if (state.activeStage) {
         appState.update((s) => ({ ...s, activeSessionId: null }));
-        void terminalPanel.spawnShell(state.activeStage);
+        void terminalPanel.spawnNewSession(state.activeStage).then((sessionId) => {
+          appState.update((s) => ({ ...s, activeSessionId: sessionId }));
+        });
         terminalPanel.focus();
       } else {
         openStage();
@@ -1746,7 +1770,8 @@ function init(): void {
 
     terminalPanel.setHeader(
       resolveActiveSessionTitle(state),
-      state.activeStage
+      state.activeStage,
+      state.activeSessionId
     );
 
     const activeStage = state.activeStage;
@@ -1810,6 +1835,12 @@ function init(): void {
       checkForUpdate();
     }
   });
+    // Force the WKWebView to become first responder so the first click
+    // interacts with content instead of just activating the webview.
+    window.focus();
+    document.body.tabIndex = -1;
+    document.body.focus();
+
     pushBootTrace("init:ready");
   } catch (err) {
     reportFatal("init", err);
@@ -2748,8 +2779,6 @@ async function loadStages(): Promise<void> {
       for (const wsPath of stages) {
         ensureBranchHistory(wsPath);
       }
-      // Auto-spawn a shell in the terminal for the first stage
-      void terminalPanel.spawnShell(stages[0]);
     }
   } catch {
     // First run — no stages yet

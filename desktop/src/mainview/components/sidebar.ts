@@ -259,7 +259,7 @@ export class Sidebar {
 
   #toggleSessionMenu(sessionId: string, sessionItem: HTMLElement, stagePath: string): void {
     // Close any open menu
-    const existingMenu = this.#el.querySelector(".ws-session-menu");
+    const existingMenu = document.querySelector(".ws-session-menu");
     if (existingMenu) {
       existingMenu.remove();
       if (this.#openMenuSessionId === sessionId) {
@@ -289,7 +289,14 @@ export class Sidebar {
       }, ["Delete"]),
     ]);
 
-    sessionItem.appendChild(menu);
+    // Append to body so the menu escapes overflow:hidden containers
+    document.body.appendChild(menu);
+
+    // Position relative to the menu button
+    const btn = sessionItem.querySelector(".ws-session-menu-btn");
+    const rect = (btn ?? sessionItem).getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.right = `${window.innerWidth - rect.right}px`;
 
     // Close menu when clicking outside
     const closeMenu = (e: MouseEvent) => {

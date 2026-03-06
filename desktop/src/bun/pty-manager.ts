@@ -29,6 +29,7 @@ export class PtyManager {
     cols: number = 80,
     rows: number = 24,
     sessionId?: string,
+    newSessionId?: string,
   ): void {
     this.kill(id);
 
@@ -58,14 +59,20 @@ export class PtyManager {
 
     this.#sessions.set(id, { id, proc });
 
-    // If resuming a claude session, auto-type the command
-    if (sessionId) {
-      setTimeout(() => {
-        if (this.#sessions.has(id)) {
-          proc.terminal.write(`claude --resume ${sessionId}\n`);
+    // Auto-start claude: resume existing session or start new with known ID
+    setTimeout(() => {
+      if (this.#sessions.has(id)) {
+        let cmd: string;
+        if (sessionId) {
+          cmd = `claude --resume ${sessionId}`;
+        } else if (newSessionId) {
+          cmd = `claude --session-id ${newSessionId}`;
+        } else {
+          cmd = `claude`;
         }
-      }, 500);
-    }
+        proc.terminal.write(`${cmd}\n`);
+      }
+    }, 500);
   }
 
   write(id: string, data: string): void {

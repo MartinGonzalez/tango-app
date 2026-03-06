@@ -417,7 +417,7 @@ export type AppRPC = {
         response: void;
       };
       ptySpawn: {
-        params: { id: string; cwd: string; cols?: number; rows?: number; sessionId?: string };
+        params: { id: string; cwd: string; cols?: number; rows?: number; sessionId?: string; newSessionId?: string };
         response: void;
       };
       ptyInput: {
@@ -482,6 +482,10 @@ export type AppRPC = {
       ptyExit: {
         id: string;
         exitCode: number;
+      };
+      sessionNameGenerated: {
+        sessionId: string;
+        name: string;
       };
     };
   }>;

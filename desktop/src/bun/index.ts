@@ -108,6 +108,9 @@ const prAgentReviewProvider = new PRAgentReviewProvider({
 /** Session IDs from fire-and-forget queries — suppress hook events for these */
 const querySessionIds = new Set<string>();
 
+/** Tracks first prompt per temp session ID for auto-generating session titles */
+const sessionTitlePrompts = new Map<string, string>();
+
 const instrumentRuntime = new InstrumentRuntime({
   bundledInstallPaths: resolveBundledInstrumentInstallPaths(),
   onEvent: (event) => {
@@ -376,6 +379,16 @@ sessions.onIdResolved((tempId, realId) => {
   // RPC messages are ordered — this always arrives before events with realId.
   mainRPC?.send.sessionIdResolved({ tempId, realId });
   instrumentRuntime.emitHostEvent("session.idResolved", { tempId, realId });
+
+  // Auto-generate session title for new sessions
+  const titlePrompt = sessionTitlePrompts.get(tempId);
+  sessionTitlePrompts.delete(tempId);
+  if (titlePrompt && !sessionNames.get(realId)) {
+    console.log("[auto-title] Triggering title generation for", realId, "cwd:", sessionCwds.get(realId));
+    void generateSessionTitle(realId, titlePrompt, sessionCwds.get(realId) ?? process.cwd());
+  } else if (titlePrompt) {
+    console.log("[auto-title] Skipped — session already has name:", sessionNames.get(realId));
+  }
 });
 
 sessions.onEvent((sessionId, event) => {
@@ -491,6 +504,12 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           approvals.registerSession(sessionId, fullAccess ?? true);
           sessionCwds.set(sessionId, cwd);
           await stages.add(cwd);
+          // Track prompt for auto-title generation (new sessions only, not resumed)
+          if (!resumeId) {
+            sessionTitlePrompts.set(sessionId, prompt);
+          }
+          // Refresh snapshot so the UI picks up the new session immediately
+          watcher.fetchOnce();
           return { sessionId };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -1514,14 +1533,15 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         writeMainviewLogLine(line);
       },
 
-      ptySpawn: async ({ id, cwd, cols, rows, sessionId }: {
-        id: string; cwd: string; cols?: number; rows?: number; sessionId?: string;
+      ptySpawn: async ({ id, cwd, cols, rows, sessionId, newSessionId }: {
+        id: string; cwd: string; cols?: number; rows?: number; sessionId?: string; newSessionId?: string;
       }) => {
         // Register session→cwd mapping so PreToolUse hook can resolve the stage
-        if (sessionId) {
-          sessionCwds.set(sessionId, cwd);
+        const trackId = sessionId ?? newSessionId;
+        if (trackId) {
+          sessionCwds.set(trackId, cwd);
         }
-        ptyManager.spawn(id, cwd, cols ?? 80, rows ?? 24, sessionId);
+        ptyManager.spawn(id, cwd, cols ?? 80, rows ?? 24, sessionId, newSessionId);
       },
       ptyInput: async ({ id, data }: { id: string; data: string }) => {
         ptyManager.write(id, data);
@@ -1930,6 +1950,30 @@ function isDocumentPlaceholder(rawJson: string | null): boolean {
   }
 }
 
+// ── Auto session title generation ────────────────────────────────
+
+async function generateSessionTitle(sessionId: string, userPrompt: string, cwd: string): Promise<void> {
+  console.log("[auto-title] Generating title for session", sessionId);
+  try {
+    const { text } = await queryClaudeSession({
+      prompt: `Generate a short title (3-6 words max) for this user message. Return ONLY the title text, no quotes, no explanation:\n\n${userPrompt}`,
+      cwd,
+      model: "haiku",
+      tools: [],
+    });
+    const title = text.trim().replace(/^["']|["']$/g, "");
+    if (!title) {
+      console.warn("[auto-title] Empty title returned");
+      return;
+    }
+    console.log("[auto-title] Generated:", title);
+    await sessionNames.set(sessionId, title);
+    mainRPC?.send.sessionNameGenerated({ sessionId, name: title });
+  } catch (err) {
+    console.warn("[auto-title] Failed to generate session title:", err);
+  }
+}
+
 // ── Query helper (fire-and-forget, invisible to UI) ─────────────
 
 async function queryClaudeSession(params: {
@@ -2191,6 +2235,10 @@ approvals.onHookEvent((event) => {
   // Turn-diff lifecycle for PTY sessions (mirrors stream-JSON behavior)
   if (hookEventName === "UserPromptSubmit" && resolvedCwd && sessionId) {
     mainRPC?.send.sessionActivity({ sessionId, activity: "working" });
+    // Ensure the stage is registered and CWD is tracked immediately
+    sessionCwds.set(sessionId, resolvedCwd);
+    void stages.add(resolvedCwd);
+    watcher.fetchOnce();
     void beginTurnDiff(resolvedCwd, sessionId).catch((err) => {
       console.warn("Failed to begin turn diff from hook:", err);
     });
@@ -2200,6 +2248,11 @@ approvals.onHookEvent((event) => {
       sessionId,
       event: { type: "user", cwd: resolvedCwd, message: { role: "user", content: [{ type: "text", text: userText }] } } as any,
     });
+    // Auto-generate session title if not already named
+    if (userText && !sessionNames.get(sessionId)) {
+      console.log("[auto-title] Triggering from UserPromptSubmit hook for", sessionId);
+      void generateSessionTitle(sessionId, userText, resolvedCwd);
+    }
   }
   if (hookEventName === "Stop" && resolvedCwd && sessionId) {
     mainRPC?.send.sessionActivity({ sessionId, activity: "stopped" });
