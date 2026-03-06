@@ -81,6 +81,11 @@ const APP_VERSION: string = pkg.version;
 
 const MAINVIEW_LOG_PATH = join(homedir(), ".tango", "logs", "mainview.log");
 
+/** Dedicated directory for query/ephemeral sessions (title generation, commit messages, etc.).
+ *  Keeps their .jsonl files out of real stage project dirs in ~/.claude/projects/. */
+const QUERY_SESSIONS_DIR = join(homedir(), ".tango", "sessions");
+mkdirSync(QUERY_SESSIONS_DIR, { recursive: true });
+
 function writeMainviewLogLine(line: string): void {
   try {
     mkdirSync(dirname(MAINVIEW_LOG_PATH), { recursive: true });
@@ -1978,7 +1983,7 @@ async function generateSessionTitle(sessionId: string, userPrompt: string, cwd: 
 
 async function queryClaudeSession(params: {
   prompt: string;
-  cwd: string;
+  cwd?: string; // ignored — queries always run in QUERY_SESSIONS_DIR
   model?: string;
   tools?: string[];
   sessionId?: string;
@@ -2013,7 +2018,9 @@ async function queryClaudeSession(params: {
     }
 
     const proc = Bun.spawn([claudeBin, ...args], {
-      cwd: params.cwd,
+      // Use dedicated sessions dir so ephemeral queries don't pollute
+      // stage project dirs in ~/.claude/projects/.
+      cwd: QUERY_SESSIONS_DIR,
       env: {
         ...process.env,
         PATH: buildSpawnPath(process.env.PATH, claudeBin),
