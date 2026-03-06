@@ -40,6 +40,7 @@ export class TerminalPanel {
   #container: HTMLElement;
   #term: Terminal;
   #fitAddon: FitAddon;
+  #webglAddon: WebglAddon | null = null;
   #rpc: RPC;
   #callbacks: TerminalPanelCallbacks;
   #stagePath: string | null = null;
@@ -47,6 +48,7 @@ export class TerminalPanel {
   #activePtyId: string | null = null;
   #resizeObserver: ResizeObserver;
   #mounted = false;
+  #wasHidden = false;
 
   /** sessionId → ptyId — tracks which session owns which PTY */
   #sessionPtyMap = new Map<string, string>();
@@ -191,16 +193,39 @@ export class TerminalPanel {
       }
     });
 
-    // Auto-fit when container resizes (debounced to avoid rapid resize storms)
+    // Auto-fit when container resizes (debounced to avoid rapid resize storms).
+    // Skip fit() when the container is hidden (0 dimensions).
+    // When the panel comes back from hidden, re-create the WebGL addon to fix
+    // stale viewport cache (xterm's internal state stays correct but the WebGL
+    // renderer desyncs when the canvas goes to 0x0).
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-    this.#resizeObserver = new ResizeObserver(() => {
+    this.#resizeObserver = new ResizeObserver((entries) => {
       if (!this.#mounted) return;
+      const rect = entries[0]?.contentRect;
+      if (!rect || rect.width === 0 || rect.height === 0) {
+        this.#wasHidden = true;
+        return;
+      }
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        try {
-          this.#fitAddon.fit();
+        try { this.#fitAddon.fit(); } catch { /* ignore during transitions */ }
+        if (this.#wasHidden) {
+          this.#wasHidden = false;
+          // The slot manager removes/re-adds our DOM element when switching
+          // views. The browser resets .xterm-viewport scrollTop to 0 on
+          // re-insertion, but xterm's internal viewportY stays correct.
+          // Fix the native scroll BEFORE recreating WebGL so the renderer
+          // picks up the correct viewport position.
+          const viewport = this.#container.querySelector(".xterm-viewport") as HTMLElement | null;
+          if (viewport) viewport.scrollTop = viewport.scrollHeight;
           this.#term.scrollToBottom();
-        } catch { /* ignore during transitions */ }
+          this.#recreateWebgl();
+          // Re-sync after xterm settles (DOM re-insertion can be async)
+          setTimeout(() => {
+            if (viewport) viewport.scrollTop = viewport.scrollHeight;
+            this.#term.scrollToBottom();
+          }, 150);
+        }
       }, 50);
     });
   }
@@ -213,11 +238,7 @@ export class TerminalPanel {
     this.#resizeObserver.observe(this.#container);
 
     // Try WebGL renderer for better performance with rapid TUI updates
-    try {
-      this.#term.loadAddon(new WebglAddon());
-    } catch {
-      // Falls back to DOM renderer — that's fine
-    }
+    this.#recreateWebgl();
 
     // Fit after a frame so the layout is fully computed
     requestAnimationFrame(() => {
@@ -371,6 +392,22 @@ export class TerminalPanel {
 
   focus(): void {
     this.#term.focus();
+  }
+
+  #recreateWebgl(): void {
+    try { this.#webglAddon?.dispose(); } catch { /* ignore */ }
+    this.#webglAddon = null;
+    try {
+      const addon = new WebglAddon();
+      addon.onContextLoss(() => {
+        addon.dispose();
+        this.#webglAddon = null;
+      });
+      this.#term.loadAddon(addon);
+      this.#webglAddon = addon;
+    } catch {
+      // Falls back to DOM renderer
+    }
   }
 
   /** Reset xterm and replay the buffered output for a PTY. */
