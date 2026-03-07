@@ -234,6 +234,10 @@ export type AppRPC = {
         params: { source: string };
         response: InstrumentSourceConfig;
       };
+      installInstrumentFromCatalog: {
+        params: { source: string; path: string; instrumentId: string };
+        response: InstrumentRegistryEntry;
+      };
       getInstrumentFrontendSource: {
         params: { instrumentId: string };
         response: { code: string; sourcePath: string };

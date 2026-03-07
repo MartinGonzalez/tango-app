@@ -54,6 +54,7 @@ import {
   loadSourceConfig,
   addSource,
   removeSource,
+  installFromCatalog,
 } from "./instruments/source-resolver.ts";
 import {
   encodeClaudeProjectPath,
@@ -870,6 +871,19 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
       removeInstrumentSource: async ({ source }: { source: string }) => {
         return removeSource(source);
+      },
+
+      installInstrumentFromCatalog: async ({
+        source,
+        path,
+        instrumentId,
+      }: {
+        source: string;
+        path: string;
+        instrumentId: string;
+      }) => {
+        const installDir = await installFromCatalog(source, path, instrumentId);
+        return instrumentRuntime.installFromPath(installDir);
       },
 
       getInstrumentFrontendSource: async ({

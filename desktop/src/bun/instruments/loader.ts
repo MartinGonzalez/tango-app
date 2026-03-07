@@ -53,6 +53,7 @@ export async function loadInstrumentManifest(
   }
 
   const name = String(base.name ?? "").trim() || id;
+  const description = base.description ? String(base.description).trim() : undefined;
   const group = String(base.group ?? "General").trim() || "General";
   const validCategories = ["developer-tools", "productivity", "media", "communication", "finance", "utilities"] as const;
   const rawCategory = base.category ? String(base.category).trim() : undefined;
@@ -120,6 +121,7 @@ export async function loadInstrumentManifest(
   const manifest: InstrumentManifest = {
     id,
     name,
+    ...(description ? { description } : {}),
     group,
     ...(category ? { category } : {}),
     runtime,

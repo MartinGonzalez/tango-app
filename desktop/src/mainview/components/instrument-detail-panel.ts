@@ -13,6 +13,7 @@ type DetailTarget =
 export type InstrumentDetailCallbacks = {
   onActivate: (instrumentId: string) => void;
   onInstall: (entry: InstrumentCatalogEntry) => void;
+  onUninstall: (instrumentId: string) => void;
 };
 
 const CATEGORY_LABELS: Record<InstrumentCategory, string> = {
@@ -29,6 +30,7 @@ export class InstrumentDetailPanel {
   #contentEl: HTMLElement;
   #callbacks: InstrumentDetailCallbacks;
   #target: DetailTarget = null;
+  #installing = false;
 
   constructor(callbacks: InstrumentDetailCallbacks) {
     this.#callbacks = callbacks;
@@ -40,16 +42,24 @@ export class InstrumentDetailPanel {
 
   showInstalled(entry: InstrumentRegistryEntry): void {
     this.#target = { kind: "installed", entry };
+    this.#installing = false;
     this.#render();
   }
 
   showCatalog(entry: InstrumentCatalogEntry): void {
     this.#target = { kind: "catalog", entry };
+    this.#installing = false;
+    this.#render();
+  }
+
+  setInstalling(installing: boolean): void {
+    this.#installing = installing;
     this.#render();
   }
 
   clear(): void {
     this.#target = null;
+    this.#installing = false;
     this.#render();
   }
 
@@ -59,8 +69,7 @@ export class InstrumentDetailPanel {
     if (!this.#target) {
       this.#contentEl.appendChild(
         h("div", { class: "instrument-detail-empty" }, [
-          h("span", { class: "instrument-detail-empty-icon" }, ["\u{1F50D}"]),
-          h("p", {}, ["Select an instrument to see details"]),
+          h("p", { class: "instrument-detail-empty-text" }, ["Select an instrument to see details"]),
         ]),
       );
       return;
@@ -77,32 +86,42 @@ export class InstrumentDetailPanel {
     const icon = entry.launcher?.sidebarShortcut?.icon ?? "puzzle";
     const category = entry.category
       ? CATEGORY_LABELS[entry.category] ?? entry.category
-      : "Uncategorized";
+      : null;
 
-    const statusClass = entry.status === "active" ? "status-active"
-      : entry.status === "blocked" ? "status-blocked"
-      : "status-disabled";
+    // Header with action button top-right
+    const actionBtn = entry.isBundled
+      ? h("span", { class: "instrument-detail-badge" }, ["Bundled"])
+      : h("button", {
+          class: "instrument-detail-btn instrument-detail-btn-danger",
+          onclick: () => this.#callbacks.onUninstall(entry.id),
+        }, ["Uninstall"]);
 
     this.#contentEl.append(
-      h("div", { class: "instrument-detail-header" }, [
-        h("div", { class: "instrument-detail-icon" }, [this.#iconEl(icon)]),
-        h("div", { class: "instrument-detail-title-group" }, [
-          h("h2", { class: "instrument-detail-name" }, [entry.name]),
-          h("span", { class: "instrument-detail-id" }, [entry.id]),
+      // Top row: icon + title + action button
+      h("div", { class: "instrument-detail-top" }, [
+        h("div", { class: "instrument-detail-header" }, [
+          h("div", { class: "instrument-detail-icon" }, [this.#iconEl(icon)]),
+          h("div", { class: "instrument-detail-title-group" }, [
+            h("h2", { class: "instrument-detail-name" }, [entry.name]),
+            h("span", { class: "instrument-detail-id" }, [entry.id]),
+          ]),
         ]),
+        actionBtn,
       ]),
+      // Description
+      entry.description
+        ? h("div", { class: "instrument-detail-description" }, [entry.description])
+        : h("div", { hidden: true }),
+      // Meta badges
       h("div", { class: "instrument-detail-meta" }, [
-        h("span", { class: `instrument-detail-status ${statusClass}` }, [
-          entry.enabled ? "Enabled" : "Disabled",
-        ]),
-        h("span", { class: "instrument-detail-badge" }, [category]),
+        ...(category ? [h("span", { class: "instrument-detail-badge" }, [category])] : []),
         h("span", { class: "instrument-detail-badge" }, [`v${entry.version}`]),
-        entry.isBundled
-          ? h("span", { class: "instrument-detail-badge" }, ["Bundled"])
-          : h("span", { class: "instrument-detail-badge" }, ["Local"]),
+        h("span", { class: "instrument-detail-badge" }, [entry.group]),
       ]),
+      // Sections
       this.#renderSection("Panels", this.#panelsList(entry.panels)),
       this.#renderSection("Permissions", this.#permissionsList(entry.permissions)),
+      // Open button
       entry.enabled && entry.status === "active"
         ? h("div", { class: "instrument-detail-actions" }, [
             h("button", {
@@ -118,36 +137,51 @@ export class InstrumentDetailPanel {
     const icon = entry.icon ?? "puzzle";
     const category = entry.category
       ? CATEGORY_LABELS[entry.category] ?? entry.category
-      : "Uncategorized";
+      : null;
+
+    // Action button: Install / Installing... / Already Installed
+    let actionBtn: HTMLElement;
+    if (entry.installed) {
+      actionBtn = h("span", { class: "instrument-detail-badge instrument-detail-installed-badge" }, ["Installed"]);
+    } else if (this.#installing) {
+      actionBtn = h("button", {
+        class: "instrument-detail-btn instrument-detail-btn-install",
+        disabled: true,
+      }, ["Installing..."]);
+    } else {
+      actionBtn = h("button", {
+        class: "instrument-detail-btn instrument-detail-btn-install",
+        onclick: () => this.#callbacks.onInstall(entry),
+      }, ["Install"]);
+    }
 
     this.#contentEl.append(
-      h("div", { class: "instrument-detail-header" }, [
-        h("div", { class: "instrument-detail-icon" }, [this.#iconEl(icon)]),
-        h("div", { class: "instrument-detail-title-group" }, [
-          h("h2", { class: "instrument-detail-name" }, [entry.name]),
-          h("span", { class: "instrument-detail-id" }, [entry.id]),
+      // Top row: icon + title + action button
+      h("div", { class: "instrument-detail-top" }, [
+        h("div", { class: "instrument-detail-header" }, [
+          h("div", { class: "instrument-detail-icon" }, [this.#iconEl(icon)]),
+          h("div", { class: "instrument-detail-title-group" }, [
+            h("h2", { class: "instrument-detail-name" }, [entry.name]),
+            h("span", { class: "instrument-detail-id" }, [entry.id]),
+          ]),
         ]),
+        actionBtn,
       ]),
+      // Description
+      entry.description
+        ? h("div", { class: "instrument-detail-description" }, [entry.description])
+        : h("div", { hidden: true }),
+      // Meta badges
       h("div", { class: "instrument-detail-meta" }, [
-        h("span", { class: "instrument-detail-badge" }, [category]),
+        ...(category ? [h("span", { class: "instrument-detail-badge" }, [category])] : []),
         h("span", { class: "instrument-detail-badge" }, [`v${entry.version}`]),
         entry.author
           ? h("span", { class: "instrument-detail-badge" }, [`by ${entry.author}`])
           : h("span", { hidden: true }),
       ]),
-      entry.description
-        ? h("div", { class: "instrument-detail-description" }, [entry.description])
-        : h("div", { hidden: true }),
+      // Sections
       this.#renderSection("Panels", this.#panelsList(entry.panels)),
       this.#renderSection("Permissions", this.#permissionsList(entry.permissions)),
-      h("div", { class: "instrument-detail-actions" }, [
-        entry.installed
-          ? h("span", { class: "instrument-detail-badge" }, ["Already installed"])
-          : h("button", {
-              class: "instrument-detail-btn instrument-detail-btn-primary",
-              onclick: () => this.#callbacks.onInstall(entry),
-            }, ["Install"]),
-      ]),
     );
   }
 

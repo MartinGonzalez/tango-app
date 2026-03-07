@@ -202,6 +202,7 @@ export class InstrumentRuntime {
     const entry: InstrumentRegistryEntry = {
       id: loaded.manifest.id,
       name: loaded.manifest.name,
+      ...(loaded.manifest.description ? { description: loaded.manifest.description } : {}),
       group: loaded.manifest.group,
       ...(loaded.manifest.category ? { category: loaded.manifest.category } : {}),
       source: "local",
@@ -825,6 +826,7 @@ export class InstrumentRuntime {
       const entry: InstrumentRegistryEntry = {
         id: loaded.manifest.id,
         name: loaded.manifest.name,
+        ...(loaded.manifest.description ? { description: loaded.manifest.description } : {}),
         group: loaded.manifest.group,
         ...(loaded.manifest.category ? { category: loaded.manifest.category } : {}),
         source: "bundled",

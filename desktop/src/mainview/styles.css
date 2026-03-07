@@ -6766,9 +6766,16 @@ img.open-split-icon {
   gap: 8px;
 }
 
-.instrument-detail-empty-icon {
-  font-size: 32px;
-  opacity: 0.5;
+.instrument-detail-empty-text {
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+.instrument-detail-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .instrument-detail-header {
@@ -6910,6 +6917,37 @@ img.open-split-icon {
 
 .instrument-detail-btn-primary:hover {
   filter: brightness(1.1);
+}
+
+.instrument-detail-btn-install {
+  background: #e67e22;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.instrument-detail-btn-install:hover:not(:disabled) {
+  background: #f39c12;
+}
+
+.instrument-detail-btn-install:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.instrument-detail-btn-danger {
+  background: #c0392b;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.instrument-detail-btn-danger:hover {
+  background: #e74c3c;
+}
+
+.instrument-detail-installed-badge {
+  background: rgba(76, 175, 80, 0.15);
+  color: #66bb6a;
+  white-space: nowrap;
 }
 
 /* ── Instrument Browse Panel ── */

@@ -77,6 +77,7 @@ export type InstrumentLauncherConfig = {
 export type InstrumentManifest = {
   id: string;
   name: string;
+  description?: string;
   group: string;
   category?: InstrumentCategory;
   runtime?: InstrumentRuntime;
@@ -101,6 +102,7 @@ export type InstrumentInstallSource = "bundled" | "local";
 export type InstrumentRegistryEntry = {
   id: string;
   name: string;
+  description?: string;
   group: string;
   category?: InstrumentCategory;
   source: InstrumentInstallSource;

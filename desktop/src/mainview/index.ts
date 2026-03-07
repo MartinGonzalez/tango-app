@@ -942,8 +942,11 @@ function init(): void {
     onActivate: (instrumentId) => {
       void activateInstrument(instrumentId);
     },
-    onInstall: (_entry) => {
-      // TODO: implement install from catalog
+    onInstall: (entry) => {
+      void installFromCatalog(entry);
+    },
+    onUninstall: (instrumentId) => {
+      void removeLocalInstrument(instrumentId);
     },
   });
 
@@ -2911,6 +2914,27 @@ async function setInstrumentEnabled(instrumentId: string, enabled: boolean): Pro
   }
 }
 
+async function installFromCatalog(entry: InstrumentCatalogEntry): Promise<void> {
+  instrumentDetailPanel.setInstalling(true);
+  try {
+    await (rpc as any).request.installInstrumentFromCatalog({
+      source: entry.source,
+      path: entry.path,
+      instrumentId: entry.id,
+    });
+    await loadInstruments(true);
+    await loadInstrumentCatalog();
+    // Show the newly installed entry in the detail panel
+    const installed = appState.get().instrumentEntries.find((e) => e.id === entry.id);
+    if (installed) instrumentDetailPanel.showInstalled(installed);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to install instrument:", err);
+    appState.update((s) => ({ ...s, catalogError: message }));
+    instrumentDetailPanel.setInstalling(false);
+  }
+}
+
 async function removeLocalInstrument(instrumentId: string): Promise<void> {
   const entry = appState.get().instrumentEntries.find((item) => item.id === instrumentId) ?? null;
   if (!entry) return;
@@ -2931,12 +2955,11 @@ async function removeLocalInstrument(instrumentId: string): Promise<void> {
       deleteData: false,
     });
     await loadInstruments(true);
+    await loadInstrumentCatalog();
+    instrumentDetailPanel.clear();
     appState.update((s) => ({
       ...s,
       activeInstrumentId: s.activeInstrumentId === instrumentId ? null : s.activeInstrumentId,
-      viewMode: s.viewMode === "instruments"
-        ? "stages"
-        : s.viewMode,
     }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

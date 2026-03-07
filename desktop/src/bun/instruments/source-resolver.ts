@@ -1,6 +1,7 @@
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { $ } from "bun";
 import type {
   TangoSourceManifest,
   InstrumentSourceConfig,
@@ -183,4 +184,54 @@ export async function resolveAllSources(
   );
 
   return results;
+}
+
+// ── Install from catalog ──
+
+const INSTRUMENTS_DIR = join(homedir(), ".tango", "instruments");
+
+export { parseGitHubSource };
+
+export async function installFromCatalog(
+  source: string,
+  instrumentPath: string,
+  instrumentId: string,
+): Promise<string> {
+  const ref = parseGitHubSource(source);
+  if (!ref) throw new Error(`Invalid source format: ${source}`);
+
+  const installDir = join(INSTRUMENTS_DIR, instrumentId);
+  await mkdir(INSTRUMENTS_DIR, { recursive: true });
+
+  // Clean up any previous failed install
+  try {
+    await rm(installDir, { recursive: true, force: true });
+  } catch { /* ignore */ }
+
+  // Clone the repo (sparse checkout for monorepos)
+  const repoUrl = `https://github.com/${ref.owner}/${ref.repo}.git`;
+
+  if (instrumentPath === "." || instrumentPath === "./") {
+    // Single-instrument repo — clone directly
+    await $`git clone --depth 1 --branch ${ref.branch} ${repoUrl} ${installDir}`.quiet();
+  } else {
+    // Monorepo — sparse checkout just the instrument directory
+    await $`git clone --depth 1 --branch ${ref.branch} --filter=blob:none --sparse ${repoUrl} ${installDir}`.quiet();
+    await $`git -C ${installDir} sparse-checkout set ${instrumentPath}`.quiet();
+    // Move instrument contents to root of install dir
+    const srcDir = join(installDir, instrumentPath);
+    const tmpDir = `${installDir}__tmp`;
+    await $`mv ${srcDir} ${tmpDir}`.quiet();
+    await rm(installDir, { recursive: true, force: true });
+    await $`mv ${tmpDir} ${installDir}`.quiet();
+  }
+
+  // Remove .git — we don't need version control for installed instruments
+  await rm(join(installDir, ".git"), { recursive: true, force: true });
+
+  // Install dependencies and build
+  await $`cd ${installDir} && bun install`.quiet();
+  await $`cd ${installDir} && bun run build`.quiet();
+
+  return installDir;
 }
