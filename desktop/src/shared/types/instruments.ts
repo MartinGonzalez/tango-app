@@ -9,6 +9,14 @@ export type InstrumentPermission =
   | "stages.read"
   | "stages.observe";
 
+export type InstrumentCategory =
+  | "developer-tools"
+  | "productivity"
+  | "media"
+  | "communication"
+  | "finance"
+  | "utilities";
+
 export type InstrumentRuntime = "react" | "vanilla";
 
 export type InstrumentPanelConfig = {
@@ -70,6 +78,7 @@ export type InstrumentManifest = {
   id: string;
   name: string;
   group: string;
+  category?: InstrumentCategory;
   runtime?: InstrumentRuntime;
   entrypoint: string;
   backendEntrypoint?: string;
@@ -93,6 +102,7 @@ export type InstrumentRegistryEntry = {
   id: string;
   name: string;
   group: string;
+  category?: InstrumentCategory;
   source: InstrumentInstallSource;
   installPath: string;
   manifestPath: string;

@@ -54,6 +54,11 @@ export async function loadInstrumentManifest(
 
   const name = String(base.name ?? "").trim() || id;
   const group = String(base.group ?? "General").trim() || "General";
+  const validCategories = ["developer-tools", "productivity", "media", "communication", "finance", "utilities"] as const;
+  const rawCategory = base.category ? String(base.category).trim() : undefined;
+  const category = rawCategory && validCategories.includes(rawCategory as any)
+    ? (rawCategory as typeof validCategories[number])
+    : undefined;
   const runtime = base.runtime === "react" ? "react" : "vanilla";
   const entrypoint = String(base.entrypoint ?? pkg.main ?? "").trim();
   if (!entrypoint) {
@@ -116,6 +121,7 @@ export async function loadInstrumentManifest(
     id,
     name,
     group,
+    ...(category ? { category } : {}),
     runtime,
     entrypoint,
     ...(backendEntrypoint ? { backendEntrypoint } : {}),
