@@ -134,3 +134,29 @@ export type InstrumentEvent = {
   event: string;
   payload?: unknown;
 };
+
+// ── Instrument Sources (marketplace) ──
+
+export type TangoSourceManifest = {
+  instruments: Array<{ path: string }>;
+};
+
+export type InstrumentSourceConfig = {
+  sources: string[];
+};
+
+export type InstrumentCatalogEntry = {
+  id: string;
+  name: string;
+  description?: string;
+  category?: InstrumentCategory;
+  icon?: string;
+  author?: string;
+  version: string;
+  source: string;
+  path: string;
+  permissions: InstrumentPermission[];
+  panels: InstrumentPanelConfig;
+  runtime: InstrumentRuntime;
+  installed: boolean;
+};
