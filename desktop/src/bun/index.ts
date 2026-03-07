@@ -50,6 +50,12 @@ import { ConnectorsRepository } from "./connectors-repository.ts";
 import { InstrumentRuntime } from "./instruments/runtime.ts";
 import { setDevReloadHandler, createDevReloadHandler } from "./instruments/dev-server.ts";
 import {
+  resolveAllSources,
+  loadSourceConfig,
+  addSource,
+  removeSource,
+} from "./instruments/source-resolver.ts";
+import {
   encodeClaudeProjectPath,
   encodeClaudeProjectPathLegacy,
   getStagePathVariantsSync,
@@ -846,6 +852,24 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
       listInstruments: async () => {
         return instrumentRuntime.list();
+      },
+
+      browseInstrumentCatalog: async () => {
+        const installed = instrumentRuntime.list();
+        const installedIds = new Set(installed.map((e) => e.id));
+        return resolveAllSources(installedIds);
+      },
+
+      getInstrumentSources: async () => {
+        return loadSourceConfig();
+      },
+
+      addInstrumentSource: async ({ source }: { source: string }) => {
+        return addSource(source);
+      },
+
+      removeInstrumentSource: async ({ source }: { source: string }) => {
+        return removeSource(source);
       },
 
       getInstrumentFrontendSource: async ({

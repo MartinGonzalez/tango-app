@@ -554,33 +554,130 @@ function timeAgo(dateStr: string): string {
 }
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-const SCRAMBLE_DURATION_MS = 400;
+const SCRAMBLE_DURATION_MS = 480;
 const SCRAMBLE_INTERVAL_MS = 30;
+const RAINBOW_HOLD_MS = 1000;
+const SHIMMER_DURATION_MS = 500;
+const FADE_DURATION_MS = 400;
+
+// Palette matched from screenshot: teal → blue → purple → pink → red → orange → gold → green
+const PALETTE = [
+  "#5EC4B6",
+  "#4A9BD9",
+  "#7B6BB5",
+  "#C75C9B",
+  "#D94F4F",
+  "#E8853D",
+  "#E8C443",
+  "#6BBF6A",
+];
+
+function paletteColor(index: number, total: number): string {
+  const t = index / Math.max(total - 1, 1);
+  const pos = t * (PALETTE.length - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.min(lo + 1, PALETTE.length - 1);
+  const frac = pos - lo;
+  return lerpColor(PALETTE[lo], PALETTE[hi], frac);
+}
+
+function lerpColor(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = hexToRgb(a);
+  const [br, bg, bb] = hexToRgb(b);
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const v = parseInt(hex.slice(1), 16);
+  return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+}
+
+function escapeHtml(ch: string): string {
+  if (ch === "<") return "&lt;";
+  if (ch === ">") return "&gt;";
+  if (ch === "&") return "&amp;";
+  return ch;
+}
 
 function scrambleReveal(el: HTMLElement, finalText: string): void {
   const steps = Math.ceil(SCRAMBLE_DURATION_MS / SCRAMBLE_INTERVAL_MS);
   let step = 0;
 
+  // Phase 1: Scramble → reveal with rainbow colors
   const interval = setInterval(() => {
     step++;
     const progress = step / steps;
-    // Number of characters revealed so far (left to right)
     const revealed = Math.floor(progress * finalText.length);
-    let display = "";
+    let html = "";
     for (let i = 0; i < finalText.length; i++) {
-      if (i < revealed) {
-        display += finalText[i];
-      } else if (finalText[i] === " ") {
-        display += " ";
+      if (finalText[i] === " ") {
+        html += " ";
+      } else if (i < revealed) {
+        const color = paletteColor(i, finalText.length);
+        html += `<span style="color:${color}">${escapeHtml(finalText[i])}</span>`;
       } else {
-        display += SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+        const ch = SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+        html += `<span style="opacity:0.4">${ch}</span>`;
       }
     }
-    el.textContent = display;
+    el.innerHTML = html;
 
     if (step >= steps) {
       clearInterval(interval);
-      el.textContent = finalText;
+      // Phase 2: Hold rainbow, then shimmer sweep → fade
+      setTimeout(() => startShimmerFade(el, finalText), RAINBOW_HOLD_MS);
+    }
+  }, SCRAMBLE_INTERVAL_MS);
+}
+
+function startShimmerFade(el: HTMLElement, finalText: string): void {
+  const spans = el.querySelectorAll<HTMLElement>("span");
+  if (spans.length === 0) return;
+
+  const total = spans.length;
+  const shimmerSteps = Math.ceil(SHIMMER_DURATION_MS / SCRAMBLE_INTERVAL_MS);
+  let step = 0;
+
+  const interval = setInterval(() => {
+    step++;
+    const progress = step / shimmerSteps;
+    // Shimmer highlight position (0 → 1 across the text)
+    const highlightCenter = progress;
+    const highlightWidth = 0.25; // width of the bright band
+
+    let spanIdx = 0;
+    for (const span of spans) {
+      const charPos = spanIdx / Math.max(total - 1, 1);
+      const dist = Math.abs(charPos - highlightCenter);
+
+      if (dist < highlightWidth) {
+        // Inside shimmer band — brighten to white
+        const brightness = 1 - (dist / highlightWidth);
+        const baseColor = paletteColor(spanIdx, total);
+        span.style.color = lerpColor(baseColor.startsWith("rgb") ? baseColor : baseColor, "#ffffff", brightness * 0.7);
+      } else if (highlightCenter > charPos + highlightWidth) {
+        // Shimmer has passed — start fading to default
+        span.style.transition = `color ${FADE_DURATION_MS}ms ease`;
+        span.style.color = "";
+      }
+      spanIdx++;
+    }
+
+    if (step >= shimmerSteps) {
+      clearInterval(interval);
+      // Fade any remaining colored spans
+      for (const span of spans) {
+        span.style.transition = `color ${FADE_DURATION_MS}ms ease`;
+        span.style.color = "";
+      }
+      // Clean up to plain text after fade
+      setTimeout(() => {
+        el.textContent = finalText;
+        el.style.transition = "";
+      }, FADE_DURATION_MS);
     }
   }, SCRAMBLE_INTERVAL_MS);
 }

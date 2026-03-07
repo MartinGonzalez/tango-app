@@ -6738,3 +6738,330 @@ img.open-split-icon {
 .terminal-container .xterm .xterm-viewport {
   background-color: #1a1a1a;
 }
+
+/* ── Instrument Detail Panel ── */
+
+.instrument-detail-panel {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.instrument-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.instrument-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 200px;
+  color: var(--text-secondary, #888);
+  text-align: center;
+  gap: 8px;
+}
+
+.instrument-detail-empty-icon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.instrument-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.instrument-detail-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: var(--bg-tertiary, #2a2a2a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.instrument-detail-icon-glyph {
+  opacity: 0.7;
+}
+
+.instrument-detail-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.instrument-detail-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.instrument-detail-id {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  font-family: monospace;
+}
+
+.instrument-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.instrument-detail-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.instrument-detail-status.status-active {
+  background: rgba(76, 175, 80, 0.15);
+  color: #66bb6a;
+}
+
+.instrument-detail-status.status-blocked {
+  background: rgba(244, 67, 54, 0.15);
+  color: #ef5350;
+}
+
+.instrument-detail-status.status-disabled {
+  background: rgba(158, 158, 158, 0.15);
+  color: #9e9e9e;
+}
+
+.instrument-detail-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary, #2a2a2a);
+  color: var(--text-secondary, #888);
+}
+
+.instrument-detail-description {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary, #ccc);
+}
+
+.instrument-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.instrument-detail-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary, #888);
+}
+
+.instrument-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.instrument-detail-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-tertiary, #2a2a2a);
+  color: var(--text-secondary, #aaa);
+  font-family: monospace;
+}
+
+.instrument-detail-muted {
+  font-size: 12px;
+  color: var(--text-secondary, #666);
+}
+
+.instrument-detail-actions {
+  padding-top: 8px;
+}
+
+.instrument-detail-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.instrument-detail-btn-primary {
+  background: var(--accent-primary, #5b8def);
+  color: #fff;
+}
+
+.instrument-detail-btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+/* ── Instrument Browse Panel ── */
+
+.instrument-browse-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.instrument-browse-header {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color, #333);
+  flex-shrink: 0;
+}
+
+.instrument-browse-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.instrument-browse-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.instrument-browse-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.instrument-browse-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.instrument-browse-filter-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #333);
+  background: transparent;
+  color: var(--text-secondary, #888);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.instrument-browse-filter-btn:hover {
+  border-color: var(--text-secondary, #888);
+  color: var(--text-primary, #e0e0e0);
+}
+
+.instrument-browse-filter-btn.active {
+  background: var(--accent-primary, #5b8def);
+  border-color: var(--accent-primary, #5b8def);
+  color: #fff;
+}
+
+.instrument-browse-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.instrument-browse-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100px;
+  color: var(--text-secondary, #888);
+  font-size: 13px;
+}
+
+.instrument-browse-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+  color: inherit;
+  width: 100%;
+}
+
+.instrument-browse-item:hover {
+  background: var(--bg-tertiary, #2a2a2a);
+}
+
+.instrument-browse-item.active {
+  background: var(--bg-tertiary, #2a2a2a);
+  border-color: var(--accent-primary, #5b8def);
+}
+
+.instrument-browse-item-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--bg-tertiary, #333);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.instrument-browse-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.instrument-browse-item-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.instrument-browse-item-desc {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instrument-browse-item-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.instrument-browse-item-author {
+  font-size: 10px;
+  color: var(--text-secondary, #666);
+}
+
+.instrument-browse-item-installed {
+  font-size: 10px;
+  color: #66bb6a;
+  font-weight: 500;
+}

@@ -15,6 +15,8 @@ import {
 } from "./components/plugins-sidebar.ts";
 import { ConnectorsSidebar } from "./components/connectors-sidebar.ts";
 import { InstrumentsSidebar } from "./components/instruments-sidebar.ts";
+import { InstrumentDetailPanel } from "./components/instrument-detail-panel.ts";
+import { InstrumentBrowsePanel } from "./components/instrument-browse-panel.ts";
 import { DebugLogPanel } from "./components/debug-log-panel.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ConnectorsView } from "./components/connectors-view.ts";
@@ -44,6 +46,7 @@ import type {
   ConnectorProvider,
   StageConnector,
   InstrumentRegistryEntry,
+  InstrumentCatalogEntry,
   InstrumentFrontendAPI,
   HostEventMap,
   TangoInstrumentDefinition,
@@ -433,6 +436,9 @@ type AppState = {
   instrumentsLoading: boolean;
   instrumentsError: string | null;
   activeInstrumentId: string | null;
+  catalogEntries: InstrumentCatalogEntry[];
+  catalogLoading: boolean;
+  catalogError: string | null;
   connectorsByStage: Record<string, StageConnector[]>;
   connectorsLoading: boolean;
   connectorAuthSession: ConnectorAuthSession | null;
@@ -477,6 +483,9 @@ const appState = new Store<AppState>({
   instrumentsLoading: false,
   instrumentsError: null,
   activeInstrumentId: null,
+  catalogEntries: [],
+  catalogLoading: false,
+  catalogError: null,
   connectorsByStage: {},
   connectorsLoading: false,
   connectorAuthSession: null,
@@ -489,6 +498,8 @@ let slotManager: PanelSlotManager;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
 let instrumentsSidebar: InstrumentsSidebar;
+let instrumentDetailPanel: InstrumentDetailPanel;
+let instrumentBrowsePanel: InstrumentBrowsePanel;
 let connectorsSidebar: ConnectorsSidebar;
 let pluginsPreview: PluginsPreview;
 let connectorsView: ConnectorsView;
@@ -892,7 +903,8 @@ function init(): void {
 
   instrumentsSidebar = new InstrumentsSidebar(instrumentsSidebarHost, {
     onActivate: (instrumentId) => {
-      void activateInstrument(instrumentId);
+      const entry = appState.get().instrumentEntries.find((e) => e.id === instrumentId);
+      if (entry) instrumentDetailPanel.showInstalled(entry);
     },
     onBack: () => {
       appState.update((s) => ({ ...s, viewMode: "stages" }));
@@ -925,6 +937,25 @@ function init(): void {
       return response.values ?? {};
     },
   });
+
+  instrumentDetailPanel = new InstrumentDetailPanel({
+    onActivate: (instrumentId) => {
+      void activateInstrument(instrumentId);
+    },
+    onInstall: (_entry) => {
+      // TODO: implement install from catalog
+    },
+  });
+
+  instrumentBrowsePanel = new InstrumentBrowsePanel({
+    onSelect: (entry) => {
+      instrumentDetailPanel.showCatalog(entry);
+    },
+    onRefresh: () => {
+      void loadInstrumentCatalog();
+    },
+  });
+
   instrumentRuntimeSidebarTitleEl = h("span", {
     class: "tasks-sidebar-title instrument-runtime-sidebar-title",
   }, ["Instrument"]);
@@ -1267,9 +1298,12 @@ function init(): void {
   async function activateInstrumentListMode(): Promise<void> {
     await slotManager.unmountAll();
     await slotManager.mount("sidebar", "app", { node: sidebarShell });
+    await slotManager.mount("first", "instrument-detail", { node: instrumentDetailPanel.element });
+    await slotManager.mount("second", "instrument-browse", { node: instrumentBrowsePanel.element });
     panelLayout.showPanel("first");
     panelLayout.showPanel("second");
     panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
+    void loadInstrumentCatalog();
   }
 
   // Update button — downloads, installs, and relaunches
@@ -1548,6 +1582,10 @@ function init(): void {
         error: state.instrumentsError,
       });
       instrumentsSidebar.setActive(state.activeInstrumentId);
+      instrumentBrowsePanel.render(state.catalogEntries, {
+        loading: state.catalogLoading,
+        error: state.catalogError,
+      });
       if (instrumentsSidebar.element) {
         instrumentsSidebar.element.hidden = false;
       }
@@ -2761,6 +2799,17 @@ async function loadInstruments(force = false): Promise<void> {
       instrumentsLoading: false,
       instrumentsError: message,
     }));
+  }
+}
+
+async function loadInstrumentCatalog(): Promise<void> {
+  appState.update((s) => ({ ...s, catalogLoading: true, catalogError: null }));
+  try {
+    const entries: InstrumentCatalogEntry[] = await (rpc as any).request.browseInstrumentCatalog({});
+    appState.update((s) => ({ ...s, catalogEntries: entries, catalogLoading: false }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    appState.update((s) => ({ ...s, catalogLoading: false, catalogError: message }));
   }
 }
 

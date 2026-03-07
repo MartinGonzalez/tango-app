@@ -19,7 +19,7 @@ import type {
   ConnectorAuthSession,
   ConnectorCredential,
 } from "./connectors.ts";
-import type { InstrumentRegistryEntry, InstrumentSettingField } from "./instruments.ts";
+import type { InstrumentRegistryEntry, InstrumentSettingField, InstrumentCatalogEntry, InstrumentSourceConfig } from "./instruments.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { ClaudeStreamEvent } from "./stream.ts";
 
@@ -217,6 +217,22 @@ export type AppRPC = {
       listInstruments: {
         params: {};
         response: InstrumentRegistryEntry[];
+      };
+      browseInstrumentCatalog: {
+        params: {};
+        response: InstrumentCatalogEntry[];
+      };
+      getInstrumentSources: {
+        params: {};
+        response: InstrumentSourceConfig;
+      };
+      addInstrumentSource: {
+        params: { source: string };
+        response: InstrumentSourceConfig;
+      };
+      removeInstrumentSource: {
+        params: { source: string };
+        response: InstrumentSourceConfig;
       };
       getInstrumentFrontendSource: {
         params: { instrumentId: string };
