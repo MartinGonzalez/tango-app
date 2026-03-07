@@ -225,9 +225,21 @@ export type InstrumentBackendContext = {
   host: InstrumentBackendHostAPI;
 };
 
+export type InstrumentBackgroundRefreshContext = {
+  instrumentId: string;
+  permissions: InstrumentPermission[];
+  emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
+  logger: LoggerAPI;
+  host: {
+    storage: StorageAPI;
+    settings: InstrumentSettingsAPI;
+  };
+};
+
 export type InstrumentBackendDefinition = {
   kind: "tango.instrument.backend.v2";
   actions: Record<string, InstrumentBackendAction<any, any>>;
   onStart?: (ctx: InstrumentBackendContext) => Promise<void> | void;
   onStop?: () => Promise<void> | void;
+  onBackgroundRefresh?: (ctx: InstrumentBackgroundRefreshContext) => Promise<void> | void;
 };

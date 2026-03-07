@@ -30,7 +30,7 @@
     "@xterm/xterm": "^5.5.0",
     "electrobun": "latest",
     "prismjs": "^1.30.0",
-    "tango-api": "github:MartinGonzalez/tango-api#v0.0.2-rc44"
+    "tango-api": "github:MartinGonzalez/tango-api#v0.0.2-rc46"
   },
   "devDependencies": {
     "@types/bun": "latest",

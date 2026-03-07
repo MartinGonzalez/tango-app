@@ -52,6 +52,11 @@ export type InstrumentSettingField =
       }>;
     });
 
+export type BackgroundRefreshConfig = {
+  enabled: boolean;
+  intervalSeconds: number;
+};
+
 export type InstrumentLauncherConfig = {
   sidebarShortcut?: {
     enabled: boolean;
@@ -73,6 +78,7 @@ export type InstrumentManifest = {
   permissions: InstrumentPermission[];
   settings?: InstrumentSettingField[];
   launcher?: InstrumentLauncherConfig;
+  backgroundRefresh?: BackgroundRefreshConfig;
 };
 
 export type InstrumentStatus =
@@ -98,6 +104,7 @@ export type InstrumentRegistryEntry = {
   permissions: InstrumentPermission[];
   settings: InstrumentSettingField[];
   launcher?: InstrumentLauncherConfig;
+  backgroundRefresh?: BackgroundRefreshConfig;
   enabled: boolean;
   status: InstrumentStatus;
   version: string;

@@ -387,6 +387,14 @@ export type AppRPC = {
         };
         response: { result: unknown };
       };
+      suspendInstrumentBackend: {
+        params: { instrumentId: string };
+        response: void;
+      };
+      resumeInstrumentBackend: {
+        params: { instrumentId: string };
+        response: void;
+      };
       getAppVersion: {
         params: {};
         response: { version: string };

@@ -28,6 +28,7 @@ type InstrumentBackendDefinition = {
   actions: Record<string, InstrumentBackendAction<any, any>>;
   onStart?: (ctx: InstrumentBackendContext) => Promise<void> | void;
   onStop?: () => Promise<void> | void;
+  onBackgroundRefresh?: (ctx: InstrumentBackgroundRefreshContext) => Promise<void> | void;
 };
 ```
 
@@ -45,7 +46,11 @@ Called when the instrument backend loads. Use it for initialization (creating ta
 
 ### `onStop()`
 
-Called when the instrument unloads. Use it for cleanup.
+Called when the instrument unloads or is suspended (user navigated away). Use it for cleanup.
+
+### `onBackgroundRefresh(ctx)`
+
+Called periodically while the instrument is suspended, if `backgroundRefresh` is enabled in the manifest. Receives a restricted context — only storage, settings, emit, and logger are available. See [Background Refresh](/reference/background-refresh/) for full details.
 
 ---
 
@@ -119,6 +124,38 @@ type InstrumentBackendHostAPI = {
 ```
 
 All methods work identically to the frontend versions. See [Frontend API Reference](/reference/frontend-api/) for details on each.
+
+---
+
+## InstrumentBackgroundRefreshContext
+
+A restricted version of the backend context passed to `onBackgroundRefresh`. Limits available APIs to prevent heavy workloads during background refresh.
+
+```ts
+type InstrumentBackgroundRefreshContext = {
+  instrumentId: string;
+  permissions: InstrumentPermission[];
+  emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
+  logger: LoggerAPI;
+  host: {
+    storage: StorageAPI;
+    settings: InstrumentSettingsAPI;
+  };
+};
+```
+
+| API | Available | Notes |
+|-----|-----------|-------|
+| `storage` | Yes | Full read/write access |
+| `settings` | Yes | Read/write instrument settings |
+| `emit` | Yes | Send events |
+| `logger` | Yes | Log messages at any level |
+| `sessions` | No | Background refresh should not spawn Claude sessions |
+| `connectors` | No | Too heavy for periodic background work |
+| `stages` | No | Not needed for data refresh |
+| `events.subscribe` | No | Subscriptions are cleared on suspend |
+
+See [Background Refresh](/reference/background-refresh/) for lifecycle flow, concurrency rules, and common patterns.
 
 ---
 

@@ -103,6 +103,15 @@ export async function loadInstrumentManifest(
       }
     : undefined;
 
+  const backgroundRefresh = base.backgroundRefresh
+    && typeof base.backgroundRefresh === "object"
+    && base.backgroundRefresh.enabled === true
+    ? {
+        enabled: true as const,
+        intervalSeconds: Math.max(10, Number(base.backgroundRefresh.intervalSeconds) || 30),
+      }
+    : undefined;
+
   const manifest: InstrumentManifest = {
     id,
     name,
@@ -115,6 +124,7 @@ export async function loadInstrumentManifest(
     permissions,
     settings,
     ...(launcher ? { launcher } : {}),
+    ...(backgroundRefresh ? { backgroundRefresh } : {}),
   };
 
   await assertEntrypointExists(installPath, manifest.entrypoint, "entrypoint");

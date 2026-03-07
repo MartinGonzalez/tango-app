@@ -8,6 +8,7 @@ import type {
   HostEventMap,
   InstrumentBackendContext,
   InstrumentBackendDefinition,
+  InstrumentBackgroundRefreshContext,
   InstrumentEvent,
   InstrumentRegistryEntry,
   InstrumentSettingField,
@@ -23,6 +24,13 @@ type LoadedBackendModule = {
   definition: InstrumentBackendDefinition | null;
   absoluteEntrypoint: string | null;
   activated: boolean;
+  suspended: boolean;
+};
+
+type BackgroundSchedulerState = {
+  timer: ReturnType<typeof setInterval> | null;
+  running: boolean;
+  abortController: AbortController | null;
 };
 
 type BackendEventHandler = (payload: unknown) => void | Promise<void>;
@@ -107,6 +115,7 @@ export class InstrumentRuntime {
   #hostApi: HostApi;
   #backendModuleCache = new Map<string, LoadedBackendModule>();
   #backendSubscriptions = new Map<string, Map<keyof HostEventMap, Set<BackendEventHandler>>>();
+  #backgroundSchedulers = new Map<string, BackgroundSchedulerState>();
 
   constructor(opts?: {
     registry?: InstrumentRegistry;
@@ -207,6 +216,7 @@ export class InstrumentRuntime {
       permissions: loaded.manifest.permissions,
       settings: loaded.manifest.settings ?? [],
       launcher: loaded.manifest.launcher,
+      ...(loaded.manifest.backgroundRefresh ? { backgroundRefresh: loaded.manifest.backgroundRefresh } : {}),
       enabled: true,
       status: "active",
       version: loaded.version,
@@ -304,7 +314,7 @@ export class InstrumentRuntime {
   ): Promise<unknown> {
     const entry = this.#requireUsableEntry(instrumentId);
     const module = await this.#loadBackendModule(entry);
-    if (!module.activated) {
+    if (!module.activated && !module.suspended) {
       await this.#activateBackend(entry);
     }
     if (!module.definition) {
@@ -614,6 +624,175 @@ export class InstrumentRuntime {
     };
   }
 
+  async suspendBackend(instrumentId: string): Promise<void> {
+    const entry = this.#registry.get(instrumentId);
+    if (!entry || !entry.enabled || entry.status !== "active") return;
+
+    const module = this.#backendModuleCache.get(instrumentId);
+    if (!module || module.suspended) return;
+    if (!module.activated) return;
+
+    if (module.definition?.onStop) {
+      try {
+        await module.definition.onStop();
+      } catch (err) {
+        console.warn(`Failed to suspend backend '${instrumentId}':`, err);
+      }
+    }
+
+    this.#backendSubscriptions.delete(instrumentId);
+    module.activated = false;
+    module.suspended = true;
+
+    this.#startBackgroundScheduler(instrumentId);
+  }
+
+  async resumeBackend(instrumentId: string): Promise<void> {
+    const entry = this.#registry.get(instrumentId);
+    if (!entry || !entry.enabled || entry.status !== "active") return;
+
+    this.#stopBackgroundScheduler(instrumentId);
+
+    const module = this.#backendModuleCache.get(instrumentId);
+    if (!module || !module.suspended) return;
+
+    if (module.definition?.onStart) {
+      const ctx = this.#buildContext(entry);
+      await module.definition.onStart(ctx);
+    }
+    module.activated = true;
+    module.suspended = false;
+  }
+
+  #startBackgroundScheduler(instrumentId: string): void {
+    if (this.#backgroundSchedulers.has(instrumentId)) return;
+
+    const entry = this.#registry.get(instrumentId);
+    if (!entry?.backgroundRefresh?.enabled) return;
+
+    const module = this.#backendModuleCache.get(instrumentId);
+    if (!module?.definition?.onBackgroundRefresh) return;
+
+    const intervalMs = Math.max(10_000, (entry.backgroundRefresh.intervalSeconds ?? 30) * 1000);
+    const hardTimeoutMs = Math.max(30_000, intervalMs * 2);
+
+    const state: BackgroundSchedulerState = {
+      timer: null,
+      running: false,
+      abortController: null,
+    };
+
+    state.timer = setInterval(async () => {
+      if (state.running) return;
+
+      const currentEntry = this.#registry.get(instrumentId);
+      if (!currentEntry?.enabled || currentEntry.status !== "active") {
+        this.#stopBackgroundScheduler(instrumentId);
+        return;
+      }
+
+      const currentModule = this.#backendModuleCache.get(instrumentId);
+      if (!currentModule?.definition?.onBackgroundRefresh) {
+        this.#stopBackgroundScheduler(instrumentId);
+        return;
+      }
+
+      state.running = true;
+      const abortController = new AbortController();
+      state.abortController = abortController;
+
+      const timeoutId = setTimeout(() => {
+        abortController.abort();
+        console.warn(`[backgroundRefresh] ${instrumentId} tick exceeded ${hardTimeoutMs}ms, aborting`);
+      }, hardTimeoutMs);
+
+      try {
+        const ctx = this.#buildBackgroundRefreshContext(currentEntry);
+        await Promise.race([
+          currentModule.definition.onBackgroundRefresh(ctx),
+          new Promise<never>((_, reject) => {
+            abortController.signal.addEventListener("abort", () => {
+              reject(new Error(`Background refresh timeout for '${instrumentId}'`));
+            });
+          }),
+        ]);
+      } catch (err) {
+        if (!abortController.signal.aborted) {
+          console.warn(`[backgroundRefresh] ${instrumentId} tick failed:`, err);
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        state.running = false;
+        state.abortController = null;
+      }
+    }, intervalMs);
+
+    this.#backgroundSchedulers.set(instrumentId, state);
+  }
+
+  #stopBackgroundScheduler(instrumentId: string): void {
+    const state = this.#backgroundSchedulers.get(instrumentId);
+    if (!state) return;
+
+    if (state.timer) clearInterval(state.timer);
+    if (state.abortController) state.abortController.abort();
+
+    this.#backgroundSchedulers.delete(instrumentId);
+  }
+
+  #stopAllBackgroundSchedulers(): void {
+    for (const instrumentId of this.#backgroundSchedulers.keys()) {
+      this.#stopBackgroundScheduler(instrumentId);
+    }
+  }
+
+  #buildBackgroundRefreshContext(entry: InstrumentRegistryEntry): InstrumentBackgroundRefreshContext {
+    return {
+      instrumentId: entry.id,
+      permissions: entry.permissions,
+      emit: ({ event, payload }) => {
+        this.#onEvent?.({
+          instrumentId: entry.id,
+          event,
+          payload,
+        });
+      },
+      logger: {
+        error: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "error", message, detail: args.length > 0 ? args : undefined });
+        },
+        warn: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "warn", message, detail: args.length > 0 ? args : undefined });
+        },
+        info: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "info", message, detail: args.length > 0 ? args : undefined });
+        },
+        debug: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "debug", message, detail: args.length > 0 ? args : undefined });
+        },
+      },
+      host: {
+        storage: {
+          getProperty: async (key) => this.getProperty(entry.id, key),
+          setProperty: async (key, value) => this.setProperty(entry.id, key, value),
+          deleteProperty: async (key) => this.deleteProperty(entry.id, key),
+          readFile: async (path, encoding) => this.readFile(entry.id, path, encoding),
+          writeFile: async (path, content, encoding) =>
+            this.writeFile(entry.id, path, content, encoding),
+          deleteFile: async (path) => this.deleteFile(entry.id, path),
+          listFiles: async (dir) => this.listFiles(entry.id, dir),
+          sqlQuery: async (sql, params, db) => this.sqlQuery(entry.id, sql, params, db),
+          sqlExecute: async (sql, params, db) => this.sqlExecute(entry.id, sql, params, db),
+        },
+        settings: {
+          getSchema: async () => this.getSettingsSchema(entry.id),
+          getValues: async () => this.getSettingsValues(entry.id),
+          setValue: async (key, value) => this.setSettingValue(entry.id, key, value),
+        },
+      },
+    };
+  }
+
   #requireEntry(instrumentId: string): InstrumentRegistryEntry {
     const entry = this.#registry.get(instrumentId);
     if (!entry) {
@@ -659,6 +838,7 @@ export class InstrumentRuntime {
         permissions: loaded.manifest.permissions,
         settings: loaded.manifest.settings ?? [],
         launcher: loaded.manifest.launcher,
+        ...(loaded.manifest.backgroundRefresh ? { backgroundRefresh: loaded.manifest.backgroundRefresh } : {}),
         enabled: existing?.enabled ?? true,
         status,
         version: loaded.version,
@@ -686,6 +866,7 @@ export class InstrumentRuntime {
   }
 
   async #deactivateBackend(instrumentId: string): Promise<void> {
+    this.#stopBackgroundScheduler(instrumentId);
     const module = this.#backendModuleCache.get(instrumentId);
     if (module?.activated && module.definition?.onStop) {
       try {
@@ -696,6 +877,7 @@ export class InstrumentRuntime {
     }
     if (module) {
       module.activated = false;
+      module.suspended = false;
     }
     this.#backendSubscriptions.delete(instrumentId);
   }
@@ -716,6 +898,7 @@ export class InstrumentRuntime {
         definition: null,
         absoluteEntrypoint: null,
         activated: false,
+        suspended: false,
       };
       this.#backendModuleCache.set(entry.id, loaded);
       return loaded;
@@ -738,12 +921,14 @@ export class InstrumentRuntime {
       actions: moduleLike.actions,
       onStart: moduleLike.onStart,
       onStop: moduleLike.onStop,
+      onBackgroundRefresh: moduleLike.onBackgroundRefresh,
     };
 
     const loaded: LoadedBackendModule = {
       definition,
       absoluteEntrypoint: backendPath,
       activated: false,
+      suspended: false,
     };
 
     this.#backendModuleCache.set(entry.id, loaded);

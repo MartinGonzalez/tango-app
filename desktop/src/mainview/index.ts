@@ -1909,6 +1909,12 @@ async function deactivateRuntimeInstrument(): Promise<void> {
       instrumentRightPanelHost.replaceChildren();
       instrumentRightPanelHost.hidden = true;
     }
+    // Suspend backend lifecycle (fire-and-forget, don't block UI)
+    if (prevId) {
+      (rpc as any).request.suspendInstrumentBackend({ instrumentId: prevId }).catch((err: unknown) => {
+        console.warn(`Failed to suspend backend for '${prevId}':`, err);
+      });
+    }
     runtimeInstrumentDeactivating = false;
   }
 }
@@ -2294,6 +2300,12 @@ async function mountRuntimeSlot(
 
 async function activateRuntimeInstrument(entry: InstrumentRegistryEntry): Promise<void> {
   await deactivateRuntimeInstrument();
+
+  // Resume backend lifecycle before loading frontend (frontend may call actions immediately)
+  await (rpc as any).request.resumeInstrumentBackend({ instrumentId: entry.id }).catch((err: unknown) => {
+    console.warn(`Failed to resume backend for '${entry.id}':`, err);
+  });
+
   let definition: TangoInstrumentDefinition;
   try {
     definition = await loadInstrumentDefinition(entry);

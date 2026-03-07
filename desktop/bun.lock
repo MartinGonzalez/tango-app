@@ -12,7 +12,7 @@
         "@xterm/xterm": "^5.5.0",
         "electrobun": "latest",
         "prismjs": "^1.30.0",
-        "tango-api": "github:MartinGonzalez/tango-api#v0.0.2-rc44",
+        "tango-api": "github:MartinGonzalez/tango-api#v0.0.2-rc46",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -224,7 +224,7 @@
 
     "strip-ansi-cjs": ["strip-ansi@6.0.1", "", { "dependencies": { "ansi-regex": "^5.0.1" } }, "sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A=="],
 
-    "tango-api": ["tango-api@github:MartinGonzalez/tango-api#f130ede", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/sdk/cli/index.ts", "create-tango-instrument": "./create-tango-instrument/src/index.ts" } }, "MartinGonzalez-tango-api-f130ede"],
+    "tango-api": ["tango-api@github:MartinGonzalez/tango-api#25e1032", { "peerDependencies": { "react": ">=18.0.0", "react-dom": ">=18.0.0" }, "bin": { "tango-sdk": "./src/sdk/cli/index.ts", "create-tango-instrument": "./create-tango-instrument/src/index.ts" } }, "MartinGonzalez-tango-api-25e1032"],
 
     "tar-stream": ["tar-stream@3.1.8", "", { "dependencies": { "b4a": "^1.6.4", "bare-fs": "^4.5.5", "fast-fifo": "^1.2.0", "streamx": "^2.15.0" } }, "sha512-U6QpVRyCGHva435KoNWy9PRoi2IFYCgtEhq9nmrPPpbRacPs9IH4aJ3gbrFC8dPcXvdSZ4XXfXT5Fshbp2MtlQ=="],
 

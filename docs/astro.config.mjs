@@ -43,6 +43,7 @@ export default defineConfig({
             { label: "UI Components", slug: "reference/ui-components" },
             { label: "Hooks", slug: "reference/hooks" },
             { label: "Permissions", slug: "reference/permissions" },
+            { label: "Background Refresh", slug: "reference/background-refresh" },
             { label: "CLI", slug: "reference/cli" },
           ],
         },

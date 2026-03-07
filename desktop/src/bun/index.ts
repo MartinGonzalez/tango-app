@@ -1400,6 +1400,18 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return { result };
       },
 
+      suspendInstrumentBackend: async ({ instrumentId }: { instrumentId: string }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) throw new Error("instrumentId is required");
+        await instrumentRuntime.suspendBackend(id);
+      },
+
+      resumeInstrumentBackend: async ({ instrumentId }: { instrumentId: string }) => {
+        const id = String(instrumentId ?? "").trim();
+        if (!id) throw new Error("instrumentId is required");
+        await instrumentRuntime.resumeBackend(id);
+      },
+
       getAppVersion: async () => {
         return { version: APP_VERSION };
       },
