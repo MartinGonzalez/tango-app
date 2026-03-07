@@ -7717,33 +7717,24 @@ button {
   flex-shrink: 0;
 }
 
-.debug-log-dir {
+.debug-log-level {
   flex-shrink: 0;
   font-weight: 600;
-  width: 24px;
-  text-align: center;
 }
 
-.debug-log-dir.dir-host {
-  color: var(--blue);
-}
+.debug-log-level-error { color: var(--red); }
+.debug-log-level-warn  { color: var(--amber); }
+.debug-log-level-info  { color: var(--blue); }
+.debug-log-level-event { color: var(--green); }
+.debug-log-level-debug { color: var(--text-tertiary); }
 
-.debug-log-dir.dir-instrument {
-  color: var(--green);
-}
-
-.debug-log-ns {
-  color: var(--amber);
-  flex-shrink: 0;
-}
-
-.debug-log-method {
-  color: var(--text);
-  flex-shrink: 0;
-}
-
-.debug-log-args {
+.debug-log-source {
   color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.debug-log-message {
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
 }

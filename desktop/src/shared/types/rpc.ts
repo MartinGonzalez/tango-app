@@ -463,6 +463,12 @@ export type AppRPC = {
         event: string;
         payload?: unknown;
       };
+      instrumentLog: {
+        instrumentId: string;
+        level: "error" | "warn" | "info" | "debug";
+        message: string;
+        detail?: unknown;
+      };
       instrumentDevReload: {
         instrumentId: string;
         entries?: InstrumentRegistryEntry[];

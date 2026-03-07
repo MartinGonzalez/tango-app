@@ -1,24 +1,27 @@
 import { h } from "../lib/dom.ts";
 
-export type DebugLogDirection = "host→instrument" | "instrument→host";
+export type LogLevel = "error" | "warn" | "info" | "event" | "debug";
 
-export interface DebugLogEntry {
+export type LogSource =
+  | { kind: "instrument"; instrumentId: string }
+  | { kind: "host" };
+
+export interface LogEntry {
   ts: number;
-  dir: DebugLogDirection;
-  namespace: string;
-  method: string;
-  args: unknown[];
-  instrumentId?: string;
+  level: LogLevel;
+  source: LogSource;
+  message: string;
+  detail?: unknown;
 }
 
 const MAX_ENTRIES = 500;
 
 /**
- * Floating debug panel that shows bidirectional API traffic
- * between instruments and the Tango host. Toggle with Cmd+Opt+D.
+ * Floating log console that shows instrument logs, events, and API traffic.
+ * Toggle with Cmd+L.
  */
 export class DebugLogPanel {
-  private entries: DebugLogEntry[] = [];
+  private entries: LogEntry[] = [];
   private el: HTMLElement;
   private listEl: HTMLElement;
   private filterInput: HTMLInputElement;
@@ -29,7 +32,7 @@ export class DebugLogPanel {
   constructor(container: HTMLElement) {
     this.filterInput = document.createElement("input");
     this.filterInput.type = "text";
-    this.filterInput.placeholder = "Filter (namespace, method, dir)…";
+    this.filterInput.placeholder = "Filter (level, source, message)…";
     this.filterInput.className = "debug-log-filter";
     this.filterInput.addEventListener("input", () => {
       this.filter = this.filterInput.value.toLowerCase();
@@ -42,7 +45,7 @@ export class DebugLogPanel {
     }, ["Clear"]);
 
     const header = h("div", { class: "debug-log-header" }, [
-      h("span", { class: "debug-log-title" }, ["Instrument Debug"]),
+      h("span", { class: "debug-log-title" }, ["Console"]),
       clearBtn,
     ]);
 
@@ -61,7 +64,7 @@ export class DebugLogPanel {
     container.appendChild(this.el);
   }
 
-  record(entry: DebugLogEntry): void {
+  record(entry: LogEntry): void {
     this.entries.push(entry);
     if (this.entries.length > MAX_ENTRIES) {
       this.entries.shift();
@@ -93,17 +96,19 @@ export class DebugLogPanel {
     }
   }
 
-  private filteredEntries(): DebugLogEntry[] {
+  private filteredEntries(): LogEntry[] {
     if (!this.filter) return this.entries;
     return this.entries.filter((e) => {
-      const haystack = `${e.dir} ${e.namespace} ${e.method} ${e.instrumentId ?? ""}`.toLowerCase();
+      const sourceLabel = e.source.kind === "instrument" ? e.source.instrumentId : "host";
+      const haystack = `${e.level} ${sourceLabel} ${e.message}`.toLowerCase();
       return haystack.includes(this.filter);
     });
   }
 
-  private appendRow(entry: DebugLogEntry): void {
+  private appendRow(entry: LogEntry): void {
     if (this.filter) {
-      const haystack = `${entry.dir} ${entry.namespace} ${entry.method} ${entry.instrumentId ?? ""}`.toLowerCase();
+      const sourceLabel = entry.source.kind === "instrument" ? entry.source.instrumentId : "host";
+      const haystack = `${entry.level} ${sourceLabel} ${entry.message}`.toLowerCase();
       if (!haystack.includes(this.filter)) return;
     }
 
@@ -115,33 +120,39 @@ export class DebugLogPanel {
       fractionalSecondDigits: 3,
     } as Intl.DateTimeFormatOptions);
 
-    const dirClass = entry.dir === "host→instrument" ? "dir-host" : "dir-instrument";
-    const dirLabel = entry.dir === "host→instrument" ? "H→I" : "I→H";
+    const sourceLabel = entry.source.kind === "instrument"
+      ? `i:${entry.source.instrumentId}`
+      : "host";
 
-    let argsPreview: string;
-    let argsFull: string;
-    try {
-      argsFull = JSON.stringify(entry.args, null, 2);
-      argsPreview = argsFull.length > 120 ? JSON.stringify(entry.args).slice(0, 120) + "…" : argsFull.replace(/\n/g, " ");
-    } catch {
-      argsPreview = "[unserializable]";
-      argsFull = argsPreview;
+    const summaryChildren: (string | HTMLElement)[] = [
+      h("span", { class: "debug-log-time" }, [time]),
+      h("span", { class: `debug-log-level debug-log-level-${entry.level}` }, [`[${entry.level}]`]),
+      h("span", { class: "debug-log-source" }, [`[${sourceLabel}]`]),
+      h("span", { class: "debug-log-message" }, [entry.message]),
+    ];
+
+    const summary = h("div", { class: "debug-log-summary" }, summaryChildren);
+
+    let detail: HTMLElement | null = null;
+    if (entry.detail !== undefined) {
+      let detailText: string;
+      try {
+        detailText = JSON.stringify(entry.detail, null, 2);
+      } catch {
+        detailText = "[unserializable]";
+      }
+      detail = h("pre", { class: "debug-log-detail" }, [detailText]);
     }
 
-    const detail = h("pre", { class: "debug-log-detail" }, [argsFull]);
+    const rowChildren: (string | HTMLElement)[] = [summary];
+    if (detail) rowChildren.push(detail);
 
-    const summary = h("div", { class: "debug-log-summary" }, [
-      h("span", { class: "debug-log-time" }, [time]),
-      h("span", { class: `debug-log-dir ${dirClass}` }, [dirLabel]),
-      h("span", { class: "debug-log-ns" }, [entry.namespace]),
-      h("span", { class: "debug-log-method" }, [`.${entry.method}()`]),
-      h("span", { class: "debug-log-args" }, [argsPreview]),
-    ]);
-
-    const row = h("div", { class: "debug-log-row" }, [summary, detail]);
-    summary.addEventListener("click", () => {
-      row.classList.toggle("expanded");
-    });
+    const row = h("div", { class: "debug-log-row" }, rowChildren);
+    if (detail) {
+      summary.addEventListener("click", () => {
+        row.classList.toggle("expanded");
+      });
+    }
 
     this.listEl.appendChild(row);
 

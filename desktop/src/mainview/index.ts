@@ -25,7 +25,7 @@ import {
 } from "./components/prs-sidebar.ts";
 import { ConnectorsSidebar } from "./components/connectors-sidebar.ts";
 import { InstrumentsSidebar } from "./components/instruments-sidebar.ts";
-import { DebugLogPanel, type DebugLogEntry } from "./components/debug-log-panel.ts";
+import { DebugLogPanel } from "./components/debug-log-panel.ts";
 import { PluginsPreview } from "./components/plugins-preview.ts";
 import { ConnectorsView } from "./components/connectors-view.ts";
 import { ChatView, renderMarkdown } from "./components/chat-view.ts";
@@ -241,6 +241,25 @@ const rpc = Electroview.defineRPC<any>({
         payload?: unknown;
       }) => {
         publishFrontendHostEvent("instrument.event", { instrumentId, event, payload });
+      },
+      instrumentLog: ({
+        instrumentId,
+        level,
+        message,
+        detail,
+      }: {
+        instrumentId: string;
+        level: "error" | "warn" | "info" | "debug";
+        message: string;
+        detail?: unknown;
+      }) => {
+        debugLogPanel?.record({
+          ts: Date.now(),
+          level,
+          source: { kind: "instrument", instrumentId },
+          message,
+          detail,
+        });
       },
       instrumentDevReload: ({
         instrumentId,
@@ -630,10 +649,10 @@ function publishFrontendHostEvent<E extends keyof HostEventMap>(
 ): void {
   debugLogPanel?.record({
     ts: Date.now(),
-    dir: "host→instrument",
-    namespace: "events",
-    method: String(event),
-    args: [payload],
+    level: "event",
+    source: { kind: "host" },
+    message: String(event),
+    detail: payload,
   });
   const handlers = frontendHostEventSubscribers.get(event);
   if (!handlers || handlers.size === 0) return;
@@ -1894,6 +1913,15 @@ async function deactivateRuntimeInstrument(): Promise<void> {
   }
 }
 
+function argsPreview(args: unknown[]): string {
+  try {
+    const str = args.map((a) => JSON.stringify(a)).join(", ");
+    return str.length > 80 ? str.slice(0, 80) + "…" : str;
+  } catch {
+    return "…";
+  }
+}
+
 function wrapApiWithDebugLogging(api: InstrumentFrontendAPI): InstrumentFrontendAPI {
   if (!debugLogPanel) return api;
   const panel = debugLogPanel;
@@ -1909,30 +1937,15 @@ function wrapApiWithDebugLogging(api: InstrumentFrontendAPI): InstrumentFrontend
         return (...args: unknown[]) => {
           panel.record({
             ts: Date.now(),
-            dir: "instrument→host",
-            namespace: nsName,
-            method,
-            args,
-            instrumentId,
+            level: "debug",
+            source: { kind: "instrument", instrumentId },
+            message: `${nsName}.${method}(${argsPreview(args)})`,
+            detail: args,
           });
           return val.apply(target, args);
         };
       },
     });
-  }
-
-  function wrapFn(name: string, fn: (...a: any[]) => any): typeof fn {
-    return (...args: unknown[]) => {
-      panel.record({
-        ts: Date.now(),
-        dir: "instrument→host",
-        namespace: "api",
-        method: name,
-        args,
-        instrumentId,
-      });
-      return fn(...args);
-    };
   }
 
   return {
@@ -1945,8 +1958,9 @@ function wrapApiWithDebugLogging(api: InstrumentFrontendAPI): InstrumentFrontend
     actions: proxyNamespace(api.actions, "actions"),
     settings: proxyNamespace(api.settings, "settings"),
     ui: api.ui ? proxyNamespace(api.ui as any, "ui") : api.ui,
-    registerShortcut: wrapFn("registerShortcut", api.registerShortcut),
-    emit: wrapFn("emit", api.emit),
+    logger: api.logger,
+    registerShortcut: api.registerShortcut,
+    emit: api.emit,
   };
 }
 
@@ -2169,8 +2183,53 @@ function buildInstrumentFrontendApi(entry: InstrumentRegistryEntry): InstrumentF
       },
       openUrl: (url: string) => { void openExternalUrl(url); },
     },
+    logger: {
+      error: (message: string, ...args: unknown[]) => {
+        debugLogPanel?.record({
+          ts: Date.now(),
+          level: "error",
+          source: { kind: "instrument", instrumentId: entry.id },
+          message,
+          detail: args.length > 0 ? args : undefined,
+        });
+      },
+      warn: (message: string, ...args: unknown[]) => {
+        debugLogPanel?.record({
+          ts: Date.now(),
+          level: "warn",
+          source: { kind: "instrument", instrumentId: entry.id },
+          message,
+          detail: args.length > 0 ? args : undefined,
+        });
+      },
+      info: (message: string, ...args: unknown[]) => {
+        debugLogPanel?.record({
+          ts: Date.now(),
+          level: "info",
+          source: { kind: "instrument", instrumentId: entry.id },
+          message,
+          detail: args.length > 0 ? args : undefined,
+        });
+      },
+      debug: (message: string, ...args: unknown[]) => {
+        debugLogPanel?.record({
+          ts: Date.now(),
+          level: "debug",
+          source: { kind: "instrument", instrumentId: entry.id },
+          message,
+          detail: args.length > 0 ? args : undefined,
+        });
+      },
+    },
     registerShortcut: () => {},
     emit: (event) => {
+      debugLogPanel?.record({
+        ts: Date.now(),
+        level: "event",
+        source: { kind: "instrument", instrumentId: entry.id },
+        message: event.event,
+        detail: event.payload,
+      });
       publishFrontendHostEvent("instrument.event", {
         instrumentId: entry.id,
         event: event.event,
@@ -2912,6 +2971,10 @@ async function activateInstrument(instrumentId: string): Promise<void> {
 
   panelLayout.showPanel("sidebar");
   qs("#btn-toggle-stages")?.classList.add("active");
+
+  if (instrumentRuntimeSidebarTitleEl) {
+    instrumentRuntimeSidebarTitleEl.textContent = entry.name;
+  }
 
   try {
     await activateRuntimeInstrument(entry);

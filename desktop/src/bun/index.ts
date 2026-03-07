@@ -122,6 +122,9 @@ const instrumentRuntime = new InstrumentRuntime({
     mainRPC?.send.instrumentEvent(event);
     instrumentRuntime.emitHostEvent("instrument.event", event);
   },
+  onLog: (entry) => {
+    mainRPC?.send.instrumentLog(entry);
+  },
   hostApi: {
     sessions: {
       start: async ({

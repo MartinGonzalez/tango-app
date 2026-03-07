@@ -103,6 +103,7 @@ export class InstrumentRuntime {
   #storage: InstrumentStorage;
   #bundledInstallPaths: string[];
   #onEvent: ((event: InstrumentEvent) => void) | null;
+  #onLog: ((entry: { instrumentId: string; level: string; message: string; detail?: unknown }) => void) | null;
   #hostApi: HostApi;
   #backendModuleCache = new Map<string, LoadedBackendModule>();
   #backendSubscriptions = new Map<string, Map<keyof HostEventMap, Set<BackendEventHandler>>>();
@@ -112,6 +113,7 @@ export class InstrumentRuntime {
     storage?: InstrumentStorage;
     bundledInstallPaths?: string[];
     onEvent?: (event: InstrumentEvent) => void;
+    onLog?: (entry: { instrumentId: string; level: string; message: string; detail?: unknown }) => void;
     hostApi?: HostApi;
   }) {
     this.#registry = opts?.registry ?? new InstrumentRegistry();
@@ -120,6 +122,7 @@ export class InstrumentRuntime {
       resolve(String(value))
     );
     this.#onEvent = opts?.onEvent ?? null;
+    this.#onLog = opts?.onLog ?? null;
     this.#hostApi = opts?.hostApi ?? {
       sessions: {
         start: async () => {
@@ -455,19 +458,12 @@ export class InstrumentRuntime {
   }
 
   emitHostEvent<E extends keyof HostEventMap>(event: E, payload: HostEventMap[E]): void {
-    if (this.#backendSubscriptions.size === 0) {
-      console.log(`[emitHostEvent] ${String(event)} — NO subscriptions at all (map empty)`);
-    }
     for (const [instrumentId, byEvent] of this.#backendSubscriptions) {
       const handlers = byEvent.get(event);
       if (!handlers || handlers.size === 0) continue;
       const entry = this.#registry.get(instrumentId);
-      if (!entry || !entry.enabled || entry.status === "disabled" || entry.status === "blocked") {
-        console.log(`[emitHostEvent] ${String(event)} — SKIPPED ${instrumentId}: entry=${!!entry} enabled=${entry?.enabled} status=${entry?.status}`);
-        continue;
-      }
+      if (!entry || !entry.enabled || entry.status === "disabled" || entry.status === "blocked") continue;
       for (const handler of handlers) {
-        console.log(`[emitHostEvent] ${String(event)} — DISPATCHING to ${instrumentId}`);
         Promise.resolve()
           .then(() => handler(payload))
           .catch((err) => {
@@ -517,6 +513,20 @@ export class InstrumentRuntime {
           event,
           payload,
         });
+      },
+      logger: {
+        error: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "error", message, detail: args.length > 0 ? args : undefined });
+        },
+        warn: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "warn", message, detail: args.length > 0 ? args : undefined });
+        },
+        info: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "info", message, detail: args.length > 0 ? args : undefined });
+        },
+        debug: (message: string, ...args: unknown[]) => {
+          this.#onLog?.({ instrumentId: entry.id, level: "debug", message, detail: args.length > 0 ? args : undefined });
+        },
       },
       host: {
         storage: {
