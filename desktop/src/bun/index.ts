@@ -2221,8 +2221,15 @@ mainWindow.on("close", () => {
   Utils.quit();
 });
 
+let isWindowFocused = true;
+
 mainWindow.on("focus", () => {
+  isWindowFocused = true;
   watcher.fetchOnce();
+});
+
+mainWindow.on("blur", () => {
+  isWindowFocused = false;
 });
 
 // ── Approval server callback ─────────────────────────────────────
@@ -2245,9 +2252,9 @@ approvals.onHookEvent((event) => {
   // Turn-diff lifecycle for PTY sessions (mirrors stream-JSON behavior)
   if (hookEventName === "UserPromptSubmit" && resolvedCwd && sessionId) {
     mainRPC?.send.sessionActivity({ sessionId, activity: "working" });
-    // Ensure the stage is registered and CWD is tracked immediately
+    // Track CWD for this session (but don't auto-add as a stage —
+    // stages are only added when the user explicitly opens one or starts a session from the UI)
     sessionCwds.set(sessionId, resolvedCwd);
-    void stages.add(resolvedCwd);
     watcher.fetchOnce();
     void beginTurnDiff(resolvedCwd, sessionId).catch((err) => {
       console.warn("Failed to begin turn diff from hook:", err);
@@ -2266,11 +2273,13 @@ approvals.onHookEvent((event) => {
   }
   if (hookEventName === "Stop" && resolvedCwd && sessionId) {
     mainRPC?.send.sessionActivity({ sessionId, activity: "stopped" });
-    const stageName = resolvedCwd.split("/").pop() ?? resolvedCwd;
-    Utils.showNotification({
-      title: stageName,
-      body: "Claude finished working",
-    });
+    if (!isWindowFocused) {
+      const stageName = resolvedCwd.split("/").pop() ?? resolvedCwd;
+      Utils.showNotification({
+        title: stageName,
+        body: "Claude finished working",
+      });
+    }
     void finalizeTurnDiff(resolvedCwd, sessionId).then(() => {
       // Refresh diff after finalization so last_turn scope picks up the new data
       mainRPC?.send.stageFileChanged({ cwd: resolvedCwd, toolName: "Stop" });
