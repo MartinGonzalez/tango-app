@@ -7,7 +7,6 @@ export * from "./types/stream.ts";
 export * from "./types/tools.ts";
 export * from "./types/plugins.ts";
 export * from "./types/connectors.ts";
-export * from "./types/pull-requests.ts";
 export * from "./types/instruments.ts";
 export * from "./types/instrument-sdk.ts";
 export * from "./types/rpc.ts";

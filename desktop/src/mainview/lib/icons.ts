@@ -34,13 +34,6 @@ export function tasksToolIcon(className = "sidebar-primary-icon"): HTMLElement {
   }, [materialIcon("task_alt")]);
 }
 
-export function pullRequestsToolIcon(className = "sidebar-primary-icon"): HTMLElement {
-  return h("span", {
-    class: className,
-    "aria-hidden": "true",
-  }, [materialIcon("fork_right")]);
-}
-
 export function connectorsToolIcon(className = "sidebar-primary-icon"): HTMLElement {
   return h("span", {
     class: className,

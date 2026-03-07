@@ -96,6 +96,19 @@ export class Sidebar {
     // Don't re-render if a rename or menu is open (preserves UI state)
     if (this.#renamingSessionId || this.#openMenuSessionId) return;
 
+    // Snapshot old positions and session labels before clearing
+    const oldPositions = new Map<string, number>();
+    for (const el of this.#listEl.querySelectorAll<HTMLElement>(".ws-folder")) {
+      const path = el.dataset.wsPath;
+      if (path) oldPositions.set(path, el.getBoundingClientRect().top);
+    }
+    const oldLabels = new Map<string, string>();
+    for (const el of this.#listEl.querySelectorAll<HTMLElement>(".ws-session-item")) {
+      const id = el.dataset.sessionId;
+      const label = el.querySelector(".ws-session-label")?.textContent ?? "";
+      if (id && label) oldLabels.set(id, label);
+    }
+
     clearChildren(this.#listEl);
 
     if (stages.length === 0) {
@@ -115,6 +128,43 @@ export class Sidebar {
       this.#listEl.appendChild(this.#renderStage(ws));
     }
     this.#animatingPath = null;
+
+    // FLIP: animate stages that changed position
+    if (oldPositions.size > 0) {
+      for (const el of this.#listEl.querySelectorAll<HTMLElement>(".ws-folder")) {
+        const path = el.dataset.wsPath;
+        if (!path) continue;
+        const oldTop = oldPositions.get(path);
+        if (oldTop === undefined) continue;
+        const newTop = el.getBoundingClientRect().top;
+        const delta = oldTop - newTop;
+        if (Math.abs(delta) < 1) continue;
+        el.style.transform = `translateY(${delta}px)`;
+        el.style.transition = "none";
+        requestAnimationFrame(() => {
+          el.style.transition = "transform 250ms ease";
+          el.style.transform = "";
+          el.addEventListener("transitionend", () => {
+            el.style.transition = "";
+          }, { once: true });
+        });
+      }
+    }
+
+    // Scramble-reveal animation for renamed sessions
+    if (oldLabels.size > 0) {
+      for (const el of this.#listEl.querySelectorAll<HTMLElement>(".ws-session-item")) {
+        const id = el.dataset.sessionId;
+        if (!id) continue;
+        const oldLabel = oldLabels.get(id);
+        if (oldLabel === undefined) continue;
+        const labelEl = el.querySelector(".ws-session-label") as HTMLElement | null;
+        if (!labelEl) continue;
+        const newLabel = labelEl.textContent ?? "";
+        if (oldLabel === newLabel) continue;
+        scrambleReveal(labelEl, newLabel);
+      }
+    }
   }
 
   #renderStage(ws: StageData): HTMLElement {
@@ -501,4 +551,36 @@ function timeAgo(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days < 30) return `${days}d ago`;
   return `${Math.floor(days / 30)}mo ago`;
+}
+
+const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const SCRAMBLE_DURATION_MS = 400;
+const SCRAMBLE_INTERVAL_MS = 30;
+
+function scrambleReveal(el: HTMLElement, finalText: string): void {
+  const steps = Math.ceil(SCRAMBLE_DURATION_MS / SCRAMBLE_INTERVAL_MS);
+  let step = 0;
+
+  const interval = setInterval(() => {
+    step++;
+    const progress = step / steps;
+    // Number of characters revealed so far (left to right)
+    const revealed = Math.floor(progress * finalText.length);
+    let display = "";
+    for (let i = 0; i < finalText.length; i++) {
+      if (i < revealed) {
+        display += finalText[i];
+      } else if (finalText[i] === " ") {
+        display += " ";
+      } else {
+        display += SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+      }
+    }
+    el.textContent = display;
+
+    if (step >= steps) {
+      clearInterval(interval);
+      el.textContent = finalText;
+    }
+  }, SCRAMBLE_INTERVAL_MS);
 }

@@ -1,5 +1,5 @@
 import { h } from "../lib/dom.ts";
-import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
+type PullRequestFileReviewState = { seen: boolean; attention: "new" | "updated" | null };
 import type { DiffFile, DiffScope } from "../../shared/types.ts";
 
 export type FileListView = "flat" | "tree";

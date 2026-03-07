@@ -6,7 +6,6 @@ import type {
 } from "./connectors.ts";
 import type { StageInfo } from "./diff.ts";
 import type { InstrumentEvent, InstrumentPermission, InstrumentSettingField } from "./instruments.ts";
-import type { PullRequestAgentReviewStatus } from "./pull-requests.ts";
 import type { SessionInfo } from "./sessions.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { ClaudeStreamEvent } from "./stream.ts";
@@ -93,12 +92,6 @@ export type HostEventMap = {
     exitCode: number;
   };
   "tool.approval": ToolApprovalRequest;
-  "pullRequest.agentReviewChanged": {
-    repo: string;
-    number: number;
-    runId: string;
-    status: PullRequestAgentReviewStatus;
-  };
   "instrument.event": {
     instrumentId: string;
     event: string;

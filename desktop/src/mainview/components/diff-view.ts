@@ -4,13 +4,40 @@ import {
   UIButton,
   UIIconButton,
 } from "../ui/index.ts";
-import type { PullRequestFileReviewState } from "../lib/pr-file-review.ts";
+type PullRequestFileReviewState = { seen: boolean; attention: "new" | "updated" | null };
 import type {
   DiffFile,
   DiffLine,
-  PullRequestReviewThread,
   StageFileContent,
 } from "../../shared/types.ts";
+
+type PullRequestReviewThreadComment = {
+  id: string;
+  authorLogin: string;
+  authorAssociation: string | null;
+  body: string;
+  path: string;
+  line: number | null;
+  originalLine: number | null;
+  side: string | null;
+  commitSha: string | null;
+  createdAt: string;
+  updatedAt: string;
+  inReplyToId: string | null;
+};
+
+type PullRequestReviewThread = {
+  kind: "review_thread";
+  id: string;
+  path: string;
+  line: number | null;
+  originalLine: number | null;
+  side: string | null;
+  isResolved: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+  comments: PullRequestReviewThreadComment[];
+};
 import { renderMarkdown } from "./chat-view.ts";
 import Prism from "../lib/prism.ts";
 

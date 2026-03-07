@@ -19,14 +19,6 @@ import type {
   ConnectorAuthSession,
   ConnectorCredential,
 } from "./connectors.ts";
-import type {
-  PullRequestSummary,
-  PullRequestDetail,
-  PullRequestReviewState,
-  PullRequestAgentReviewRun,
-  PullRequestAgentReviewDocument,
-  PullRequestAgentReviewStatus,
-} from "./pull-requests.ts";
 import type { InstrumentRegistryEntry, InstrumentSettingField } from "./instruments.ts";
 import type { Snapshot } from "./snapshot.ts";
 import type { ClaudeStreamEvent } from "./stream.ts";
@@ -181,92 +173,6 @@ export type AppRPC = {
           provider: ConnectorProvider;
         };
         response: ConnectorCredential;
-      };
-      getAssignedPullRequests: {
-        params: { limit?: number };
-        response: PullRequestSummary[];
-      };
-      getOpenedPullRequests: {
-        params: { limit?: number };
-        response: PullRequestSummary[];
-      };
-      getReviewRequestedPullRequests: {
-        params: { limit?: number };
-        response: PullRequestSummary[];
-      };
-      getPullRequestDetail: {
-        params: { repo: string; number: number };
-        response: PullRequestDetail;
-      };
-      getPullRequestDiff: {
-        params: { repo: string; number: number; commitSha?: string | null };
-        response: DiffFile[];
-      };
-      getPullRequestReviewState: {
-        params: { repo: string; number: number };
-        response: PullRequestReviewState | null;
-      };
-      setPullRequestFileSeen: {
-        params: {
-          repo: string;
-          number: number;
-          headSha: string;
-          filePath: string;
-          fileSha: string | null;
-          seen: boolean;
-        };
-        response: PullRequestReviewState;
-      };
-      markPullRequestFilesSeen: {
-        params: {
-          repo: string;
-          number: number;
-          headSha: string;
-          files: Array<{ path: string; sha: string | null }>;
-        };
-        response: PullRequestReviewState;
-      };
-      replyPullRequestReviewComment: {
-        params: {
-          repo: string;
-          number: number;
-          commentId: string;
-          body: string;
-        };
-        response: void;
-      };
-      createPullRequestReviewComment: {
-        params: {
-          repo: string;
-          number: number;
-          commitSha: string;
-          path: string;
-          line: number;
-          side: "LEFT" | "RIGHT";
-          body: string;
-        };
-        response: void;
-      };
-      getPullRequestAgentReviews: {
-        params: { repo: string; number: number };
-        response: PullRequestAgentReviewRun[];
-      };
-      getPullRequestAgentReviewDocument: {
-        params: { repo: string; number: number; version: number };
-        response: PullRequestAgentReviewDocument | null;
-      };
-      startPullRequestAgentReview: {
-        params: { repo: string; number: number; headSha: string };
-        response: PullRequestAgentReviewRun;
-      };
-      applyPullRequestAgentReviewIssue: {
-        params: {
-          repo: string;
-          number: number;
-          reviewVersion: number;
-          suggestionIndex: number;
-        };
-        response: { sessionId: string };
       };
       getFileContent: {
         params: { cwd: string; path: string; maxBytes?: number };
@@ -476,12 +382,6 @@ export type AppRPC = {
         exitCode: number;
       };
       toolApproval: ToolApprovalRequest;
-      pullRequestAgentReviewChanged: {
-        repo: string;
-        number: number;
-        runId: string;
-        status: PullRequestAgentReviewStatus;
-      };
       instrumentEvent: {
         instrumentId: string;
         event: string;

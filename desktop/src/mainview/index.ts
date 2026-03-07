@@ -4,13 +4,8 @@ import { h, qs, clearChildren } from "./lib/dom.ts";
 import {
   connectorsToolIcon,
   pluginToolIcon,
-  pullRequestsToolIcon,
   tasksToolIcon,
 } from "./lib/icons.ts";
-import {
-  buildPullRequestFileReviewStateMap,
-  countSeenFiles,
-} from "./lib/pr-file-review.ts";
 import { PanelLayout } from "./components/panel-layout.ts";
 import { PanelSlotManager, type SlotName } from "./components/panel-slot-manager.ts";
 import { Sidebar, type StageData } from "./components/sidebar.ts";
@@ -18,11 +13,6 @@ import {
   PluginsSidebar,
   type PluginSidebarSelection,
 } from "./components/plugins-sidebar.ts";
-import {
-  PRsSidebar,
-  type PullRequestRepoGroup,
-  type PullRequestSidebarSection,
-} from "./components/prs-sidebar.ts";
 import { ConnectorsSidebar } from "./components/connectors-sidebar.ts";
 import { InstrumentsSidebar } from "./components/instruments-sidebar.ts";
 import { DebugLogPanel } from "./components/debug-log-panel.ts";
@@ -35,7 +25,6 @@ import { FilesPanel, type FileListView } from "./components/files-panel.ts";
 import { BranchPanel } from "./components/branch-panel.ts";
 import { CommitModal } from "./components/commit-modal.ts";
 import { ErrorModal } from "./components/error-modal.ts";
-import { PRView } from "./components/pr-view.ts";
 import type {
   SessionInfo,
   Snapshot,
@@ -53,12 +42,6 @@ import type {
   InstalledPlugin,
   ConnectorAuthSession,
   ConnectorProvider,
-  PullRequestDetail,
-  PullRequestAgentReviewDocument,
-  PullRequestAgentReviewRun,
-  PullRequestReviewThread,
-  PullRequestReviewState,
-  PullRequestSummary,
   StageConnector,
   InstrumentRegistryEntry,
   InstrumentFrontendAPI,
@@ -293,25 +276,6 @@ const rpc = Electroview.defineRPC<any>({
           if (entry) void activateRuntimeInstrument(entry);
         }
       },
-      pullRequestAgentReviewChanged: ({
-        repo,
-        number,
-        runId,
-        status,
-      }: {
-        repo: string;
-        number: number;
-        runId: string;
-        status: "queued" | "running" | "completed" | "failed" | "stale";
-      }) => {
-        void handlePullRequestAgentReviewChangedMessage(repo, number);
-        publishFrontendHostEvent("pullRequest.agentReviewChanged", {
-          repo,
-          number,
-          runId,
-          status,
-        });
-      },
       stageFileChanged: ({ cwd, toolName }: { cwd: string; toolName: string }) => {
         const state = appState.get();
         if (state.activeStage !== cwd || state.viewMode !== "stages") return;
@@ -447,7 +411,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 type AppState = {
   snapshot: Snapshot | null;
-  viewMode: "stages" | "plugins" | "prs" | "connectors" | "instruments";
+  viewMode: "stages" | "plugins" | "connectors" | "instruments";
   filesListViewMode: FileListView;
   stages: string[];
   expandedStages: Set<string>;
@@ -472,24 +436,6 @@ type AppState = {
   connectorsByStage: Record<string, StageConnector[]>;
   connectorsLoading: boolean;
   connectorAuthSession: ConnectorAuthSession | null;
-  assignedPullRequests: PullRequestSummary[];
-  reviewRequestedPullRequests: PullRequestSummary[];
-  openedPullRequests: PullRequestSummary[];
-  pullRequestsLoading: boolean;
-  pullRequestsError: string | null;
-  pullRequestsFetchedAt: number | null;
-  selectedPullRequest: { repo: string; number: number } | null;
-  selectedPullRequestDetail: PullRequestDetail | null;
-  pullRequestDetailLoading: boolean;
-  pullRequestDetailError: string | null;
-  selectedPullRequestCommitSha: string | null;
-  pullRequestReviewState: PullRequestReviewState | null;
-  pullRequestAgentReviews: PullRequestAgentReviewRun[];
-  pullRequestAgentReviewsLoading: boolean;
-  pullRequestAgentReviewsError: string | null;
-  selectedPullRequestAgentReviewVersion: number | null;
-  selectedPullRequestAgentReviewDocument: PullRequestAgentReviewDocument | null;
-  pullRequestAgentReviewStarting: boolean;
 };
 
 type SessionUsageEstimate = {
@@ -534,24 +480,6 @@ const appState = new Store<AppState>({
   connectorsByStage: {},
   connectorsLoading: false,
   connectorAuthSession: null,
-  assignedPullRequests: [],
-  reviewRequestedPullRequests: [],
-  openedPullRequests: [],
-  pullRequestsLoading: false,
-  pullRequestsError: null,
-  pullRequestsFetchedAt: null,
-  selectedPullRequest: null,
-  selectedPullRequestDetail: null,
-  pullRequestDetailLoading: false,
-  pullRequestDetailError: null,
-  selectedPullRequestCommitSha: null,
-  pullRequestReviewState: null,
-  pullRequestAgentReviews: [],
-  pullRequestAgentReviewsLoading: false,
-  pullRequestAgentReviewsError: null,
-  selectedPullRequestAgentReviewVersion: null,
-  selectedPullRequestAgentReviewDocument: null,
-  pullRequestAgentReviewStarting: false,
 });
 
 // ── Components ───────────────────────────────────────────────────
@@ -561,10 +489,8 @@ let slotManager: PanelSlotManager;
 let sidebar: Sidebar;
 let pluginsSidebar: PluginsSidebar;
 let instrumentsSidebar: InstrumentsSidebar;
-let prsSidebar: PRsSidebar;
 let connectorsSidebar: ConnectorsSidebar;
 let pluginsPreview: PluginsPreview;
-let prView: PRView;
 let connectorsView: ConnectorsView;
 let chatView: ChatView;
 let terminalPanel: TerminalPanel;
@@ -574,7 +500,6 @@ let branchPanel: BranchPanel;
 let commitModal: CommitModal;
 let sidebarPrimaryPluginsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryInstrumentsBtn: HTMLButtonElement | null = null;
-let sidebarPrimaryPRsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryConnectorsBtn: HTMLButtonElement | null = null;
 let sidebarPrimaryRuntimeInstrumentsHost: HTMLElement | null = null;
 let instrumentRuntimeSidebarShell: HTMLElement | null = null;
@@ -593,7 +518,6 @@ let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let commitContextRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let connectorAuthPollTimer: ReturnType<typeof setTimeout> | null = null;
 const STAGE_FILE_CACHE_MS = 30_000;
-const PULL_REQUEST_CACHE_TTL_MS = 5 * 60_000;
 /** Hook-driven activity overrides for PTY sessions (sessionId → Activity). */
 const hookSessionActivities = new Map<string, import("../shared/types/activity.ts").Activity>();
 const stageFileCache = new Map<string, {
@@ -613,13 +537,6 @@ let prevBranchStage: string | null = null;
 let prevBranchCommits: BranchCommit[] | null = null;
 let prevConnectorsStage: string | null = null;
 let activeCommitDiff: { cwd: string; hash: string } | null = null;
-let cachedPullRequestDiff: {
-  repo: string;
-  number: number;
-  commitSha: string | null;
-  files: DiffFile[];
-  loadedAt: number;
-} | null = null;
 let prevViewMode: AppState["viewMode"] | null = null;
 let prevShortcutFingerprint = "";
 let transcriptLoadSeq = 0;
@@ -636,7 +553,6 @@ const FRONTEND_EVENT_PERMISSION_MAP: Record<
   "session.idResolved": "sessions",
   "session.ended": "sessions",
   "tool.approval": "sessions",
-  "pullRequest.agentReviewChanged": "stages.observe",
   "instrument.event": "stages.observe",
   "stage.added": "stages.observe",
   "stage.removed": "stages.observe",
@@ -695,9 +611,6 @@ function renderLauncherIcon(icon: string | null | undefined, className: string):
   if (normalized === "task" || normalized === "tasks") {
     return tasksToolIcon(className);
   }
-  if (normalized === "pull-request" || normalized === "pull-requests" || normalized === "prs") {
-    return pullRequestsToolIcon(className);
-  }
   if (normalized === "connector" || normalized === "connectors") {
     return connectorsToolIcon(className);
   }
@@ -751,10 +664,6 @@ function init(): void {
     class: "sidebar-mode-view sidebar-mode-view-instruments",
     hidden: true,
   });
-  const prsSidebarHost = h("div", {
-    class: "sidebar-mode-view sidebar-mode-view-prs",
-    hidden: true,
-  });
   const connectorsSidebarHost = h("div", {
     class: "sidebar-mode-view sidebar-mode-view-connectors",
     hidden: true,
@@ -762,7 +671,6 @@ function init(): void {
   sidebarViews.appendChild(stagesSidebarHost);
   sidebarViews.appendChild(pluginsSidebarHost);
   sidebarViews.appendChild(instrumentsSidebarHost);
-  sidebarViews.appendChild(prsSidebarHost);
   sidebarViews.appendChild(connectorsSidebarHost);
 
   sidebarPrimaryPluginsBtn = h("button", {
@@ -791,16 +699,6 @@ function init(): void {
     h("span", { class: "sidebar-primary-label" }, ["Instruments"]),
   ]) as HTMLButtonElement;
 
-  sidebarPrimaryPRsBtn = h("button", {
-    class: "sidebar-primary-btn",
-    onclick: () => {
-      void enterPullRequestsMode();
-    },
-  }, [
-    pullRequestsToolIcon("sidebar-primary-icon"),
-    h("span", { class: "sidebar-primary-label" }, ["PRs"]),
-  ]) as HTMLButtonElement;
-
   sidebarPrimaryConnectorsBtn = h("button", {
     class: "sidebar-primary-btn",
     onclick: () => {
@@ -824,7 +722,6 @@ function init(): void {
 
   const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
     sidebarPrimaryPluginsBtn,
-    sidebarPrimaryPRsBtn,
     sidebarPrimaryConnectorsBtn,
     sidebarPrimaryInstrumentsBtn,
     sidebarPrimaryRuntimeInstrumentsHost,
@@ -852,15 +749,32 @@ function init(): void {
       void loadCommitContext(stagePath, "selected");
     },
     onNewSession: (stagePath) => {
-      appState.update((s) => ({
-        ...s,
-        activeSessionId: null,
-        activeStage: stagePath,
-        activeStageInfo: null,
-      }));
-      // Spawn a new Claude session with a pre-assigned ID
+      // Optimistic: show session in sidebar immediately
+      const tempId = `pending-${Date.now()}`;
+      registerAppSpawnedSession(tempId, stagePath, "New session");
+      appState.update((s) => {
+        const live = remapLiveSessionIds(s.liveSessions);
+        live.add(tempId);
+        const expanded = new Set(s.expandedStages);
+        expanded.add(stagePath);
+        return {
+          ...s,
+          activeSessionId: tempId,
+          activeStage: stagePath,
+          activeStageInfo: null,
+          liveSessions: live,
+          expandedStages: expanded,
+        };
+      });
+      // Spawn claude session, then remap temp → real ID
       void terminalPanel.spawnNewSession(stagePath).then((sessionId) => {
-        appState.update((s) => ({ ...s, activeSessionId: sessionId }));
+        remapAppSpawnedSession(tempId, sessionId);
+        appState.update((s) => {
+          const live = remapLiveSessionIds(s.liveSessions);
+          live.delete(tempId);
+          live.add(sessionId);
+          return { ...s, activeSessionId: sessionId, liveSessions: live };
+        });
       });
       terminalPanel.focus();
       loadDiff(stagePath);
@@ -1042,31 +956,6 @@ function init(): void {
   ]);
   instrumentsSidebarHost.appendChild(instrumentRuntimeSidebarShell);
 
-  prsSidebar = new PRsSidebar(prsSidebarHost, {
-    onSelectPullRequest: (repo, number) => {
-      appState.update((s) => ({
-        ...s,
-        selectedPullRequest: { repo, number },
-        selectedPullRequestCommitSha: null,
-        selectedPullRequestDetail: null,
-        pullRequestReviewState: null,
-        pullRequestDetailError: null,
-        pullRequestAgentReviews: [],
-        pullRequestAgentReviewsError: null,
-        selectedPullRequestAgentReviewVersion: null,
-        selectedPullRequestAgentReviewDocument: null,
-        pullRequestAgentReviewStarting: false,
-      }));
-      void loadPullRequestDetail(repo, number, true);
-    },
-    onBack: () => {
-      appState.update((s) => ({ ...s, viewMode: "stages" }));
-    },
-    onRefresh: () => {
-      void refreshPullRequests();
-    },
-  });
-
   connectorsSidebar = new ConnectorsSidebar(connectorsSidebarHost, {
     onBack: () => {
       appState.update((s) => ({ ...s, viewMode: "stages" }));
@@ -1111,6 +1000,24 @@ function init(): void {
           });
         } else {
           // New session or resume a historical/finished session
+          // Optimistic: show session in sidebar immediately with truncated prompt
+          const tempId = `pending-${Date.now()}`;
+          registerAppSpawnedSession(tempId, cwd, truncateToWords(prompt, 6));
+          appState.update((s) => {
+            const live = remapLiveSessionIds(s.liveSessions);
+            live.add(tempId);
+            const expanded = new Set(s.expandedStages);
+            expanded.add(cwd);
+            return {
+              ...s,
+              activeSessionId: tempId,
+              activeStage: cwd,
+              activeStageInfo: s.activeStage === cwd ? s.activeStageInfo : null,
+              liveSessions: live,
+              expandedStages: expanded,
+            };
+          });
+
           const { sessionId } = await (rpc as any).request.sendPrompt({
             prompt,
             cwd,
@@ -1119,23 +1026,16 @@ function init(): void {
             selectedFiles,
           });
           const canonicalSessionId = resolveCanonicalSessionId(sessionId) ?? sessionId;
-          registerAppSpawnedSession(
-            canonicalSessionId,
-            cwd,
-            resolvePromptTitle(null, prompt)
-          );
+          // Remap temp → real session ID
+          remapAppSpawnedSession(tempId, canonicalSessionId);
           appState.update((s) => {
             const live = remapLiveSessionIds(s.liveSessions);
+            live.delete(tempId);
             live.add(canonicalSessionId);
-            const expanded = new Set(s.expandedStages);
-            expanded.add(cwd);
             return {
               ...s,
               activeSessionId: canonicalSessionId,
-              activeStage: cwd,
-              activeStageInfo: s.activeStage === cwd ? s.activeStageInfo : null,
               liveSessions: live,
-              expandedStages: expanded,
             };
           });
         }
@@ -1206,43 +1106,6 @@ function init(): void {
         ...s,
         pluginSelection: selection,
       }));
-    },
-  });
-  prView = new PRView(null, {
-    onSelectCommit: (commitSha) => {
-      appState.update((s) => ({
-        ...s,
-        selectedPullRequestCommitSha: commitSha,
-      }));
-      void loadSelectedPullRequestDiff();
-    },
-    onOpenPullRequest: (url) => {
-      void openExternalUrl(url);
-    },
-    onSelectFile: (path) => {
-      diffView.showFile(path);
-      filesPanel.setActiveFile(path);
-    },
-    onToggleFileSeen: (path, seen) => {
-      void setPullRequestFileSeen(path, seen);
-    },
-    onFilesViewModeChange: (mode) => {
-      setGlobalFilesListViewMode(mode);
-    },
-    onStartAgentReview: () => {
-      void startPullRequestAgentReview();
-    },
-    onSelectAgentReviewVersion: (version) => {
-      void selectPullRequestAgentReviewVersion(version);
-    },
-    onApplyAgentReviewIssue: async ({
-      reviewVersion,
-      suggestionIndex,
-    }) => {
-      await applyPullRequestAgentReviewIssue({
-        reviewVersion,
-        suggestionIndex,
-      });
     },
   });
   connectorsView = new ConnectorsView(null, {
@@ -1316,15 +1179,6 @@ function init(): void {
       }
       return (rpc as any).request.getFileContent({ cwd, path });
     },
-    onToggleFileSeen: (path, seen) => {
-      void setPullRequestFileSeen(path, seen);
-    },
-    onReplyReviewThread: async (thread, body) => {
-      await replyPullRequestReviewThread(thread, body);
-    },
-    onCreateReviewComment: async (params) => {
-      await createPullRequestReviewComment(params);
-    },
   });
   // Right panel host for instruments (absolute-positioned overlay, out of slot manager scope)
   instrumentRightPanelHost = h("div", {
@@ -1347,9 +1201,6 @@ function init(): void {
       if (state.viewMode === "stages" && state.activeStage) {
         loadDiff(state.activeStage, scope);
       }
-    },
-    onToggleFileSeen: (path, seen) => {
-      void setPullRequestFileSeen(path, seen);
     },
     onViewModeChange: (mode) => {
       setGlobalFilesListViewMode(mode);
@@ -1402,17 +1253,6 @@ function init(): void {
     panelLayout.showPanel("first");
     panelLayout.showPanel("second");
     panelLayout.setPanelSizing("first", { fixedPercent: null, resizable: true });
-  }
-
-  async function activatePRsMode(): Promise<void> {
-    await slotManager.unmountAll();
-    await slotManager.mount("sidebar", "app", { node: sidebarShell });
-    await slotManager.mount("first", "prs", { node: prView.element });
-    await slotManager.mountHeader("second", "prs", { node: diffView.toolbarElement });
-    await slotManager.mount("second", "prs", { node: diffView.element });
-    panelLayout.showPanel("first");
-    panelLayout.showPanel("second");
-    panelLayout.setPanelSizing("first", { fixedPercent: 35, resizable: false });
   }
 
   async function activateConnectorsMode(): Promise<void> {
@@ -1556,7 +1396,6 @@ function init(): void {
     if (viewModeChanged) {
       const isPluginsMode = state.viewMode === "plugins";
       const isInstrumentsMode = state.viewMode === "instruments";
-      const isPRMode = state.viewMode === "prs";
       const isConnectorsMode = state.viewMode === "connectors";
       const runtimeInstrumentId = state.activeInstrumentId ?? activeRuntimeInstrumentId;
       const isRuntimeInstrumentMode = isInstrumentsMode
@@ -1575,8 +1414,6 @@ function init(): void {
         void activateInstrumentListMode();
       } else if (isPluginsMode) {
         void activatePluginsMode();
-      } else if (isPRMode) {
-        void activatePRsMode();
       } else if (isConnectorsMode) {
         void activateConnectorsMode();
       } else {
@@ -1591,9 +1428,8 @@ function init(): void {
     // ── Compute view mode flags (shared by all sections below) ──
     const isPluginsMode = state.viewMode === "plugins";
     const isInstrumentsMode = state.viewMode === "instruments";
-    const isPRMode = state.viewMode === "prs";
     const isConnectorsMode = state.viewMode === "connectors";
-    const isStagesMode = !isPluginsMode && !isInstrumentsMode && !isPRMode && !isConnectorsMode;
+    const isStagesMode = !isPluginsMode && !isInstrumentsMode && !isConnectorsMode;
     const runtimeInstrumentId = state.activeInstrumentId ?? activeRuntimeInstrumentId;
     const isRuntimeInstrumentMode = isInstrumentsMode
       && Boolean(activeRuntimeDefinition)
@@ -1684,19 +1520,15 @@ function init(): void {
     // Sidebar sub-view visibility
     sidebarPrimaryActions.hidden = isPluginsMode
       || isInstrumentsMode
-      || isPRMode
       || isConnectorsMode;
     stagesSidebarHost.hidden = isPluginsMode
       || isInstrumentsMode
-      || isPRMode
       || isConnectorsMode;
     pluginsSidebarHost.hidden = !isPluginsMode;
     instrumentsSidebarHost.hidden = !isInstrumentsMode;
-    prsSidebarHost.hidden = !isPRMode;
     connectorsSidebarHost.hidden = !isConnectorsMode;
     sidebarPrimaryPluginsBtn?.classList.toggle("active", isPluginsMode);
     sidebarPrimaryInstrumentsBtn?.classList.toggle("active", isInstrumentsMode);
-    sidebarPrimaryPRsBtn?.classList.toggle("active", isPRMode);
     sidebarPrimaryConnectorsBtn?.classList.toggle("active", isConnectorsMode);
 
     // ── Data rendering (only render components for active mode) ──
@@ -1725,31 +1557,6 @@ function init(): void {
       if (instrumentRightPanelHost) {
         instrumentRightPanelHost.hidden = true;
       }
-    } else if (isPRMode) {
-      const pullRequestSections = buildPullRequestSidebarSections(state);
-      const pullRequestReviewMap = resolveSelectedPullRequestReviewMap(state);
-      const pullRequestSeenCount = countSeenFiles(pullRequestReviewMap);
-      const pullRequestTotalFiles = state.selectedPullRequestDetail?.files.length ?? 0;
-      prsSidebar.render(pullRequestSections, {
-        loading: state.pullRequestsLoading,
-        error: state.pullRequestsError,
-      });
-      prsSidebar.setSelection(state.selectedPullRequest);
-      prView.render(state.selectedPullRequestDetail, {
-        loading: state.pullRequestDetailLoading,
-        error: state.pullRequestDetailError,
-        selectedCommitSha: state.selectedPullRequestCommitSha,
-        seenCount: pullRequestSeenCount,
-        totalFiles: pullRequestTotalFiles,
-        fileReviewState: pullRequestReviewMap,
-        filesViewMode: state.filesListViewMode,
-        agentReviews: state.pullRequestAgentReviews,
-        agentReviewsLoading: state.pullRequestAgentReviewsLoading,
-        agentReviewsError: state.pullRequestAgentReviewsError,
-        selectedAgentReviewVersion: state.selectedPullRequestAgentReviewVersion,
-        selectedAgentReviewDocument: state.selectedPullRequestAgentReviewDocument,
-        agentReviewStarting: state.pullRequestAgentReviewStarting,
-      });
     } else if (isConnectorsMode) {
       const activeStageConnectors = resolveActiveStageConnectors(state);
       const activeStageAuthSession = state.connectorAuthSession?.stagePath === state.activeStage
@@ -1762,27 +1569,19 @@ function init(): void {
       });
     }
 
-    filesPanel.setReviewMode(isPRMode);
+    filesPanel.setReviewMode(false);
     filesPanel.setViewMode(state.filesListViewMode);
-    const reviewMap = isPRMode ? resolveSelectedPullRequestReviewMap(state) : new Map();
-    filesPanel.setFileReviewState(reviewMap);
-    diffView.setReviewMode(isPRMode);
-    diffView.setFileReviewState(reviewMap);
+    filesPanel.setFileReviewState(new Map());
+    diffView.setReviewMode(false);
+    diffView.setFileReviewState(new Map());
     syncCommitButtonVisibility(state);
     if (state.viewMode !== "stages" && commitModal.isOpen) {
       commitModal.close();
     }
-    if (isPRMode && !state.selectedPullRequestDetail) {
-      filesPanel.clear();
-      diffView.clear();
-    }
-    if (isPRMode && diffView.isBranchPanelVisible) {
-      diffView.setBranchPanelVisible(false, false);
-    }
 
     if (
       viewModeChanged
-      && prevViewMode === "prs"
+      && prevViewMode !== "stages"
       && state.viewMode === "stages"
       && state.activeStage
     ) {
@@ -1803,11 +1602,6 @@ function init(): void {
     }
 
     prevViewMode = state.viewMode;
-
-    if (isPRMode) {
-      branchPanel.clear();
-      return;
-    }
 
     terminalPanel.setHeader(
       resolveActiveSessionTitle(state),
@@ -2617,19 +2411,8 @@ function clearCommitDiffSelection(cwd: string): void {
 function applyDiffFiles(files: DiffFile[]): void {
   filesPanel.render(files);
   if (files.length > 0) {
-    const state = appState.get();
-    const isPRMode = state.viewMode === "prs";
-    const reviewThreads = isPRMode
-      ? resolveSelectedPullRequestThreads(state)
-      : [];
-    const reviewMap = isPRMode
-      ? resolveSelectedPullRequestReviewMap(state)
-      : null;
-    diffView.setReviewThreads(reviewThreads);
-    const firstUnseenPath = reviewMap
-      ? (files.find((file) => !reviewMap.get(file.path)?.seen)?.path ?? null)
-      : null;
-    const activePath = isPRMode ? firstUnseenPath : files[0].path;
+    diffView.setReviewThreads([]);
+    const activePath = files[0].path;
     filesPanel.setActiveFile(activePath);
     diffView.setFiles(files, {
       activeFile: activePath,
@@ -2848,30 +2631,39 @@ function emptyCommitContext(): CommitContext {
 async function loadStages(): Promise<void> {
   try {
     const stages: string[] = await (rpc as any).request.getStages({});
-    const expanded = new Set<string>();
-    // Auto-expand first stage
-    if (stages.length > 0) {
-      expanded.add(stages[0]);
-    }
+    // Set stages immediately but defer active stage until histories load
     appState.update((s) => ({
       ...s,
       stages,
-      expandedStages: expanded,
-      activeStage: stages[0] ?? null,
+      expandedStages: new Set<string>(),
+      activeStage: null,
       activeStageInfo: null,
     }));
     // Auto-show stages panel if we have stages
     if (stages.length > 0) {
       panelLayout.showPanel("sidebar");
       qs("#btn-toggle-stages")?.classList.add("active");
-      // Load diff and history for first stage
-      loadDiff(stages[0], appState.get().diffScope);
-      loadSessionHistory(stages[0]);
-      loadStageConnectors(stages[0], false);
-      void loadCommitContext(stages[0], "selected");
-      for (const wsPath of stages) {
+      // Load history for ALL stages, then pick the most recent as active
+      await Promise.all(stages.map((wsPath) => {
         ensureBranchHistory(wsPath);
-      }
+        return loadSessionHistory(wsPath);
+      }));
+      // After all histories are loaded, pick the stage with the most recent session
+      const state = appState.get();
+      const stagesByRecency = [...stages].sort((a, b) => {
+        const aLatest = latestSessionTimestamp(state.historySessions[a]);
+        const bLatest = latestSessionTimestamp(state.historySessions[b]);
+        return bLatest - aLatest;
+      });
+      const topStage = stagesByRecency[0];
+      appState.update((s) => ({
+        ...s,
+        expandedStages: new Set([topStage]),
+        activeStage: topStage,
+      }));
+      loadDiff(topStage, appState.get().diffScope);
+      loadStageConnectors(topStage, false);
+      void loadCommitContext(topStage, "selected");
     }
   } catch {
     // First run — no stages yet
@@ -3143,577 +2935,6 @@ async function loadStageConnectors(
   }
 }
 
-async function loadPullRequests(force = false): Promise<void> {
-  const state = appState.get();
-  if (state.pullRequestsLoading && !force) return;
-
-  appState.update((s) => ({
-    ...s,
-    pullRequestsLoading: true,
-    pullRequestsError: null,
-  }));
-
-  try {
-    const [assignedPullRequests, reviewRequestedPullRequests, openedPullRequests] = await Promise.all([
-      (rpc as any).request.getAssignedPullRequests({
-        limit: 120,
-      }) as Promise<PullRequestSummary[]>,
-      (rpc as any).request.getReviewRequestedPullRequests({
-        limit: 120,
-      }) as Promise<PullRequestSummary[]>,
-      (rpc as any).request.getOpenedPullRequests({
-        limit: 120,
-      }) as Promise<PullRequestSummary[]>,
-    ]);
-
-    const allPullRequests = mergePullRequestLists(
-      assignedPullRequests,
-      reviewRequestedPullRequests,
-      openedPullRequests
-    );
-
-    const currentSelection = appState.get().selectedPullRequest;
-    const selectedExists = currentSelection
-      ? allPullRequests.some((pr) => pr.repo === currentSelection.repo && pr.number === currentSelection.number)
-      : false;
-    const nextSelection = selectedExists ? currentSelection : null;
-
-    appState.update((s) => {
-      const selectionChanged = !isSamePullRequestSelection(s.selectedPullRequest, nextSelection);
-      if (selectionChanged) {
-        cachedPullRequestDiff = null;
-      }
-      return {
-        ...s,
-        assignedPullRequests,
-        reviewRequestedPullRequests,
-        openedPullRequests,
-        pullRequestsLoading: false,
-        pullRequestsError: null,
-        pullRequestsFetchedAt: Date.now(),
-        selectedPullRequest: nextSelection,
-        selectedPullRequestCommitSha: selectionChanged ? null : s.selectedPullRequestCommitSha,
-        selectedPullRequestDetail: selectionChanged ? null : s.selectedPullRequestDetail,
-        pullRequestReviewState: selectionChanged ? null : s.pullRequestReviewState,
-        pullRequestAgentReviews: selectionChanged ? [] : s.pullRequestAgentReviews,
-        pullRequestAgentReviewsError: selectionChanged ? null : s.pullRequestAgentReviewsError,
-        pullRequestAgentReviewsLoading: selectionChanged ? false : s.pullRequestAgentReviewsLoading,
-        selectedPullRequestAgentReviewVersion: selectionChanged
-          ? null
-          : s.selectedPullRequestAgentReviewVersion,
-        selectedPullRequestAgentReviewDocument: selectionChanged
-          ? null
-          : s.selectedPullRequestAgentReviewDocument,
-        pullRequestAgentReviewStarting: selectionChanged
-          ? false
-          : s.pullRequestAgentReviewStarting,
-      };
-    });
-
-    if (!nextSelection) {
-      if (appState.get().viewMode === "prs") {
-        diffView.clear();
-        filesPanel.clear();
-      }
-      return;
-    }
-
-    const nextState = appState.get();
-    const loadedSelection = nextState.selectedPullRequestDetail;
-    const shouldLoadDetail = !loadedSelection
-      || loadedSelection.repo !== nextSelection.repo
-      || loadedSelection.number !== nextSelection.number;
-
-    if (shouldLoadDetail) {
-      await loadPullRequestDetail(nextSelection.repo, nextSelection.number, true);
-    }
-  } catch (err) {
-    const message = formatPullRequestError(err);
-    console.error("Failed to load pull requests:", err);
-    appState.update((s) => ({
-      ...s,
-      pullRequestsLoading: false,
-      pullRequestsError: message,
-    }));
-  }
-}
-
-async function loadPullRequestDetail(
-  repo: string,
-  number: number,
-  keepSelection = false
-): Promise<void> {
-  appState.update((s) => ({
-    ...s,
-    selectedPullRequest: keepSelection ? s.selectedPullRequest : { repo, number },
-    pullRequestDetailLoading: true,
-    pullRequestDetailError: null,
-    pullRequestAgentReviewsLoading: true,
-    pullRequestAgentReviewsError: null,
-  }));
-
-  try {
-    const [detail, reviewState] = await Promise.all([
-      (rpc as any).request.getPullRequestDetail({ repo, number }),
-      (rpc as any).request.getPullRequestReviewState({ repo, number }),
-    ]) as [PullRequestDetail, PullRequestReviewState | null];
-
-    let agentReviews: PullRequestAgentReviewRun[] = [];
-    let agentReviewsError: string | null = null;
-
-    try {
-      agentReviews = await (rpc as any).request.getPullRequestAgentReviews({
-        repo,
-        number,
-      }) as PullRequestAgentReviewRun[];
-      agentReviews.sort((left, right) => left.version - right.version);
-    } catch (error) {
-      agentReviewsError = formatPullRequestError(error);
-    }
-
-    const currentState = appState.get();
-    const selectedAgentReviewVersion = resolvePreferredAgentReviewVersion(
-      agentReviews,
-      currentState.selectedPullRequestAgentReviewVersion
-    );
-
-    let selectedAgentReviewDocument: PullRequestAgentReviewDocument | null = null;
-    if (selectedAgentReviewVersion != null && agentReviewsError == null) {
-      try {
-        selectedAgentReviewDocument = await (rpc as any).request.getPullRequestAgentReviewDocument({
-          repo,
-          number,
-          version: selectedAgentReviewVersion,
-        }) as PullRequestAgentReviewDocument | null;
-      } catch (error) {
-        agentReviewsError = formatPullRequestError(error);
-      }
-    }
-
-    appState.update((s) => {
-      const existingCommitSha = s.selectedPullRequestCommitSha;
-      const commitStillExists = existingCommitSha
-        ? detail.commits.some((commit) => commit.sha === existingCommitSha)
-        : false;
-      return {
-        ...s,
-        selectedPullRequest: { repo, number },
-        selectedPullRequestDetail: detail,
-        pullRequestReviewState: reviewState,
-        selectedPullRequestCommitSha: commitStillExists ? existingCommitSha : null,
-        pullRequestDetailLoading: false,
-        pullRequestDetailError: null,
-        pullRequestAgentReviews: agentReviews,
-        pullRequestAgentReviewsLoading: false,
-        pullRequestAgentReviewsError: agentReviewsError,
-        selectedPullRequestAgentReviewVersion: selectedAgentReviewVersion,
-        selectedPullRequestAgentReviewDocument: selectedAgentReviewDocument,
-      };
-    });
-
-    await loadSelectedPullRequestDiff();
-  } catch (err) {
-    const message = formatPullRequestError(err);
-    console.error("Failed to load pull request detail:", err);
-    appState.update((s) => ({
-      ...s,
-      pullRequestDetailLoading: false,
-      pullRequestDetailError: message,
-      selectedPullRequestDetail: null,
-      pullRequestReviewState: null,
-      pullRequestAgentReviews: [],
-      pullRequestAgentReviewsLoading: false,
-      pullRequestAgentReviewsError: null,
-      selectedPullRequestAgentReviewVersion: null,
-      selectedPullRequestAgentReviewDocument: null,
-      pullRequestAgentReviewStarting: false,
-    }));
-    diffView.clear();
-    filesPanel.clear();
-  }
-}
-
-async function loadSelectedPullRequestDiff(): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  if (!selection || !detail) {
-    cachedPullRequestDiff = null;
-    diffView.clear();
-    filesPanel.clear();
-    return;
-  }
-
-  try {
-    const files: DiffFile[] = await (rpc as any).request.getPullRequestDiff({
-      repo: selection.repo,
-      number: selection.number,
-      commitSha: state.selectedPullRequestCommitSha ?? null,
-    });
-    cachedPullRequestDiff = {
-      repo: selection.repo,
-      number: selection.number,
-      commitSha: state.selectedPullRequestCommitSha ?? null,
-      files,
-      loadedAt: Date.now(),
-    };
-    applyDiffFiles(files);
-  } catch (err) {
-    console.error("Failed to load pull request diff:", err);
-    cachedPullRequestDiff = null;
-    filesPanel.clear();
-    diffView.clear();
-  }
-}
-
-async function refreshPullRequestAgentReviews(
-  repo: string,
-  number: number,
-  preferredVersion?: number | null
-): Promise<void> {
-  appState.update((s) => ({
-    ...s,
-    pullRequestAgentReviewsLoading: true,
-    pullRequestAgentReviewsError: null,
-  }));
-
-  try {
-    const runs = await (rpc as any).request.getPullRequestAgentReviews({
-      repo,
-      number,
-    }) as PullRequestAgentReviewRun[];
-    runs.sort((left, right) => left.version - right.version);
-
-    const currentState = appState.get();
-    const selectedVersion = resolvePreferredAgentReviewVersion(
-      runs,
-      preferredVersion ?? currentState.selectedPullRequestAgentReviewVersion
-    );
-
-    let selectedDocument: PullRequestAgentReviewDocument | null = null;
-    if (selectedVersion != null) {
-      selectedDocument = await (rpc as any).request.getPullRequestAgentReviewDocument({
-        repo,
-        number,
-        version: selectedVersion,
-      }) as PullRequestAgentReviewDocument | null;
-    }
-
-    const selection = appState.get().selectedPullRequest;
-    if (!selection || selection.repo !== repo || selection.number !== number) {
-      return;
-    }
-
-    appState.update((s) => ({
-      ...s,
-      pullRequestAgentReviews: runs,
-      pullRequestAgentReviewsLoading: false,
-      pullRequestAgentReviewsError: null,
-      selectedPullRequestAgentReviewVersion: selectedVersion,
-      selectedPullRequestAgentReviewDocument: selectedDocument,
-    }));
-  } catch (error) {
-    const message = formatPullRequestError(error);
-    const selection = appState.get().selectedPullRequest;
-    if (!selection || selection.repo !== repo || selection.number !== number) {
-      return;
-    }
-    appState.update((s) => ({
-      ...s,
-      pullRequestAgentReviewsLoading: false,
-      pullRequestAgentReviewsError: message,
-      selectedPullRequestAgentReviewDocument: null,
-    }));
-  }
-}
-
-async function selectPullRequestAgentReviewVersion(version: number): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  if (!selection) return;
-
-  const normalized = Math.max(1, Math.trunc(version));
-  appState.update((s) => ({
-    ...s,
-    selectedPullRequestAgentReviewVersion: normalized,
-    pullRequestAgentReviewsLoading: true,
-    pullRequestAgentReviewsError: null,
-  }));
-
-  try {
-    const document = await (rpc as any).request.getPullRequestAgentReviewDocument({
-      repo: selection.repo,
-      number: selection.number,
-      version: normalized,
-    }) as PullRequestAgentReviewDocument | null;
-    const latestSelection = appState.get().selectedPullRequest;
-    if (!latestSelection
-      || latestSelection.repo !== selection.repo
-      || latestSelection.number !== selection.number) {
-      return;
-    }
-
-    appState.update((s) => ({
-      ...s,
-      selectedPullRequestAgentReviewDocument: document,
-      pullRequestAgentReviewsLoading: false,
-      pullRequestAgentReviewsError: null,
-    }));
-  } catch (error) {
-    const message = formatPullRequestError(error);
-    const latestSelection = appState.get().selectedPullRequest;
-    if (!latestSelection
-      || latestSelection.repo !== selection.repo
-      || latestSelection.number !== selection.number) {
-      return;
-    }
-
-    appState.update((s) => ({
-      ...s,
-      pullRequestAgentReviewsLoading: false,
-      pullRequestAgentReviewsError: message,
-      selectedPullRequestAgentReviewDocument: null,
-    }));
-  }
-}
-
-async function startPullRequestAgentReview(): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  if (!selection || !detail) return;
-  if (state.pullRequestAgentReviewStarting) return;
-  if (state.pullRequestAgentReviews.some((run) => run.status === "running")) return;
-
-  appState.update((s) => ({
-    ...s,
-    pullRequestAgentReviewStarting: true,
-    pullRequestAgentReviewsError: null,
-  }));
-
-  try {
-    const run = await (rpc as any).request.startPullRequestAgentReview({
-      repo: selection.repo,
-      number: selection.number,
-      headSha: detail.headSha,
-    }) as PullRequestAgentReviewRun;
-
-    await refreshPullRequestAgentReviews(selection.repo, selection.number, run.version);
-  } catch (error) {
-    const message = formatPullRequestError(error);
-    const latestSelection = appState.get().selectedPullRequest;
-    if (!latestSelection
-      || latestSelection.repo !== selection.repo
-      || latestSelection.number !== selection.number) {
-      return;
-    }
-    appState.update((s) => ({
-      ...s,
-      pullRequestAgentReviewsError: message,
-    }));
-  } finally {
-    const latestSelection = appState.get().selectedPullRequest;
-    if (!latestSelection
-      || latestSelection.repo !== selection.repo
-      || latestSelection.number !== selection.number) {
-      return;
-    }
-    appState.update((s) => ({
-      ...s,
-      pullRequestAgentReviewStarting: false,
-    }));
-  }
-}
-
-async function applyPullRequestAgentReviewIssue(params: {
-  reviewVersion: number;
-  suggestionIndex: number;
-}): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  if (!selection) {
-    throw new Error("No pull request selected");
-  }
-
-  try {
-    await (rpc as any).request.applyPullRequestAgentReviewIssue({
-      repo: selection.repo,
-      number: selection.number,
-      reviewVersion: Math.max(1, Math.trunc(params.reviewVersion)),
-      suggestionIndex: Math.max(0, Math.trunc(params.suggestionIndex)),
-    });
-  } catch (error) {
-    throw new Error(formatPullRequestError(error));
-  }
-}
-
-async function handlePullRequestAgentReviewChangedMessage(
-  repo: string,
-  number: number
-): Promise<void> {
-  const selection = appState.get().selectedPullRequest;
-  if (!selection || selection.repo !== repo || selection.number !== number) {
-    return;
-  }
-
-  await refreshPullRequestAgentReviews(
-    repo,
-    number,
-    appState.get().selectedPullRequestAgentReviewVersion
-  );
-}
-
-async function setPullRequestFileSeen(path: string, seen: boolean): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  if (!selection || !detail) return;
-
-  const fileMeta = detail.files.find((file) => file.path === path) ?? null;
-
-  try {
-    const nextReviewState: PullRequestReviewState = await (rpc as any).request.setPullRequestFileSeen({
-      repo: selection.repo,
-      number: selection.number,
-      headSha: detail.headSha,
-      filePath: path,
-      fileSha: fileMeta?.sha ?? null,
-      seen,
-    });
-    appState.update((s) => ({
-      ...s,
-      pullRequestReviewState: nextReviewState,
-    }));
-  } catch (err) {
-    console.error("Failed to update pull request review state:", err);
-  }
-}
-
-async function replyPullRequestReviewThread(
-  thread: PullRequestReviewThread,
-  body: string
-): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  if (!selection || !detail) {
-    throw new Error("No pull request selected");
-  }
-
-  const rootCommentId = resolveReviewThreadRootCommentId(thread);
-  if (!rootCommentId) {
-    throw new Error("Could not identify the review thread root comment");
-  }
-
-  try {
-    await (rpc as any).request.replyPullRequestReviewComment({
-      repo: selection.repo,
-      number: selection.number,
-      commentId: rootCommentId,
-      body,
-    });
-  } catch (err) {
-    throw new Error(formatPullRequestError(err));
-  }
-
-  await loadPullRequestDetail(selection.repo, selection.number, true);
-}
-
-async function createPullRequestReviewComment(params: {
-  path: string;
-  line: number;
-  side: "LEFT" | "RIGHT";
-  body: string;
-}): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  if (!selection || !detail) {
-    throw new Error("No pull request selected");
-  }
-
-  const commitSha = (state.selectedPullRequestCommitSha ?? detail.headSha ?? "").trim();
-  if (!commitSha) {
-    throw new Error("Could not resolve pull request commit SHA");
-  }
-
-  try {
-    await (rpc as any).request.createPullRequestReviewComment({
-      repo: selection.repo,
-      number: selection.number,
-      commitSha,
-      path: params.path,
-      line: Math.max(1, Math.trunc(params.line)),
-      side: params.side,
-      body: params.body,
-    });
-  } catch (err) {
-    throw new Error(formatPullRequestError(err));
-  }
-
-  await loadPullRequestDetail(selection.repo, selection.number, true);
-}
-
-async function markAllPullRequestFilesSeen(): Promise<void> {
-  const state = appState.get();
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  if (!selection || !detail) return;
-
-  try {
-    const nextReviewState: PullRequestReviewState = await (rpc as any).request.markPullRequestFilesSeen({
-      repo: selection.repo,
-      number: selection.number,
-      headSha: detail.headSha,
-      files: detail.files.map((file) => ({
-        path: file.path,
-        sha: file.sha,
-      })),
-    });
-    appState.update((s) => ({
-      ...s,
-      pullRequestReviewState: nextReviewState,
-    }));
-  } catch (err) {
-    console.error("Failed to mark pull request files as seen:", err);
-  }
-}
-
-async function refreshPullRequests(): Promise<void> {
-  const currentState = appState.get();
-  if (currentState.pullRequestsLoading || currentState.pullRequestDetailLoading) return;
-
-  await loadPullRequests(true);
-  const selection = appState.get().selectedPullRequest;
-  if (!selection) return;
-  await loadPullRequestDetail(selection.repo, selection.number, true);
-}
-
-async function enterPullRequestsMode(): Promise<void> {
-  appState.update((s) => ({ ...s, viewMode: "prs" }));
-  panelLayout.showPanel("sidebar");
-  qs("#btn-toggle-stages")?.classList.add("active");
-
-  const state = appState.get();
-  if (state.pullRequestsLoading || state.pullRequestDetailLoading) return;
-
-  if (isPullRequestCacheExpired(state)) {
-    await refreshPullRequests();
-    return;
-  }
-
-  if (state.selectedPullRequest && state.selectedPullRequestDetail) {
-    if (!applyCachedSelectedPullRequestDiff(state)) {
-      await loadSelectedPullRequestDiff();
-    }
-    return;
-  }
-
-  if (state.selectedPullRequest) {
-    await loadPullRequestDetail(state.selectedPullRequest.repo, state.selectedPullRequest.number, true);
-  }
-}
-
 async function openExternalUrl(url: string): Promise<void> {
   try {
     await (rpc as any).request.openExternalUrl({ url });
@@ -3722,22 +2943,6 @@ async function openExternalUrl(url: string): Promise<void> {
   }
 }
 
-function isPullRequestCacheExpired(state: AppState): boolean {
-  if (state.pullRequestsFetchedAt == null) return true;
-  return (Date.now() - state.pullRequestsFetchedAt) >= PULL_REQUEST_CACHE_TTL_MS;
-}
-
-function applyCachedSelectedPullRequestDiff(state: AppState): boolean {
-  const selection = state.selectedPullRequest;
-  const detail = state.selectedPullRequestDetail;
-  const commitSha = state.selectedPullRequestCommitSha ?? null;
-  if (!selection || !detail || !cachedPullRequestDiff) return false;
-  if (cachedPullRequestDiff.repo !== selection.repo) return false;
-  if (cachedPullRequestDiff.number !== selection.number) return false;
-  if (cachedPullRequestDiff.commitSha !== commitSha) return false;
-  applyDiffFiles(cachedPullRequestDiff.files);
-  return true;
-}
 
 async function openStage(): Promise<void> {
   try {
@@ -4014,92 +3219,6 @@ function resolvePluginSelection(
   };
 }
 
-function buildPullRequestRepoGroups(
-  pullRequests: PullRequestSummary[]
-): PullRequestRepoGroup[] {
-  const byRepo = new Map<string, PullRequestSummary[]>();
-
-  for (const pullRequest of pullRequests) {
-    const list = byRepo.get(pullRequest.repo) ?? [];
-    list.push(pullRequest);
-    byRepo.set(pullRequest.repo, list);
-  }
-
-  const groups: PullRequestRepoGroup[] = [];
-  for (const [repo, prs] of byRepo) {
-    prs.sort((a, b) => {
-      const tsA = Date.parse(a.updatedAt);
-      const tsB = Date.parse(b.updatedAt);
-      if (Number.isFinite(tsA) && Number.isFinite(tsB) && tsA !== tsB) {
-        return tsB - tsA;
-      }
-      return a.number - b.number;
-    });
-    groups.push({ repo, prs });
-  }
-
-  groups.sort((a, b) => a.repo.localeCompare(b.repo));
-  return groups;
-}
-
-function buildPullRequestSidebarSections(state: AppState): PullRequestSidebarSection[] {
-  return [
-    {
-      id: "assigned_to_me",
-      label: "Assigned to me",
-      groups: buildPullRequestRepoGroups(state.assignedPullRequests),
-      emptyLabel: "No assigned PRs",
-    },
-    {
-      id: "review_requested",
-      label: "Review requested",
-      groups: buildPullRequestRepoGroups(state.reviewRequestedPullRequests),
-      emptyLabel: "No review requests",
-    },
-    {
-      id: "opened_by_me",
-      label: "Opened by me",
-      groups: buildPullRequestRepoGroups(state.openedPullRequests),
-      emptyLabel: "No opened PRs",
-    },
-  ];
-}
-
-function mergePullRequestLists(...lists: PullRequestSummary[][]): PullRequestSummary[] {
-  const byKey = new Map<string, PullRequestSummary>();
-  for (const list of lists) {
-    for (const pr of list) {
-      byKey.set(`${pr.repo}#${pr.number}`, pr);
-    }
-  }
-  return [...byKey.values()];
-}
-
-function resolvePreferredAgentReviewVersion(
-  runs: PullRequestAgentReviewRun[],
-  preferredVersion: number | null | undefined
-): number | null {
-  if (!Array.isArray(runs) || runs.length === 0) return null;
-
-  if (preferredVersion != null) {
-    const normalized = Math.max(1, Math.trunc(preferredVersion));
-    if (runs.some((run) => run.version === normalized)) {
-      return normalized;
-    }
-  }
-
-  return runs[runs.length - 1]?.version ?? null;
-}
-
-function resolveSelectedPullRequestReviewMap(state: AppState) {
-  if (!state.selectedPullRequestDetail) return new Map();
-  return buildPullRequestFileReviewStateMap(
-    state.selectedPullRequestDetail.files,
-    state.pullRequestReviewState,
-    state.selectedPullRequestDetail.headSha
-  );
-}
-
 function setGlobalFilesListViewMode(mode: FileListView): void {
   const normalized: FileListView = mode === "tree" ? "tree" : "flat";
   if (appState.get().filesListViewMode === normalized) return;
@@ -4108,56 +3227,6 @@ function setGlobalFilesListViewMode(mode: FileListView): void {
     ...s,
     filesListViewMode: normalized,
   }));
-}
-
-function resolveSelectedPullRequestThreads(state: AppState): PullRequestReviewThread[] {
-  if (!state.selectedPullRequestDetail) return [];
-  if (state.selectedPullRequestCommitSha) return [];
-  return state.selectedPullRequestDetail.conversation.filter(
-    (item): item is PullRequestReviewThread => item.kind === "review_thread"
-  );
-}
-
-function isSamePullRequestSelection(
-  left: { repo: string; number: number } | null,
-  right: { repo: string; number: number } | null
-): boolean {
-  if (!left || !right) return left === right;
-  return left.repo === right.repo && left.number === right.number;
-}
-
-function resolveReviewThreadRootCommentId(thread: PullRequestReviewThread): string | null {
-  if (!Array.isArray(thread.comments) || thread.comments.length === 0) return null;
-  const root = thread.comments.find((comment) => !comment.inReplyToId) ?? thread.comments[0];
-  const id = Number(root?.id);
-  if (!Number.isFinite(id) || id <= 0) return null;
-  return String(Math.trunc(id));
-}
-
-function formatPullRequestError(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  const normalized = message.toLowerCase();
-
-  if (
-    normalized.includes("gh executable")
-    || normalized.includes("command not found")
-    || normalized.includes("executable file not found")
-  ) {
-    return "GitHub CLI is not installed. Install `gh` and retry.";
-  }
-
-  if (
-    normalized.includes("not logged in")
-    || normalized.includes("gh auth login")
-    || normalized.includes("requires authentication")
-    || normalized.includes("bad credentials")
-  ) {
-    return "GitHub CLI is not authenticated. Run `gh auth login`.";
-  }
-
-  const firstLine = message.split(/\r?\n/).find((line) => line.trim().length > 0);
-  if (firstLine) return firstLine.trim();
-  return "Failed to load pull request data";
 }
 
 function loadPersistedFilesListViewMode(): FileListView {
@@ -4183,7 +3252,7 @@ function buildStageData(state: AppState): StageData[] {
     : [];
   const normalizedLiveSessionIds = remapLiveSessionIds(state.liveSessions);
 
-  return state.stages.map((wsPath) => {
+  const stages = state.stages.map((wsPath) => {
     const name = wsPath.split("/").pop() ?? wsPath;
     const stageInfo = state.activeStageInfo?.path === wsPath ? state.activeStageInfo : null;
     const vcsInfo = state.vcsInfoByStage[wsPath];
@@ -4213,6 +3282,11 @@ function buildStageData(state: AppState): StageData[] {
       activity: hookSessionActivities.get(s.sessionId) ?? s.activity,
     }));
 
+    // Sort sessions by most recent timestamp
+    allSessions.sort((a, b) =>
+      toTimestamp(b.updatedAt || b.startedAt) - toTimestamp(a.updatedAt || a.startedAt)
+    );
+
     return {
       path: wsPath,
       name,
@@ -4222,6 +3296,35 @@ function buildStageData(state: AppState): StageData[] {
       expanded: state.expandedStages.has(wsPath),
     };
   });
+
+  // Sort stages by most recent session timestamp
+  stages.sort((a, b) => stageLatestTimestamp(b) - stageLatestTimestamp(a));
+
+  return stages;
+}
+
+function toTimestamp(dateStr: string): number {
+  if (!dateStr) return 0;
+  return new Date(dateStr).getTime() || 0;
+}
+
+function latestSessionTimestamp(sessions: HistorySession[] | undefined): number {
+  if (!sessions || sessions.length === 0) return 0;
+  let latest = 0;
+  for (const s of sessions) {
+    const t = toTimestamp(s.lastActiveAt ?? s.startedAt ?? "");
+    if (t > latest) latest = t;
+  }
+  return latest;
+}
+
+function stageLatestTimestamp(stage: StageData): number {
+  let latest = 0;
+  for (const s of stage.sessions) {
+    const t = toTimestamp(s.updatedAt || s.startedAt);
+    if (t > latest) latest = t;
+  }
+  return latest;
 }
 
 function resolveStageBranchName(commits: BranchCommit[]): string | null {
@@ -4404,6 +3507,17 @@ function resolveActiveSessionTitle(state: AppState): string {
   }
 
   return "Session";
+}
+
+function truncateToWords(text: string, maxWords: number): string | null {
+  const clean = collapseWhitespace(
+    String(text ?? "")
+      .replace(/<[^>]+>[\s\S]*?<\/[^>]+>/gi, " ")
+  );
+  if (!clean) return null;
+  const words = clean.split(" ");
+  if (words.length <= maxWords) return clean;
+  return words.slice(0, maxWords).join(" ") + "...";
 }
 
 function resolvePromptTitle(topic: string | null, prompt: string | null): string | null {
