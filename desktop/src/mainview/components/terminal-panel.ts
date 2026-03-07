@@ -13,7 +13,10 @@ type RPC = {
 };
 
 export type TerminalPanelCallbacks = {
-  onOpenInFinder?: (path: string) => void;
+  onOpenWith?: (path: string, app?: string) => void;
+  onGetAvailableApps?: () => Promise<Array<{ id: string; name: string; appName: string }>>;
+  onGetPreferredApp?: () => Promise<string | null>;
+  onSetPreferredApp?: (app: string | null) => void;
 };
 
 let nextPtyId = 0;
@@ -33,9 +36,13 @@ export class TerminalPanel {
   #sessionIdEl: HTMLElement;
   #separatorEl: HTMLElement;
   #bottomRowEl: HTMLElement;
-  #menuEl: HTMLElement;
-  #menuBtnEl: HTMLButtonElement;
-  #openInFinderBtn: HTMLButtonElement;
+  #openSplitEl: HTMLElement;
+  #openMainBtn: HTMLButtonElement;
+  #openArrowBtn: HTMLButtonElement;
+  #openDropdownEl: HTMLElement;
+  #preferredApp: string | null = null;
+  #preferredAppId: string | null = null;
+  #cachedApps: Array<{ id: string; name: string; appName: string; icon?: string }> = [];
 
   #container: HTMLElement;
   #term: Terminal;
@@ -88,47 +95,54 @@ export class TerminalPanel {
     topRow.className = "terminal-header-top-row";
     topRow.append(this.#titleEl);
 
-    // ── 3-dot menu ──
-    this.#openInFinderBtn = document.createElement("button");
-    this.#openInFinderBtn.type = "button";
-    this.#openInFinderBtn.className = "terminal-header-menu-item";
-    this.#openInFinderBtn.textContent = "Open in Finder";
-    this.#openInFinderBtn.disabled = true;
-    this.#openInFinderBtn.addEventListener("click", (e) => {
+    // ── Split Open button ──
+    const openIcon = document.createElement("span");
+    openIcon.className = "material-symbols-outlined open-split-icon";
+    openIcon.setAttribute("aria-hidden", "true");
+    openIcon.textContent = "folder_open";
+
+    const openLabel = document.createElement("span");
+    openLabel.textContent = "Open";
+
+    this.#openMainBtn = document.createElement("button");
+    this.#openMainBtn.type = "button";
+    this.#openMainBtn.className = "open-split-main";
+    this.#openMainBtn.title = "Open in Finder";
+    this.#openMainBtn.disabled = true;
+    this.#openMainBtn.append(openIcon, openLabel);
+    this.#openMainBtn.addEventListener("click", (e) => {
       e.preventDefault();
       const path = this.#stagePath;
       if (!path) return;
-      this.#callbacks.onOpenInFinder?.(path);
-      this.#setMenuOpen(false);
+      this.#callbacks.onOpenWith?.(path, this.#preferredApp ?? undefined);
     });
 
-    const menuIcon = document.createElement("span");
-    menuIcon.className = "material-symbols-outlined";
-    menuIcon.setAttribute("aria-hidden", "true");
-    menuIcon.textContent = "more_vert";
+    const caret = document.createElement("span");
+    caret.className = "open-split-caret";
+    caret.textContent = "\u25BE";
 
-    this.#menuBtnEl = document.createElement("button");
-    this.#menuBtnEl.type = "button";
-    this.#menuBtnEl.className = "terminal-header-menu-btn";
-    this.#menuBtnEl.title = "More";
-    this.#menuBtnEl.setAttribute("aria-label", "More");
-    this.#menuBtnEl.setAttribute("aria-haspopup", "menu");
-    this.#menuBtnEl.setAttribute("aria-expanded", "false");
-    this.#menuBtnEl.append(menuIcon);
-    this.#menuBtnEl.addEventListener("click", (e) => {
+    this.#openArrowBtn = document.createElement("button");
+    this.#openArrowBtn.type = "button";
+    this.#openArrowBtn.className = "open-split-arrow";
+    this.#openArrowBtn.title = "Choose app";
+    this.#openArrowBtn.disabled = true;
+    this.#openArrowBtn.setAttribute("aria-haspopup", "menu");
+    this.#openArrowBtn.setAttribute("aria-expanded", "false");
+    this.#openArrowBtn.append(caret);
+    this.#openArrowBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const isOpen = this.#menuEl.classList.contains("open");
+      const isOpen = this.#openSplitEl.classList.contains("open");
       this.#setMenuOpen(!isOpen);
+      if (!isOpen) this.#populateAppDropdown();
     });
 
-    const popover = document.createElement("div");
-    popover.className = "terminal-header-menu-popover";
-    popover.append(this.#openInFinderBtn);
+    this.#openDropdownEl = document.createElement("div");
+    this.#openDropdownEl.className = "open-split-dropdown";
 
-    this.#menuEl = document.createElement("div");
-    this.#menuEl.className = "terminal-header-menu";
-    this.#menuEl.append(this.#menuBtnEl, popover);
+    this.#openSplitEl = document.createElement("div");
+    this.#openSplitEl.className = "open-split-btn";
+    this.#openSplitEl.append(this.#openMainBtn, this.#openArrowBtn, this.#openDropdownEl);
 
     const meta = document.createElement("div");
     meta.className = "terminal-header-meta";
@@ -136,11 +150,11 @@ export class TerminalPanel {
 
     this.#headerEl = document.createElement("div");
     this.#headerEl.className = "chat-header";
-    this.#headerEl.append(meta, this.#menuEl);
+    this.#headerEl.append(meta, this.#openSplitEl);
 
     // Close menu on outside click
     document.addEventListener("pointerdown", (e) => {
-      if (this.#menuEl.classList.contains("open") && !this.#menuEl.contains(e.target as Node)) {
+      if (this.#openSplitEl.classList.contains("open") && !this.#openSplitEl.contains(e.target as Node)) {
         this.#setMenuOpen(false);
       }
     }, true);
@@ -333,11 +347,13 @@ export class TerminalPanel {
       this.#stageEl.textContent = stagePath!;
       this.#stageEl.title = stagePath!;
       this.#stageEl.hidden = false;
-      this.#openInFinderBtn.disabled = false;
+      this.#openMainBtn.disabled = false;
+      this.#openArrowBtn.disabled = false;
     } else {
       this.#stageEl.textContent = "";
       this.#stageEl.hidden = true;
-      this.#openInFinderBtn.disabled = true;
+      this.#openMainBtn.disabled = true;
+      this.#openArrowBtn.disabled = true;
       this.#setMenuOpen(false);
     }
 
@@ -354,8 +370,114 @@ export class TerminalPanel {
   }
 
   #setMenuOpen(open: boolean): void {
-    this.#menuEl.classList.toggle("open", open);
-    this.#menuBtnEl.setAttribute("aria-expanded", open ? "true" : "false");
+    this.#openSplitEl.classList.toggle("open", open);
+    this.#openArrowBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  async initPreferences(): Promise<void> {
+    const [preferredApp, apps] = await Promise.all([
+      this.#callbacks.onGetPreferredApp?.() ?? null,
+      this.#callbacks.onGetAvailableApps?.() ?? [],
+    ]);
+    this.#preferredApp = preferredApp;
+    this.#cachedApps = apps;
+    if (preferredApp) {
+      const match = apps.find((a) => a.appName === preferredApp);
+      if (match) this.#preferredAppId = match.id;
+    }
+    this.#updateOpenButtonIcon();
+  }
+
+  async #populateAppDropdown(): Promise<void> {
+    this.#openDropdownEl.innerHTML = "";
+
+    const header = document.createElement("div");
+    header.className = "open-dropdown-header";
+    header.textContent = "Open in";
+    this.#openDropdownEl.append(header);
+
+    const apps = await this.#callbacks.onGetAvailableApps?.() ?? [];
+    this.#cachedApps = apps;
+
+    for (const app of apps) {
+      const isSelected = (app.appName === this.#preferredApp) || (app.id === "finder" && !this.#preferredApp);
+
+      const iconEl = this.#makeAppIconEl(app);
+
+      const name = document.createElement("span");
+      name.className = "open-app-name";
+      name.textContent = app.name;
+
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = `open-app-item${isSelected ? " selected" : ""}`;
+      item.append(iconEl, name);
+      item.addEventListener("click", () => {
+        const appValue = app.id === "finder" ? null : app.appName;
+        this.#preferredApp = appValue;
+        this.#preferredAppId = app.id === "finder" ? null : app.id;
+        this.#callbacks.onSetPreferredApp?.(appValue);
+        this.#updateOpenButtonIcon();
+        this.#setMenuOpen(false);
+        const path = this.#stagePath;
+        if (path) this.#callbacks.onOpenWith?.(path, appValue ?? undefined);
+      });
+
+      this.#openDropdownEl.append(item);
+    }
+  }
+
+  #makeAppIconEl(app: { id: string; icon?: string }): HTMLElement {
+    if (app.icon) {
+      const img = document.createElement("img");
+      img.className = "open-app-icon";
+      img.src = app.icon;
+      img.setAttribute("aria-hidden", "true");
+      return img;
+    }
+    const fallback: Record<string, string> = {
+      finder: "folder_open", cursor: "edit_square", vscode: "code",
+      terminal: "terminal", iterm2: "terminal", ghostty: "terminal",
+      warp: "terminal", xcode: "build", "android-studio": "phone_android", rider: "code",
+    };
+    const span = document.createElement("span");
+    span.className = "material-symbols-outlined open-app-icon";
+    span.setAttribute("aria-hidden", "true");
+    span.textContent = fallback[app.id] ?? "open_in_new";
+    return span;
+  }
+
+  #updateOpenButtonIcon(): void {
+    const appLabel = this.#preferredApp ?? "Finder";
+    this.#openMainBtn.title = `Open in ${appLabel}`;
+    const oldIcon = this.#openMainBtn.querySelector(".open-split-icon");
+    if (!oldIcon) return;
+
+    const appId = this.#preferredAppId ?? "finder";
+    const app = this.#cachedApps.find((a) => a.id === appId);
+
+    if (app?.icon) {
+      const img = document.createElement("img");
+      img.className = "open-split-icon";
+      img.src = app.icon;
+      img.setAttribute("aria-hidden", "true");
+      oldIcon.replaceWith(img);
+    } else {
+      const fallback: Record<string, string> = {
+        finder: "folder_open", cursor: "edit_square", vscode: "code",
+        terminal: "terminal", iterm2: "terminal", ghostty: "terminal",
+        warp: "terminal", xcode: "build", "android-studio": "phone_android", rider: "code",
+      };
+      if (oldIcon.tagName === "IMG") {
+        const span = document.createElement("span");
+        span.className = "material-symbols-outlined open-split-icon";
+        span.setAttribute("aria-hidden", "true");
+        span.textContent = fallback[appId] ?? "open_in_new";
+        oldIcon.replaceWith(span);
+      } else {
+        oldIcon.textContent = fallback[appId] ?? "open_in_new";
+      }
+    }
   }
 
   /** Kill only the active PTY and clear the terminal display. */

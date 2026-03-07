@@ -19,7 +19,10 @@ export type ChatCallbacks = {
     selectedFiles?: string[]
   ) => void;
   onStopSession?: () => void;
-  onOpenInFinder?: (path: string) => void;
+  onOpenWith?: (path: string, app?: string) => void;
+  onGetAvailableApps?: () => Promise<Array<{ id: string; name: string; appName: string }>>;
+  onGetPreferredApp?: () => Promise<string | null>;
+  onSetPreferredApp?: (app: string | null) => void;
   onSearchFiles?: (query: string) => Promise<string[]>;
   onSearchCommands?: (query: string) => Promise<SlashCommandEntry[]>;
 };
@@ -39,9 +42,13 @@ export class ChatView {
   #headerEl: HTMLElement;
   #headerTitleEl: HTMLElement;
   #headerStageEl: HTMLElement;
-  #headerMenuEl: HTMLElement;
-  #headerMenuBtnEl: HTMLButtonElement;
-  #headerOpenInFinderBtn: HTMLButtonElement;
+  #openSplitEl: HTMLElement;
+  #openMainBtn: HTMLButtonElement;
+  #openArrowBtn: HTMLButtonElement;
+  #openDropdownEl: HTMLElement;
+  #preferredApp: string | null = null;
+  #preferredAppId: string | null = null;
+  #cachedApps: Array<{ id: string; name: string; appName: string; icon?: string }> = [];
   #messagesEl: HTMLElement;
   #composerEl: HTMLElement;
   #scrollToBottomBtn: HTMLButtonElement;
@@ -101,7 +108,7 @@ export class ChatView {
     };
     this.#onGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      this.#setHeaderMenuOpen(false);
+      this.#setOpenDropdownOpen(false);
       this.#setPermissionMenuOpen(false);
       this.#setContextMenuOpen(false);
       if (this.#mentionVisible) this.#hideMentionMenu();
@@ -110,7 +117,7 @@ export class ChatView {
       this.#closeFloatingMenusForTarget(event.target as Node | null);
     };
     this.#onWindowBlur = () => {
-      this.#setHeaderMenuOpen(false);
+      this.#setOpenDropdownOpen(false);
       this.#setPermissionMenuOpen(false);
       this.#setContextMenuOpen(false);
     };
@@ -120,43 +127,46 @@ export class ChatView {
       class: "chat-header-stage",
       hidden: true,
     });
-    this.#headerOpenInFinderBtn = h(
-      "button",
-      {
-        type: "button",
-        class: "chat-header-menu-item",
-        onclick: (e: Event) => {
-          e.preventDefault();
-          const path = this.#stagePath;
-          if (!path) return;
-          this.#callbacks.onOpenInFinder?.(path);
-          this.#setHeaderMenuOpen(false);
-        },
-      },
-      ["Open in Finder"]
-    ) as HTMLButtonElement;
-
-    this.#headerMenuBtnEl = h("button", {
+    this.#openMainBtn = h("button", {
       type: "button",
-      class: "chat-header-menu-btn",
-      title: "More",
-      "aria-label": "More",
-      "aria-haspopup": "menu",
-      "aria-expanded": "false",
-      onclick: (event: Event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.#setHeaderMenuOpen(!this.#isMenuOpen(this.#headerMenuEl));
+      class: "open-split-main",
+      title: "Open in Finder",
+      disabled: true,
+      onclick: (e: Event) => {
+        e.preventDefault();
+        const path = this.#stagePath;
+        if (!path) return;
+        this.#callbacks.onOpenWith?.(path, this.#preferredApp ?? undefined);
       },
     }, [
-      h("span", { class: "material-symbols-outlined", "aria-hidden": "true" }, ["more_vert"]),
+      h("span", { class: "material-symbols-outlined open-split-icon", "aria-hidden": "true" }, ["folder_open"]),
+      h("span", {}, ["Open"]),
     ]) as HTMLButtonElement;
 
-    this.#headerMenuEl = h("div", { class: "chat-header-menu" }, [
-      this.#headerMenuBtnEl,
-      h("div", { class: "chat-header-menu-popover" }, [
-        this.#headerOpenInFinderBtn,
-      ]),
+    this.#openArrowBtn = h("button", {
+      type: "button",
+      class: "open-split-arrow",
+      title: "Choose app",
+      disabled: true,
+      "aria-haspopup": "menu",
+      "aria-expanded": "false",
+      onclick: (e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const willOpen = !this.#isOpenDropdownOpen();
+        this.#setOpenDropdownOpen(willOpen);
+        if (willOpen) this.#populateAppDropdown();
+      },
+    }, [
+      h("span", { class: "open-split-caret" }, ["\u25BE"]),
+    ]) as HTMLButtonElement;
+
+    this.#openDropdownEl = h("div", { class: "open-split-dropdown" });
+
+    this.#openSplitEl = h("div", { class: "open-split-btn" }, [
+      this.#openMainBtn,
+      this.#openArrowBtn,
+      this.#openDropdownEl,
     ]);
 
     this.#headerEl = h("div", { class: "chat-header" }, [
@@ -164,7 +174,7 @@ export class ChatView {
         this.#headerTitleEl,
         this.#headerStageEl,
       ]),
-      this.#headerMenuEl,
+      this.#openSplitEl,
     ]);
 
     this.#messagesEl = h("div", { class: "chat-messages" });
@@ -196,7 +206,7 @@ export class ChatView {
       void this.#updateMentionSuggestions();
     });
     this.#inputEl.addEventListener("focus", () => {
-      this.#setHeaderMenuOpen(false);
+      this.#setOpenDropdownOpen(false);
       this.#setPermissionMenuOpen(false);
       this.#setContextMenuOpen(false);
     });
@@ -534,7 +544,7 @@ export class ChatView {
     this.#hasUserScrolledUp = false;
     this.#updateScrollToBottomButton();
     this.#isWaiting = false;
-    this.#setHeaderMenuOpen(false);
+    this.#setOpenDropdownOpen(false);
     this.#setPermissionMenuOpen(false);
     this.#setContextMenuOpen(false);
     this.#hideStatus();
@@ -552,13 +562,121 @@ export class ChatView {
       this.#headerStageEl.textContent = name;
       this.#headerStageEl.title = stagePath;
       this.#headerStageEl.hidden = false;
-      this.#headerOpenInFinderBtn.disabled = false;
+      this.#openMainBtn.disabled = false;
+      this.#openArrowBtn.disabled = false;
     } else {
       this.#headerStageEl.textContent = "";
       this.#headerStageEl.removeAttribute("title");
       this.#headerStageEl.hidden = true;
-      this.#headerOpenInFinderBtn.disabled = true;
-      this.#setHeaderMenuOpen(false);
+      this.#openMainBtn.disabled = true;
+      this.#openArrowBtn.disabled = true;
+      this.#setOpenDropdownOpen(false);
+    }
+  }
+
+  async initPreferences(): Promise<void> {
+    const [preferredApp, apps] = await Promise.all([
+      this.#callbacks.onGetPreferredApp?.() ?? null,
+      this.#callbacks.onGetAvailableApps?.() ?? [],
+    ]);
+    this.#preferredApp = preferredApp;
+    this.#cachedApps = apps;
+    // Resolve the appId from the appName
+    if (preferredApp) {
+      const match = apps.find((a) => a.appName === preferredApp);
+      if (match) this.#preferredAppId = match.id;
+    }
+    this.#updateOpenButtonIcon();
+  }
+
+  async #populateAppDropdown(): Promise<void> {
+    clearChildren(this.#openDropdownEl);
+
+    const header = h("div", { class: "open-dropdown-header" }, ["Open in"]);
+    this.#openDropdownEl.appendChild(header);
+
+    const apps = await this.#callbacks.onGetAvailableApps?.() ?? [];
+    this.#cachedApps = apps;
+
+    for (const app of apps) {
+      const isSelected =
+        (app.appName === this.#preferredApp) ||
+        (app.id === "finder" && !this.#preferredApp);
+
+      const iconEl = this.#makeAppIconEl(app);
+      const item = h("button", {
+        type: "button",
+        class: `open-app-item${isSelected ? " selected" : ""}`,
+        onclick: () => {
+          const appValue = app.id === "finder" ? null : app.appName;
+          this.#preferredApp = appValue;
+          this.#preferredAppId = app.id === "finder" ? null : app.id;
+          this.#callbacks.onSetPreferredApp?.(appValue);
+          this.#updateOpenButtonIcon();
+          this.#setOpenDropdownOpen(false);
+          const path = this.#stagePath;
+          if (path) this.#callbacks.onOpenWith?.(path, appValue ?? undefined);
+        },
+      }, [
+        iconEl,
+        h("span", { class: "open-app-name" }, [app.name]),
+      ]);
+
+      this.#openDropdownEl.appendChild(item);
+    }
+  }
+
+  #makeAppIconEl(app: { id: string; icon?: string }): HTMLElement {
+    if (app.icon) {
+      return h("img", {
+        class: "open-app-icon",
+        src: app.icon,
+        "aria-hidden": "true",
+      });
+    }
+    // Fallback to material icon
+    const fallback: Record<string, string> = {
+      finder: "folder_open", cursor: "edit_square", vscode: "code",
+      terminal: "terminal", iterm2: "terminal", ghostty: "terminal",
+      warp: "terminal", xcode: "build", "android-studio": "phone_android", rider: "code",
+    };
+    return h("span", {
+      class: "material-symbols-outlined open-app-icon",
+      "aria-hidden": "true",
+    }, [fallback[app.id] ?? "open_in_new"]);
+  }
+
+  #updateOpenButtonIcon(): void {
+    const appLabel = this.#preferredApp ?? "Finder";
+    this.#openMainBtn.title = `Open in ${appLabel}`;
+    const oldIcon = this.#openMainBtn.querySelector(".open-split-icon");
+    if (!oldIcon) return;
+
+    const appId = this.#preferredAppId ?? "finder";
+    const app = this.#cachedApps.find((a) => a.id === appId);
+
+    if (app?.icon) {
+      const img = h("img", {
+        class: "open-split-icon",
+        src: app.icon,
+        "aria-hidden": "true",
+      });
+      oldIcon.replaceWith(img);
+    } else {
+      const fallback: Record<string, string> = {
+        finder: "folder_open", cursor: "edit_square", vscode: "code",
+        terminal: "terminal", iterm2: "terminal", ghostty: "terminal",
+        warp: "terminal", xcode: "build", "android-studio": "phone_android", rider: "code",
+      };
+      if (oldIcon.tagName === "IMG") {
+        const span = h("span", {
+          class: "material-symbols-outlined open-split-icon",
+          "aria-hidden": "true",
+        }, [fallback[appId] ?? "open_in_new"]);
+        oldIcon.replaceWith(span);
+      } else {
+        oldIcon.textContent = fallback[appId] ?? "open_in_new";
+      }
     }
   }
 
@@ -1353,17 +1471,22 @@ export class ChatView {
     toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
-  #setHeaderMenuOpen(open: boolean): void {
+  #isOpenDropdownOpen(): boolean {
+    return this.#openSplitEl.classList.contains("open");
+  }
+
+  #setOpenDropdownOpen(open: boolean): void {
+    this.#openSplitEl.classList.toggle("open", open);
+    this.#openArrowBtn.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
       this.#setPermissionMenuOpen(false);
       this.#setContextMenuOpen(false);
     }
-    this.#setMenuOpen(this.#headerMenuEl, this.#headerMenuBtnEl, open);
   }
 
   #setPermissionMenuOpen(open: boolean): void {
     if (open) {
-      this.#setHeaderMenuOpen(false);
+      this.#setOpenDropdownOpen(false);
       this.#setContextMenuOpen(false);
     }
     this.#setMenuOpen(this.#permDetailsEl, this.#permToggleBtnEl, open);
@@ -1371,15 +1494,15 @@ export class ChatView {
 
   #setContextMenuOpen(open: boolean): void {
     if (open) {
-      this.#setHeaderMenuOpen(false);
+      this.#setOpenDropdownOpen(false);
       this.#setPermissionMenuOpen(false);
     }
     this.#setMenuOpen(this.#contextDetailsEl, this.#contextToggleBtnEl, open);
   }
 
   #closeFloatingMenusForTarget(target: Node | null): void {
-    if (this.#isMenuOpen(this.#headerMenuEl) && !(target && this.#headerMenuEl.contains(target))) {
-      this.#setHeaderMenuOpen(false);
+    if (this.#isOpenDropdownOpen() && !(target && this.#openSplitEl.contains(target))) {
+      this.#setOpenDropdownOpen(false);
     }
     if (this.#isMenuOpen(this.#permDetailsEl) && !(target && this.#permDetailsEl.contains(target))) {
       this.#setPermissionMenuOpen(false);

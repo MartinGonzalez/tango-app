@@ -3552,13 +3552,13 @@ button {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 13px;
+  font-size: 10px;
   color: var(--text-tertiary);
   line-height: 1.2;
 }
 
 .terminal-header-bottom-row .chat-header-stage {
-  font-size: 13px;
+  font-size: 10px;
   max-width: none;
   flex: 0 1 auto;
 }
@@ -3570,7 +3570,7 @@ button {
 }
 
 .terminal-header-session-id {
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 400;
   color: var(--text-tertiary);
   line-height: 1.2;
@@ -3580,142 +3580,144 @@ button {
   opacity: 0.7;
 }
 
-.terminal-header-menu {
+/* Split Open button */
+.open-split-btn {
   position: relative;
+  display: flex;
   flex-shrink: 0;
 }
 
-.terminal-header-menu-btn {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-sm);
+.open-split-main {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px 4px 6px;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
+  font-size: 12px;
   cursor: pointer;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  white-space: nowrap;
   transition: all 100ms ease;
 }
 
-.terminal-header-menu-btn .material-symbols-outlined {
-  font-size: 20px;
-}
-
-.terminal-header-menu-btn:hover {
+.open-split-main:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.terminal-header-menu-popover {
+.open-split-main:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.open-split-icon {
+  font-size: 16px;
+}
+
+.open-split-arrow {
+  display: flex;
+  align-items: center;
+  padding: 4px 5px;
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 100ms ease;
+}
+
+.open-split-arrow:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.open-split-arrow:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.open-split-caret {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.open-split-dropdown {
+  display: none;
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  min-width: 170px;
+  min-width: 200px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-card);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
   padding: 6px;
-  display: none;
   z-index: 20;
 }
 
-.terminal-header-menu.open .terminal-header-menu-popover {
+.open-split-btn.open .open-split-dropdown {
   display: block;
 }
 
-.terminal-header-menu-item {
+.open-dropdown-header {
+  padding: 8px 10px 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.open-app-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
-  padding: 8px 10px;
+  font-size: 13px;
+  padding: 7px 10px;
   cursor: pointer;
+  transition: all 80ms ease;
 }
 
-.terminal-header-menu-item:hover:not(:disabled) {
+.open-app-item:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.terminal-header-menu-item:disabled {
-  cursor: default;
-  opacity: 0.5;
+.open-app-item.selected {
+  color: var(--text);
 }
 
-.chat-header-menu {
-  position: relative;
+.open-app-icon {
+  font-size: 18px;
+  width: 20px;
+  height: 20px;
+  text-align: center;
   flex-shrink: 0;
 }
 
-.chat-header-menu-btn {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 100ms ease;
+img.open-app-icon {
+  border-radius: 4px;
+  object-fit: contain;
 }
 
-.chat-header-menu-btn .material-symbols-outlined {
-  font-size: 20px;
+img.open-split-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: contain;
 }
 
-.chat-header-menu-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.chat-header-menu-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  min-width: 170px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-card);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
-  padding: 6px;
-  display: none;
-  z-index: 20;
-}
-
-.chat-header-menu.open .chat-header-menu-popover {
-  display: block;
-}
-
-.chat-header-menu-item {
-  width: 100%;
-  text-align: left;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 8px 10px;
-  cursor: pointer;
-}
-
-.chat-header-menu-item:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.chat-header-menu-item:disabled {
-  cursor: default;
-  opacity: 0.5;
+.open-app-name {
+  flex: 1;
 }
 
 .chat-messages {
@@ -5084,7 +5086,7 @@ button {
   font-size: calc(13px * var(--chat-font-scale));
 }
 
-.chat-view .chat-header-menu-item,
+.chat-view .open-app-item,
 .chat-view .chat-user-files-label,
 .chat-view .chat-file-chip-inline,
 .chat-view .tool-approval-dialog,

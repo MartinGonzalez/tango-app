@@ -31,6 +31,8 @@ import { StageStore } from "./stage-store.ts";
 import { ApprovalServer } from "./approval-server.ts";
 import { installApprovalHook } from "./hook-installer.ts";
 import { SessionNamesStore } from "./session-names-store.ts";
+import { PreferencesStore } from "./preferences-store.ts";
+import { getAvailableAppsWithIcons } from "./app-detector.ts";
 import {
   getStageFiles,
   getStageFileContent,
@@ -103,6 +105,7 @@ const ptyManager = new PtyManager();
 const stages = new StageStore();
 const approvals = new ApprovalServer();
 const sessionNames = new SessionNamesStore();
+const preferences = new PreferencesStore();
 const connectors = new ConnectorsRepository();
 const prReviewStore = new PRReviewStore();
 const prAgentReviewStore = new PRAgentReviewStore();
@@ -1124,6 +1127,39 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           const msg = err instanceof Error ? err.message : String(err);
           throw new Error(msg);
         }
+      },
+
+      openWith: async ({ path, app }: { path: string; app?: string }) => {
+        if (!path) return;
+        const args = app ? ["open", "-a", app, path] : ["open", path];
+        try {
+          const proc = Bun.spawn(args, {
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          const exitCode = await proc.exited;
+          if (exitCode !== 0) {
+            const stderr = await new Response(proc.stderr).text();
+            throw new Error(
+              stderr || `Failed to open with ${app ?? "Finder"} (${exitCode})`
+            );
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(msg);
+        }
+      },
+
+      getAvailableApps: async () => {
+        return getAvailableAppsWithIcons();
+      },
+
+      getPreferredOpenApp: async () => {
+        return preferences.get("preferredOpenApp");
+      },
+
+      setPreferredOpenApp: async ({ app }: { app: string | null }) => {
+        await preferences.set("preferredOpenApp", app);
       },
 
       openExternalUrl: async ({ url }: { url: string }) => {
@@ -2323,6 +2359,7 @@ approvals.onHookEvent((event) => {
 
 await stages.load();
 await sessionNames.load();
+await preferences.load();
 await prReviewStore.load();
 await prAgentReviewStore.load();
 await prAgentReviewStore.reconcileInterruptedRuns();

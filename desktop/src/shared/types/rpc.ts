@@ -284,6 +284,22 @@ export type AppRPC = {
         params: { path: string };
         response: void;
       };
+      openWith: {
+        params: { path: string; app?: string };
+        response: void;
+      };
+      getAvailableApps: {
+        params: {};
+        response: Array<{ id: string; name: string; appName: string; icon?: string }>;
+      };
+      getPreferredOpenApp: {
+        params: {};
+        response: string | null;
+      };
+      setPreferredOpenApp: {
+        params: { app: string | null };
+        response: void;
+      };
       openExternalUrl: {
         params: { url: string };
         response: void;

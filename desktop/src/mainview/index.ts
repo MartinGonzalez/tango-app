@@ -1148,12 +1148,21 @@ function init(): void {
         });
       }
     },
-    onOpenInFinder: async (path) => {
+    onOpenWith: async (path, app) => {
       try {
-        await (rpc as any).request.openInFinder({ path });
+        await (rpc as any).request.openWith({ path, app });
       } catch (err) {
-        console.error("Failed to open Finder:", err);
+        console.error("Failed to open:", err);
       }
+    },
+    onGetAvailableApps: async () => {
+      return (rpc as any).request.getAvailableApps({});
+    },
+    onGetPreferredApp: async () => {
+      return (rpc as any).request.getPreferredOpenApp({});
+    },
+    onSetPreferredApp: async (app) => {
+      await (rpc as any).request.setPreferredOpenApp({ app });
     },
     onSearchFiles: async (query) => {
       const cwd = appState.get().activeStage;
@@ -1167,16 +1176,29 @@ function init(): void {
     },
   });
 
+  chatView.initPreferences();
+
   // Terminal panel — replaces chat view in the first slot
   terminalPanel = new TerminalPanel(rpc as any, {
-    onOpenInFinder: async (path) => {
+    onOpenWith: async (path, app) => {
       try {
-        await (rpc as any).request.openInFinder({ path });
+        await (rpc as any).request.openWith({ path, app });
       } catch (err) {
-        console.error("Failed to open Finder:", err);
+        console.error("Failed to open:", err);
       }
     },
+    onGetAvailableApps: async () => {
+      return (rpc as any).request.getAvailableApps({});
+    },
+    onGetPreferredApp: async () => {
+      return (rpc as any).request.getPreferredOpenApp({});
+    },
+    onSetPreferredApp: async (app) => {
+      await (rpc as any).request.setPreferredOpenApp({ app });
+    },
   });
+
+  terminalPanel.initPreferences();
 
   pluginsPreview = new PluginsPreview(null, {
     onSelect: (selection) => {
