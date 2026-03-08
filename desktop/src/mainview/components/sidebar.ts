@@ -168,13 +168,6 @@ export class Sidebar {
   }
 
   #renderStage(ws: StageData): HTMLElement {
-    const activeCount = ws.sessions.filter(
-      (s) => s.activity === "working" || s.activity === "waiting_for_input"
-    ).length;
-    const activeBadge = activeCount > 0
-      ? h("span", { class: "ws-active-badge" }, [String(activeCount)])
-      : null;
-
     const folderHeader = h(
       "div",
       {
@@ -197,7 +190,6 @@ export class Sidebar {
           h("span", { class: "ws-folder-name" }, [ws.name]),
           vcsBranchLabel(ws.branch ?? "No branch"),
         ]),
-        ...(activeBadge ? [activeBadge] : []),
       ]
     );
 

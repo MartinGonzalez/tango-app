@@ -111,11 +111,16 @@ export async function loadInstrumentManifest(
 
   const backgroundRefresh = base.backgroundRefresh
     && typeof base.backgroundRefresh === "object"
-    && base.backgroundRefresh.enabled === true
-    ? {
-        enabled: true as const,
-        intervalSeconds: Math.max(10, Number(base.backgroundRefresh.intervalSeconds) || 30),
-      }
+    ? (() => {
+        const mode = base.backgroundRefresh.mode === "keep-alive" ? "keep-alive" as const : "interval" as const;
+        return {
+          enabled: true as const,
+          mode,
+          intervalSeconds: mode === "interval"
+            ? Math.max(10, Number(base.backgroundRefresh.intervalSeconds) || 30)
+            : undefined,
+        };
+      })()
     : undefined;
 
   const manifest: InstrumentManifest = {

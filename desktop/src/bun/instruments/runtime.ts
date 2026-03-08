@@ -556,7 +556,7 @@ export class InstrumentRuntime {
     for (const [instrumentId, byEvent] of this.#backendSubscriptions) {
       const handlers = byEvent.get(event);
       if (!handlers || handlers.size === 0) continue;
-      const entry = this.#registry.get(instrumentId);
+      const entry = this.get(instrumentId);
       if (!entry || !entry.enabled || entry.status === "disabled" || entry.status === "blocked") continue;
       for (const handler of handlers) {
         Promise.resolve()
@@ -710,8 +710,10 @@ export class InstrumentRuntime {
   }
 
   async suspendBackend(instrumentId: string): Promise<void> {
-    const entry = this.#registry.get(instrumentId);
+    const entry = this.get(instrumentId);
     if (!entry || !entry.enabled || entry.status !== "active") return;
+
+    if (entry.backgroundRefresh?.mode === "keep-alive") return;
 
     const module = this.#backendModuleCache.get(instrumentId);
     if (!module || module.suspended) return;
@@ -733,7 +735,7 @@ export class InstrumentRuntime {
   }
 
   async resumeBackend(instrumentId: string): Promise<void> {
-    const entry = this.#registry.get(instrumentId);
+    const entry = this.get(instrumentId);
     if (!entry || !entry.enabled || entry.status !== "active") return;
 
     this.#stopBackgroundScheduler(instrumentId);

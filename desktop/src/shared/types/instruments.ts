@@ -61,8 +61,9 @@ export type InstrumentSettingField =
     });
 
 export type BackgroundRefreshConfig = {
-  enabled: boolean;
-  intervalSeconds: number;
+  enabled?: boolean;
+  intervalSeconds?: number;
+  mode?: "interval" | "keep-alive";
 };
 
 export type InstrumentLauncherConfig = {

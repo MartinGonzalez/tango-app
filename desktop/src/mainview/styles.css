@@ -524,16 +524,6 @@ button {
   margin-top: 2px;
 }
 
-.ws-active-badge {
-  font-size: 10px;
-  font-weight: 600;
-  color: #fff;
-  background: var(--green);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
 
 .ws-folder-actions {
   display: flex;
