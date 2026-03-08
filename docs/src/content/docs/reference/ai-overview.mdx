@@ -153,6 +153,41 @@ const html = api.ui.renderMarkdown("# Hello");
 api.emit({ event: "my-custom-event", payload: { data } });
 ```
 
+### Debug console logging
+
+Tango has a built-in debug console (toggle with **Cmd+L**). Use it instead of `console.log` — logs appear in the app with level, timestamp, and instrument source.
+
+**Frontend** — use the `useLogger()` hook or `api.logger`:
+
+```tsx
+import { useLogger } from "tango-api";
+
+const logger = useLogger();
+logger.info("Loaded items", { count: items.length });
+logger.error("Failed to fetch", { error: err.message });
+logger.warn("Retrying...");
+logger.debug("Cache state", cacheMap);
+```
+
+Or via the API object:
+
+```tsx
+const api = useInstrumentApi();
+api.logger.info("Something happened");
+```
+
+**Backend** — use `ctx.logger`:
+
+```ts
+handler: async (ctx, input) => {
+  ctx.logger.info("Processing request", { input });
+  ctx.logger.error("External API failed", { status: 500 });
+  return { ok: true };
+},
+```
+
+All four methods share the same signature: `(message: string, ...args: unknown[]) => void`. Extra args appear as expandable JSON detail in the debug console.
+
 [Deep dive: Frontend API →](/reference/frontend-api/)
 
 ### UI components
