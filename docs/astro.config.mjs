@@ -37,6 +37,10 @@ export default defineConfig({
               label: "Testing Your Instrument",
               slug: "tutorials/07-testing-your-instrument",
             },
+            {
+              label: "Publishing",
+              slug: "tutorials/08-publishing",
+            },
           ],
         },
         {

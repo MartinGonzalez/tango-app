@@ -20,7 +20,7 @@ export class InstrumentStorage {
   }
 
   instrumentRoot(instrumentId: string): string {
-    return join(INSTRUMENTS_HOME, instrumentId);
+    return join(INSTRUMENTS_HOME, "data", instrumentId);
   }
 
   propertiesPath(instrumentId: string): string {

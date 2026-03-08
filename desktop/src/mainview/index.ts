@@ -894,6 +894,7 @@ function init(): void {
 
   instrumentsSidebar = new InstrumentsSidebar(instrumentsSidebarHost, {
     onActivate: (instrumentId) => {
+      instrumentsSidebar!.setActive(instrumentId);
       const entry = appState.get().instrumentEntries.find((e) => e.id === instrumentId);
       if (entry) instrumentDetailPanel.showInstalled(entry);
     },

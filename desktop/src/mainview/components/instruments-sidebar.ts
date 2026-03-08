@@ -1,4 +1,5 @@
 import { clearChildren, h } from "../lib/dom.ts";
+import { instrumentIcon } from "../lib/icons.ts";
 import type {
   InstrumentRegistryEntry,
   InstrumentSettingField,
@@ -132,6 +133,7 @@ export class InstrumentsSidebar {
         title: `${entry.name} (${entry.id})`,
         onclick: () => this.#callbacks.onActivate(entry.id),
       }, [
+        instrumentIcon(entry.launcher?.sidebarShortcut?.icon ?? "puzzle", 16),
         h("span", { class: "task-row-title" }, [displayName]),
         h("div", { class: "task-row-meta" }, [
           h("span", { class: badgeClass }, [sourceLabel]),
@@ -223,8 +225,7 @@ export class InstrumentsSidebar {
 
     const schema = state.schema.length > 0 ? state.schema : entry.settings;
     if (!schema.length) {
-      container.appendChild(h("div", { class: "task-group-empty" }, ["No settings"]));
-      return container;
+      return h("div", { hidden: true });
     }
 
     for (const field of schema) {

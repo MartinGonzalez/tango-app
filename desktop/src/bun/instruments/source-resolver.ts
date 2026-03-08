@@ -200,8 +200,9 @@ export async function installFromCatalog(
   const ref = parseGitHubSource(source);
   if (!ref) throw new Error(`Invalid source format: ${source}`);
 
-  const installDir = join(INSTRUMENTS_DIR, instrumentId);
-  await mkdir(INSTRUMENTS_DIR, { recursive: true });
+  const checkoutsDir = join(INSTRUMENTS_DIR, "checkouts");
+  const installDir = join(checkoutsDir, instrumentId);
+  await mkdir(checkoutsDir, { recursive: true });
 
   // Clean up any previous failed install
   try {

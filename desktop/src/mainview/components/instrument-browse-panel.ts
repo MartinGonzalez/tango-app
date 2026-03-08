@@ -1,4 +1,5 @@
 import { clearChildren, h } from "../lib/dom.ts";
+import { instrumentIcon } from "../lib/icons.ts";
 import type {
   InstrumentCatalogEntry,
   InstrumentCategory,
@@ -189,7 +190,7 @@ export class InstrumentBrowsePanel {
         this.#renderList();
       },
     }, [
-      h("div", { class: "instrument-browse-item-icon" }, [icon]),
+      h("div", { class: "instrument-browse-item-icon" }, [instrumentIcon(icon, 20)]),
       h("div", { class: "instrument-browse-item-info" }, [
         h("div", { class: "instrument-browse-item-name" }, [entry.name]),
         entry.description

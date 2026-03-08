@@ -1,4 +1,5 @@
 import { clearChildren, h } from "../lib/dom.ts";
+import { instrumentIcon } from "../lib/icons.ts";
 import type {
   InstrumentRegistryEntry,
   InstrumentCatalogEntry,
@@ -185,7 +186,7 @@ export class InstrumentDetailPanel {
   }
 
   #iconEl(icon: string): HTMLElement {
-    return h("span", { class: "instrument-detail-icon-glyph" }, [icon]);
+    return instrumentIcon(icon, 32);
   }
 
   get element(): HTMLElement {

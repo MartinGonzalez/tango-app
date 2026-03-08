@@ -1,0 +1,111 @@
+---
+title: Publishing Your Instrument
+description: How to publish your instrument to the Tango marketplace.
+---
+
+Once your instrument is built and tested, you can publish it to the Tango marketplace so other users can discover and install it directly from the app.
+
+## Prerequisites
+
+1. **GitHub CLI** installed and authenticated:
+
+```bash
+# Install
+brew install gh
+
+# Authenticate
+gh auth login
+```
+
+2. **A valid instrument manifest** — run `bun run validate` to check before publishing.
+
+## How Publishing Works
+
+The Tango marketplace is backed by a single GitHub repository: [`MartinGonzalez/tango-instruments`](https://github.com/MartinGonzalez/tango-instruments). It contains a `tango.json` index file that lists every available instrument.
+
+When you run `publish`, the CLI:
+
+1. Validates your manifest
+2. Bumps your `package.json` version
+3. Forks `tango-instruments` to your GitHub account
+4. Copies your source files into the fork
+5. Updates `tango.json` to include your instrument
+6. Opens a pull request for review
+
+Once the PR is merged, your instrument appears in the Browse panel inside Tango.
+
+## Publish
+
+From your instrument directory:
+
+```bash
+bun run publish
+```
+
+This bumps the **patch** version by default. You can specify a different bump level:
+
+```bash
+bun run publish patch   # 0.1.0 → 0.1.1 (default)
+bun run publish minor   # 0.1.0 → 0.2.0
+bun run publish major   # 0.1.0 → 1.0.0
+```
+
+### Example Output
+
+```
+[publish] Checking prerequisites...
+[publish] Validating instrument...
+[publish] Version bumped to 0.2.0
+[publish] Instrument: My Instrument (my-instrument)
+[publish] Forking MartinGonzalez/tango-instruments...
+[publish] Cloning fork...
+[publish] Copying instrument files...
+[publish] Pushing to fork...
+
+[publish] PR created: https://github.com/MartinGonzalez/tango-instruments/pull/42
+```
+
+## Updating an Existing Instrument
+
+Run `bun run publish` again. The CLI detects that your instrument already exists in `tango.json` and force-pushes the updated branch. If a PR is already open, it gets updated automatically — no duplicate PRs.
+
+```
+[publish] PR updated (force-pushed): https://github.com/MartinGonzalez/tango-instruments/pull/42
+```
+
+## What Gets Published
+
+The CLI copies your entire project directory **except** these files:
+
+| Excluded | Reason |
+|----------|--------|
+| `node_modules/` | Reinstalled by users |
+| `dist/` | Rebuilt on install |
+| `.git/` | Not needed |
+| `.claude/` | Local config |
+| `.env` | Secrets |
+| `.DS_Store` | OS artifact |
+| `bun.lock` / `bun.lockb` | Regenerated on install |
+
+Everything else is included: `src/`, `package.json`, `test/`, config files, etc.
+
+## Pre-Publish Checklist
+
+Before publishing, make sure:
+
+- [ ] `bun run validate` passes with no errors
+- [ ] `bun run build` succeeds
+- [ ] `bun test` passes
+- [ ] Your `package.json` has a meaningful `description` in the manifest
+- [ ] You've set a `category` (`developer-tools`, `productivity`, `media`, `communication`, `finance`, `utilities`)
+- [ ] Your `permissions` array only includes what you actually need
+- [ ] No secrets or credentials in your source files
+
+## What Happens After Merge
+
+Once your PR is merged into `tango-instruments`:
+
+1. The Tango app fetches the updated `tango.json` when users open the Browse panel
+2. Your instrument appears in the catalog with the name, description, icon, and category from your manifest
+3. Users click **Install** — the app clones just your instrument's subdirectory, runs `bun install && bun run build`, and registers it
+4. The instrument is ready to use

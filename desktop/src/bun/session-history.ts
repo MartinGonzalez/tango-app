@@ -16,6 +16,7 @@ export type HistorySession = {
   startedAt: string | null;
   lastActiveAt: string | null;
   transcriptPath: string;
+  fileMtimeMs?: number;
 };
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
@@ -38,7 +39,7 @@ export async function listSessionsForStage(
   // Parse the newest transcript files first to avoid dropping recent sessions.
   const promises = candidates.slice(0, MAX_STAGE_HISTORY_FILES).map(async (entry) => {
     try {
-      return await parseTranscriptMeta(entry.sessionId, entry.filePath);
+      return await parseTranscriptMeta(entry.sessionId, entry.filePath, entry.mtimeMs);
     } catch {
       return null;
     }
@@ -93,7 +94,9 @@ export async function listAllSessions(): Promise<HistorySession[]> {
       const sessionId = basename(file, ".jsonl");
       const filePath = join(dirPath, file);
       try {
-        const session = await parseTranscriptMeta(sessionId, filePath);
+        let mtimeMs = 0;
+        try { mtimeMs = (await stat(filePath)).mtimeMs; } catch {}
+        const session = await parseTranscriptMeta(sessionId, filePath, mtimeMs);
         if (session?.prompt) {
           all.push(session);
         }
@@ -118,7 +121,8 @@ export async function listAllSessions(): Promise<HistorySession[]> {
  */
 async function parseTranscriptMeta(
   sessionId: string,
-  filePath: string
+  filePath: string,
+  mtimeMs?: number
 ): Promise<HistorySession | null> {
   const content = await readFile(filePath, "utf-8");
   const lines = content.split("\n");
@@ -197,6 +201,10 @@ async function parseTranscriptMeta(
   const firstLine = extractTopicLine(prompt);
   const topic = firstLine.length > 80 ? firstLine.slice(0, 77) + "..." : firstLine;
 
+  // File mtime is the most reliable indicator of when the session was last active,
+  // since transcript entries may not always have timestamps in the last few lines.
+  const mtimeIso = mtimeMs ? new Date(mtimeMs).toISOString() : null;
+
   return {
     sessionId,
     cwd,
@@ -204,8 +212,9 @@ async function parseTranscriptMeta(
     topic,
     model,
     startedAt,
-    lastActiveAt,
+    lastActiveAt: mtimeIso ?? lastActiveAt,
     transcriptPath: filePath,
+    fileMtimeMs: mtimeMs,
   };
 }
 

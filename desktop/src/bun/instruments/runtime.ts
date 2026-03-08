@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
@@ -355,11 +355,16 @@ export class InstrumentRuntime {
       return { removed: true, dataDeleted: false };
     }
 
+    // Remove the checkout directory (installed code)
+    if (entry.installPath) {
+      await rm(entry.installPath, { recursive: true, force: true });
+    }
+
     const removed = await this.#registry.remove(instrumentId);
 
     let dataDeleted = false;
     if (removed && opts?.deleteData) {
-      await this.#storage.deleteInstrumentData(instrumentId);
+      await this.#storage.deleteInstrumentData(this.#storageId(instrumentId));
       dataDeleted = true;
     }
 
@@ -458,16 +463,17 @@ export class InstrumentRuntime {
     }
 
     const normalized = normalizeSettingValue(field, value);
+    const sid = this.#storageId(entry.id);
     if (field.secret) {
       if (normalized == null || normalized === "") {
-        await this.#storage.deleteSettingSecret(entry.id, field.key);
+        await this.#storage.deleteSettingSecret(sid, field.key);
       } else {
-        await this.#storage.setSettingSecret(entry.id, field.key, String(normalized));
+        await this.#storage.setSettingSecret(sid, field.key, String(normalized));
       }
     } else if (normalized == null) {
-      await this.#storage.deleteSettingProperty(entry.id, field.key);
+      await this.#storage.deleteSettingProperty(sid, field.key);
     } else {
-      await this.#storage.setSettingProperty(entry.id, field.key, normalized);
+      await this.#storage.setSettingProperty(sid, field.key, normalized);
     }
 
     return this.#readSettingsValues(entry);
@@ -476,19 +482,19 @@ export class InstrumentRuntime {
   async getProperty(instrumentId: string, key: string): Promise<unknown | null> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.properties");
-    return this.#storage.getProperty(entry.id, key);
+    return this.#storage.getProperty(this.#storageId(entry.id), key);
   }
 
   async setProperty(instrumentId: string, key: string, value: unknown): Promise<void> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.properties");
-    await this.#storage.setProperty(entry.id, key, value);
+    await this.#storage.setProperty(this.#storageId(entry.id), key, value);
   }
 
   async deleteProperty(instrumentId: string, key: string): Promise<void> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.properties");
-    await this.#storage.deleteProperty(entry.id, key);
+    await this.#storage.deleteProperty(this.#storageId(entry.id), key);
   }
 
   async readFile(
@@ -498,7 +504,7 @@ export class InstrumentRuntime {
   ): Promise<string> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.files");
-    return this.#storage.readFile(entry.id, filePath, encoding);
+    return this.#storage.readFile(this.#storageId(entry.id), filePath, encoding);
   }
 
   async writeFile(
@@ -509,19 +515,19 @@ export class InstrumentRuntime {
   ): Promise<void> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.files");
-    await this.#storage.writeFile(entry.id, filePath, content, encoding);
+    await this.#storage.writeFile(this.#storageId(entry.id), filePath, content, encoding);
   }
 
   async deleteFile(instrumentId: string, filePath: string): Promise<void> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.files");
-    await this.#storage.deleteFile(entry.id, filePath);
+    await this.#storage.deleteFile(this.#storageId(entry.id), filePath);
   }
 
   async listFiles(instrumentId: string, dir?: string): Promise<string[]> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.files");
-    return this.#storage.listFiles(entry.id, dir ?? "");
+    return this.#storage.listFiles(this.#storageId(entry.id), dir ?? "");
   }
 
   async sqlQuery(
@@ -532,7 +538,7 @@ export class InstrumentRuntime {
   ): Promise<Record<string, unknown>[]> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.db");
-    return this.#storage.sqlQuery(entry.id, sql, params ?? [], db ?? "main");
+    return this.#storage.sqlQuery(this.#storageId(entry.id), sql, params ?? [], db ?? "main");
   }
 
   async sqlExecute(
@@ -543,7 +549,7 @@ export class InstrumentRuntime {
   ): Promise<{ changes: number; lastInsertRowid: number | null }> {
     const entry = this.#requireUsableEntry(instrumentId);
     requirePermission(entry, "storage.db");
-    return this.#storage.sqlExecute(entry.id, sql, params ?? [], db ?? "main");
+    return this.#storage.sqlExecute(this.#storageId(entry.id), sql, params ?? [], db ?? "main");
   }
 
   emitHostEvent<E extends keyof HostEventMap>(event: E, payload: HostEventMap[E]): void {
@@ -872,6 +878,13 @@ export class InstrumentRuntime {
     };
   }
 
+  /** Strip ::dev suffix so dev instruments share storage with the marketplace version. */
+  #storageId(instrumentId: string): string {
+    return instrumentId.endsWith("::dev")
+      ? instrumentId.slice(0, -"::dev".length)
+      : instrumentId;
+  }
+
   #requireEntry(instrumentId: string): InstrumentRegistryEntry {
     const entry = this.get(instrumentId);
     if (!entry) {
@@ -1025,14 +1038,15 @@ export class InstrumentRuntime {
   }
 
   async #readSettingsValues(entry: InstrumentRegistryEntry): Promise<Record<string, unknown>> {
+    const sid = this.#storageId(entry.id);
     const values: Record<string, unknown> = {};
     for (const field of entry.settings) {
       if (field.secret) {
-        const secret = await this.#storage.getSettingSecret(entry.id, field.key);
+        const secret = await this.#storage.getSettingSecret(sid, field.key);
         values[field.key] = secret ?? ("default" in field ? field.default : null);
         continue;
       }
-      const prop = await this.#storage.getSettingProperty(entry.id, field.key);
+      const prop = await this.#storage.getSettingProperty(sid, field.key);
       if (prop == null) {
         values[field.key] = "default" in field ? field.default : null;
       } else {
