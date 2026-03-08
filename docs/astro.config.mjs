@@ -50,6 +50,7 @@ export default defineConfig({
         {
           label: "Reference",
           items: [
+            { label: "AI Overview", slug: "reference/ai-overview" },
             { label: "Manifest", slug: "reference/manifest" },
             { label: "Frontend API", slug: "reference/frontend-api" },
             { label: "Backend API", slug: "reference/backend-api" },

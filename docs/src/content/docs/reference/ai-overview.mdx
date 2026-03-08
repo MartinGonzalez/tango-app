@@ -1,0 +1,397 @@
+---
+title: AI Overview
+description: Complete SDK reference for AI coding agents building Tango instruments.
+---
+
+Everything you need to build a Tango instrument in one page. Each section links to a deeper reference.
+
+## How instruments work
+
+An instrument has two optional parts:
+
+- **Frontend** (`src/index.tsx`) — React components rendered in panel slots inside Tango's WebKit webview. Import from `"tango-api"`.
+- **Backend** (`src/backend.ts`) — Code that runs in the host Bun process: data fetching, computation, file I/O, API calls, timers. Import from `"tango-api/backend"`.
+
+**When do you need a backend?** If your instrument just displays static UI or reads from built-in storage, frontend-only is fine. Add a backend when you need external APIs, periodic tasks, heavy processing, or anything you wouldn't do in a browser.
+
+### The golden rules
+
+1. **The frontend is dumb.** It renders UI and responds to user actions. It does NOT fetch data, poll, or run timers.
+2. **The backend is the brain.** It owns all data fetching, scheduling, and side effects. It pushes data to the frontend via events.
+3. **Panels cannot talk to each other directly.** Each panel slot is a separate React root — they share NO state. All panel-to-panel communication MUST go through the backend.
+4. **`api.emit()` (frontend) is ONLY for cross-instrument communication.** To send data between your own panels, call a backend action, then have the backend use `ctx.emit()` to broadcast to all your panels.
+5. **Every panel component must be wrapped in `<UIRoot>`.** This injects the Tango theme.
+
+## Panel slots
+
+Your instrument can render into up to 4 slots:
+
+| Slot | Where it appears | Common use |
+|------|-----------------|------------|
+| `sidebar` | Left sidebar | Navigation, lists, quick actions |
+| `first` | Center-left main area | Primary content |
+| `second` | Center-right | Secondary/detail view |
+| `right` | Right sidebar | Context panels, settings |
+
+Enable slots in `package.json` under `tango.instrument.panels`. Only create panel components for slots you enable.
+
+## Panel communication pattern
+
+Panels cannot share React state. Use the backend as a hub:
+
+```
+Sidebar panel ──→ calls backend action ──→ Backend processes
+                                              │
+                                              ├── ctx.emit("items.loaded", { items })
+                                              │
+First panel ←── useHostEvent("instrument.event") listens
+Second panel ←── useHostEvent("instrument.event") listens
+```
+
+```tsx
+// Sidebar: user clicks an item → call backend action
+const selectItem = useInstrumentAction("selectItem");
+<UIListItem onClick={() => selectItem({ id: item.id })} />
+
+// Backend: fetch data and broadcast to all panels
+actions: {
+  selectItem: {
+    handler: async (ctx, input) => {
+      const detail = await fetchDetail(input.id);
+      ctx.emit({ event: "item.selected", payload: { detail } });
+      return { ok: true };
+    },
+  },
+},
+
+// First panel: listen for the event
+useHostEvent("instrument.event", useCallback((payload) => {
+  if (payload.event === "item.selected") {
+    setDetail(payload.payload.detail);
+  }
+}, []));
+```
+
+**NEVER use `api.emit()` to communicate between your own panels — it won't work.**
+
+### Loading states gotcha
+
+If you emit multiple events in rapid succession within a single action handler, React 18 may batch the state updates and only render the final state. **Set loading state in the frontend before calling the action:**
+
+```tsx
+const [loading, setLoading] = useState(false);
+const fetchTickets = useInstrumentAction("fetchTickets");
+
+async function handleClick(id: string) {
+  setLoading(true);                         // Immediate local state
+  await fetchTickets({ id });               // Backend fetches and emits result
+}
+
+useHostEvent("instrument.event", useCallback((payload) => {
+  if (payload.event === "tickets.loaded") {
+    setTickets(payload.payload.tickets);
+    setLoading(false);
+  }
+}, []));
+```
+
+**Rule of thumb:** Frontend owns loading/UI state. Backend owns data.
+
+---
+
+## Frontend guide
+
+### Entry point
+
+`src/index.tsx` must default-export a `defineReactInstrument` call:
+
+```tsx
+import { defineReactInstrument } from "tango-api";
+
+export default defineReactInstrument({
+  panels: {
+    sidebar: SidebarPanel,
+    first: MainPanel,
+  },
+  defaults: {
+    visible: { sidebar: true, first: true },
+  },
+});
+```
+
+### Choosing the right hook
+
+| You want to... | Use this |
+|----------------|----------|
+| Access storage, sessions, actions, UI utils | `useInstrumentApi()` — returns the full API object |
+| Call a single backend action | `useInstrumentAction("actionName")` |
+| Run a Claude session with streaming | `useSession({ id, persist? })` |
+| React to host events | `useHostEvent("eventName", callback)` |
+| Read/write user settings | `useInstrumentSettings()` |
+| Check which panels are visible | `usePanelVisibility()` |
+
+### The API object
+
+```tsx
+const api = useInstrumentApi();
+
+// Storage
+await api.storage.getProperty<MyType>("key");
+await api.storage.setProperty("key", value);
+
+// Backend actions
+const result = await api.actions.call("myAction", { input: "data" });
+
+// Sessions
+await api.sessions.start({ prompt: "Help me with...", cwd: "/path" });
+
+// UI utilities
+api.ui.openUrl("https://example.com");
+const html = api.ui.renderMarkdown("# Hello");
+
+// Cross-instrument events
+api.emit({ event: "my-custom-event", payload: { data } });
+```
+
+[Deep dive: Frontend API →](/reference/frontend-api/)
+
+### UI components
+
+All imported from `"tango-api"`. Build layouts with `tui-col` and `tui-row` CSS classes.
+
+**Layout & structure:**
+`UIRoot` (required wrapper), `UIScrollArea`, `UIPanelHeader`, `UISection`, `UICard`, `UIContainer`, `UIFooter`
+
+**Actions:**
+`UIButton` (variants: `primary`, `secondary`, `ghost`, `danger`, `success`), `UIIconButton`, `UILink`
+
+**Data display:**
+`UIBadge` (tones: `neutral`, `info`, `success`, `warning`, `danger`), `UIKeyValue`, `UIMarkdownRenderer`, `UIInlineCode`, `UIIcon`, `UIEmptyState`
+
+**Lists & groups:**
+`UIList` + `UIListItem`, `UIGroup` (collapsible), `UISelectionList`, `UITreeView`
+
+**Forms:**
+`UIInput`, `UITextarea`, `UISelect`, `UIDropdown`, `UIToggle`, `UICheckbox`, `UIRadioGroup`, `UISegmentedControl`
+
+**Navigation:**
+`UITabs`
+
+[Deep dive: UI Components →](/components/)
+
+### Theme CSS variables
+
+```css
+--tui-bg               /* Main background */
+--tui-bg-secondary     /* Subtle background */
+--tui-bg-card          /* Card surfaces */
+--tui-text             /* Primary text */
+--tui-text-secondary   /* Muted text */
+--tui-border           /* Borders */
+--tui-primary          /* Accent color */
+```
+
+---
+
+## Backend guide
+
+### Entry point
+
+`src/backend.ts` must default-export a `defineBackend` call:
+
+```ts
+import { defineBackend, type InstrumentBackendContext } from "tango-api/backend";
+
+export default defineBackend({
+  kind: "tango.instrument.backend.v2",
+
+  onStart: async (ctx) => {
+    ctx.logger.info("Instrument started");
+  },
+
+  onStop: async () => {
+    // Clean up resources
+  },
+
+  actions: {
+    fetchItems: {
+      input: { type: "object", properties: { query: { type: "string" } } },
+      output: { type: "object", properties: { items: { type: "array" } } },
+      handler: async (ctx, input) => {
+        const items = await fetchFromApi(input.query);
+        return { items };
+      },
+    },
+  },
+});
+```
+
+### The backend context (`ctx`)
+
+- `ctx.emit({ event, payload? })` — Push data to the frontend
+- `ctx.logger.info/warn/error(msg)` — Structured logging
+- `ctx.instrumentId` — Your instrument's ID
+- `ctx.host.storage` — Same storage API as frontend
+- `ctx.host.sessions` — Start Claude sessions from the backend
+- `ctx.host.settings` — Read instrument settings
+
+### Core pattern: Backend pushes, frontend listens
+
+```ts
+// Backend
+actions: {
+  refresh: {
+    handler: async (ctx) => {
+      const data = await fetchLatestData();
+      ctx.emit({ event: "data.updated", payload: { data } });
+      return { ok: true };
+    },
+  },
+},
+
+// Frontend
+function MainPanel() {
+  const [data, setData] = useState(null);
+  const refresh = useInstrumentAction("refresh");
+
+  useHostEvent("instrument.event", useCallback((payload) => {
+    if (payload.event === "data.updated") {
+      setData(payload.payload.data);
+    }
+  }, []));
+
+  useEffect(() => { refresh(); }, []);
+
+  return (
+    <UIRoot>
+      <UIPanelHeader title="My Data" rightActions={
+        <UIIconButton icon="refresh" label="Refresh" onClick={() => refresh()} />
+      } />
+      {data ? <DataView data={data} /> : <UIEmptyState title="Loading..." />}
+    </UIRoot>
+  );
+}
+```
+
+[Deep dive: Backend API →](/reference/backend-api/)
+
+### Background refresh
+
+For periodic data updates, use the built-in background refresh instead of rolling your own timer:
+
+```json
+// In package.json → tango.instrument
+"backgroundRefresh": { "intervalMs": 60000 }
+```
+
+```ts
+onBackgroundRefresh: async (ctx) => {
+  const data = await fetchLatestData();
+  ctx.emit({ event: "data.refreshed", payload: data });
+},
+```
+
+Tango manages the timer lifecycle — pauses when idle, resumes when active.
+
+[Deep dive: Background Refresh →](/reference/background-refresh/)
+
+---
+
+## Permissions
+
+Declared in `package.json` under `tango.instrument.permissions`. You MUST declare every permission your code uses — Tango throws a runtime error otherwise.
+
+| You use this in your code | Required permission |
+|--------------------------|---------------------|
+| `api.storage.getProperty()`, `setProperty()`, `deleteProperty()` | `storage.properties` |
+| `api.storage.readFile()`, `writeFile()`, `deleteFile()`, `listFiles()` | `storage.files` |
+| `api.storage.sqlQuery()`, `sqlExecute()` | `storage.db` |
+| `api.sessions.start()`, `query()`, `sendFollowUp()`, `kill()`, `useSession()` | `sessions` |
+| `useHostEvent("session.stream")`, `useHostEvent("session.ended")` | `sessions` |
+| `api.stages.list()`, `api.stages.active()` | `stages.read` |
+| `useHostEvent("stage.added")`, `useHostEvent("stage.removed")` | `stages.observe` |
+| `api.connectors.listStageConnectors()`, `isAuthorized()` | `connectors.read` |
+| `api.connectors.getCredential()` | `connectors.credentials.read` |
+| `api.connectors.connect()`, `disconnect()` | `connectors.connect` |
+
+[Deep dive: Permissions →](/reference/permissions/)
+
+---
+
+## Settings
+
+Define a settings schema for user configuration:
+
+```json
+// In package.json → tango.instrument
+"settings": [
+  { "key": "apiKey", "type": "string", "title": "API Key", "required": true, "secret": true },
+  { "key": "maxResults", "type": "number", "title": "Max Results", "default": 10, "min": 1, "max": 100 },
+  { "key": "enabled", "type": "boolean", "title": "Auto-refresh", "default": false },
+  { "key": "format", "type": "select", "title": "Output", "options": [{"value":"json","label":"JSON"},{"value":"csv","label":"CSV"}] }
+]
+```
+
+After changing settings, run `bun run sync` to regenerate `tango-env.d.ts` with typed keys.
+
+```tsx
+const { values, setValue, loading } = useInstrumentSettings();
+if (values?.apiKey) { /* configured */ }
+```
+
+---
+
+## Manifest quick reference
+
+Full manifest lives in `package.json` under `tango.instrument`:
+
+```json
+{
+  "tango": {
+    "instrument": {
+      "id": "my-instrument",
+      "name": "My Instrument",
+      "description": "What it does",
+      "category": "developer-tools",
+      "group": "Custom",
+      "runtime": "react",
+      "entrypoint": "./dist/index.js",
+      "backendEntrypoint": "./dist/backend.js",
+      "hostApiVersion": "2.0.0",
+      "launcher": {
+        "sidebarShortcut": { "enabled": true, "label": "My Tool", "icon": "puzzle", "order": 50 }
+      },
+      "panels": { "sidebar": true, "first": true, "second": false, "right": false },
+      "permissions": [],
+      "settings": []
+    }
+  }
+}
+```
+
+[Deep dive: Manifest →](/reference/manifest/)
+
+---
+
+## Dev workflow
+
+```bash
+bun run dev       # Build + watch + hot-reload (Tango must be running on port 4243)
+bun run build     # One-off production build → dist/
+bun run validate  # Check manifest, entry points, permissions
+bun run sync      # Regenerate tango-env.d.ts from settings schema
+```
+
+- Edits to `src/` auto-rebuild and hot-reload — no restart needed
+- Changes to `package.json` or lockfile trigger a fresh `bun install` + rebuild
+- Your instrument shows a `[dev]` badge in Tango's sidebar while dev mode is active
+
+[Deep dive: CLI →](/reference/cli/)
+
+---
+
+## Distribution
+
+1. Push to a GitHub repository
+2. Include a `tango.json` at the repo root
+3. Users add your repo as a source in Tango and install from the browse panel
