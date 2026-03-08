@@ -116,6 +116,7 @@ export class InstrumentRuntime {
   #backendModuleCache = new Map<string, LoadedBackendModule>();
   #backendSubscriptions = new Map<string, Map<keyof HostEventMap, Set<BackendEventHandler>>>();
   #backgroundSchedulers = new Map<string, BackgroundSchedulerState>();
+  #devOverrides = new Map<string, InstrumentRegistryEntry>();
 
   constructor(opts?: {
     registry?: InstrumentRegistry;
@@ -183,11 +184,14 @@ export class InstrumentRuntime {
   }
 
   list(): InstrumentRegistryEntry[] {
-    return this.#registry.list();
+    const registryEntries = this.#registry.list();
+    if (this.#devOverrides.size === 0) return registryEntries;
+    // Append dev entries alongside registry entries — both are visible
+    return [...registryEntries, ...this.#devOverrides.values()];
   }
 
   get(instrumentId: string): InstrumentRegistryEntry | null {
-    return this.#registry.get(instrumentId);
+    return this.#devOverrides.get(instrumentId) ?? this.#registry.get(instrumentId);
   }
 
   async installFromPath(path: string): Promise<InstrumentRegistryEntry> {
@@ -229,13 +233,77 @@ export class InstrumentRuntime {
 
     const saved = await this.#registry.upsert(entry);
     this.#backendModuleCache.delete(saved.id);
-    console.log(`[backend] installFromPath '${saved.id}' — cache cleared, activating backend...`);
     await this.#activateBackend(saved).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[backend] activateBackend '${saved.id}' FAILED: ${message}`);
       void this.markBlocked(saved.id, message);
     });
     return this.#requireEntry(saved.id);
+  }
+
+  /**
+   * Install an instrument as a dev entry (in-memory only).
+   * Creates a separate entry with id `{originalId}::dev` so both the
+   * marketplace version and the dev version appear side by side.
+   * Disappears on app restart — registry.json is never touched.
+   */
+  async installDevOverride(path: string): Promise<InstrumentRegistryEntry> {
+    const loaded = await loadInstrumentManifest(path);
+    const baseId = loaded.manifest.id;
+    const devId = `${baseId}::dev`;
+
+    const existing = this.#registry.get(baseId);
+    if (existing?.isBundled) {
+      throw new Error(
+        `Instrument '${baseId}' is bundled and cannot be overridden by dev mode`
+      );
+    }
+
+    const entry: InstrumentRegistryEntry = {
+      id: devId,
+      name: loaded.manifest.name,
+      ...(loaded.manifest.description ? { description: loaded.manifest.description } : {}),
+      group: loaded.manifest.group,
+      ...(loaded.manifest.category ? { category: loaded.manifest.category } : {}),
+      source: "local",
+      installPath: loaded.installPath,
+      manifestPath: loaded.manifestPath,
+      runtime: loaded.manifest.runtime ?? "vanilla",
+      entrypoint: loaded.manifest.entrypoint,
+      ...(loaded.manifest.backendEntrypoint
+        ? { backendEntrypoint: loaded.manifest.backendEntrypoint }
+        : {}),
+      hostApiVersion: loaded.manifest.hostApiVersion,
+      panels: loaded.manifest.panels,
+      permissions: loaded.manifest.permissions,
+      settings: loaded.manifest.settings ?? [],
+      launcher: loaded.manifest.launcher,
+      ...(loaded.manifest.backgroundRefresh ? { backgroundRefresh: loaded.manifest.backgroundRefresh } : {}),
+      enabled: true,
+      status: "active",
+      version: loaded.version,
+      isBundled: false,
+      devMode: true,
+      lastError: null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Deactivate previous dev backend if reloading
+    if (this.#devOverrides.has(devId)) {
+      await this.#deactivateBackend(devId);
+      this.#backendModuleCache.delete(devId);
+    }
+
+    // Store in-memory only — registry.json is untouched
+    this.#devOverrides.set(devId, entry);
+
+    await this.#activateBackend(entry).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      entry.status = "blocked";
+      entry.lastError = message;
+      this.#devOverrides.set(devId, entry);
+    });
+
+    return entry;
   }
 
   async setEnabled(
@@ -279,8 +347,15 @@ export class InstrumentRuntime {
     }
 
     await this.#deactivateBackend(instrumentId);
-    const removed = await this.#registry.remove(instrumentId);
     this.#backendModuleCache.delete(instrumentId);
+
+    // Dev overrides live in-memory only — just delete from the map
+    if (this.#devOverrides.has(instrumentId)) {
+      this.#devOverrides.delete(instrumentId);
+      return { removed: true, dataDeleted: false };
+    }
+
+    const removed = await this.#registry.remove(instrumentId);
 
     let dataDeleted = false;
     if (removed && opts?.deleteData) {
@@ -798,7 +873,7 @@ export class InstrumentRuntime {
   }
 
   #requireEntry(instrumentId: string): InstrumentRegistryEntry {
-    const entry = this.#registry.get(instrumentId);
+    const entry = this.get(instrumentId);
     if (!entry) {
       throw new Error(`Instrument '${instrumentId}' is not installed`);
     }
@@ -857,28 +932,18 @@ export class InstrumentRuntime {
   }
 
   async #activateBackend(entry: InstrumentRegistryEntry): Promise<void> {
-    console.log(`[backend] activateBackend '${entry.id}' — enabled=${entry.enabled} status=${entry.status} hasBackendEntrypoint=${!!entry.backendEntrypoint}`);
-    if (!entry.enabled || entry.status === "disabled" || entry.status === "blocked") {
-      console.log(`[backend] activateBackend '${entry.id}' — skipped (disabled/blocked)`);
-      return;
-    }
+    if (!entry.enabled || entry.status === "disabled" || entry.status === "blocked") return;
     const module = await this.#loadBackendModule(entry);
-    if (module.activated) {
-      console.log(`[backend] activateBackend '${entry.id}' — skipped (already activated)`);
-      return;
-    }
+    if (module.activated) return;
     if (!module.definition) {
-      console.log(`[backend] activateBackend '${entry.id}' — no backend definition, frontend-only`);
       module.activated = true;
       return;
     }
-    console.log(`[backend] activateBackend '${entry.id}' — loading backend, hasOnStart=${!!module.definition.onStart}`);
     if (module.definition.onStart) {
       const ctx = this.#buildContext(entry);
       await module.definition.onStart(ctx);
     }
     module.activated = true;
-    console.log(`[backend] activateBackend '${entry.id}' — backend activated successfully`);
   }
 
   async #deactivateBackend(instrumentId: string): Promise<void> {

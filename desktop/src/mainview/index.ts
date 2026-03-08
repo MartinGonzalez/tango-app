@@ -254,22 +254,12 @@ const rpc = Electroview.defineRPC<any>({
         instrumentId: string;
         entries?: InstrumentRegistryEntry[];
       }) => {
-        let updated: InstrumentRegistryEntry[];
-        if (newEntries) {
-          // Auto-install case: replace entire entries list, mark the new one as dev
-          updated = newEntries.map((e) =>
-            e.id === instrumentId ? { ...e, devMode: true } : e
-          );
-        } else {
-          // Existing reload case: just flip devMode on the matching entry
-          const current = appState.get().instrumentEntries;
-          updated = current.map((e) =>
-            e.id === instrumentId ? { ...e, devMode: true } : e
-          );
-        }
+        // Dev entries have devMode: true set by the runtime — just update the list.
+        // instrumentId here is the dev id (e.g. "jira-board::dev").
+        const updated = newEntries ?? appState.get().instrumentEntries;
         appState.update((s) => ({ ...s, instrumentEntries: updated }));
 
-        // Only hot-reload if the instrument is actively being viewed
+        // Only hot-reload if this instrument is actively being viewed
         const state = appState.get();
         if (
           state.viewMode === "instruments"
@@ -731,10 +721,12 @@ function init(): void {
   });
 
   const sidebarPrimaryActions = h("div", { class: "sidebar-primary-actions" }, [
+    sidebarPrimaryInstrumentsBtn,
+    h("hr", { class: "sidebar-primary-divider" }),
+    sidebarPrimaryRuntimeInstrumentsHost,
+    h("hr", { class: "sidebar-primary-divider" }),
     sidebarPrimaryPluginsBtn,
     sidebarPrimaryConnectorsBtn,
-    sidebarPrimaryInstrumentsBtn,
-    sidebarPrimaryRuntimeInstrumentsHost,
   ]);
 
   sidebarShell = h("div", { class: "sidebar-shell" }, [
@@ -950,8 +942,14 @@ function init(): void {
   });
 
   instrumentBrowsePanel = new InstrumentBrowsePanel({
-    onSelect: (entry) => {
-      instrumentDetailPanel.showCatalog(entry);
+    onSelect: (catalogEntry) => {
+      // If already installed, show as installed entry (with Uninstall button)
+      const installed = appState.get().instrumentEntries.find((e) => e.id === catalogEntry.id);
+      if (installed) {
+        instrumentDetailPanel.showInstalled(installed);
+      } else {
+        instrumentDetailPanel.showCatalog(catalogEntry);
+      }
     },
     onRefresh: () => {
       void loadInstrumentCatalog();

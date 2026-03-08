@@ -148,7 +148,9 @@ describe("instrument-ui", () => {
       },
     });
 
-    node.value = "b";
+    // happy-dom makes .value read-only on <select>, so select the option directly
+    const optionB = node.querySelector('option[value="b"]') as HTMLOptionElement;
+    optionB.selected = true;
     node.dispatchEvent(new Event("change"));
     expect(selected).toBe("b");
   });

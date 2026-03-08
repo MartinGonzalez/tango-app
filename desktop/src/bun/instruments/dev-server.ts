@@ -30,7 +30,7 @@ export function setDevReloadHandler(h: DevReloadHandler): void {
  */
 export type DevReloadHandlerDeps = {
   get: (instrumentId: string) => InstrumentRegistryEntry | null;
-  installFromPath: (path: string) => Promise<InstrumentRegistryEntry>;
+  installDevOverride: (path: string) => Promise<InstrumentRegistryEntry>;
   list: () => InstrumentRegistryEntry[];
   sendDevReload: (msg: { instrumentId: string; entries?: InstrumentRegistryEntry[] }) => void;
 };
@@ -40,17 +40,16 @@ export type DevReloadHandlerDeps = {
  */
 export function createDevReloadHandler(deps: DevReloadHandlerDeps): DevReloadHandler {
   return async ({ instrumentId, installPath }) => {
-    // Always re-read manifest via installFromPath so manifest changes
-    // (e.g. panels config) are picked up on every dev-reload.
-    const isReinstall = !!deps.get(instrumentId);
-    const verb = isReinstall ? "Reloaded" : "Auto-installed and reloaded";
+    const devId = `${instrumentId}::dev`;
+    const isReload = !!deps.get(devId);
+    const verb = isReload ? "Reloaded" : "Auto-installed";
 
     try {
-      const entry = await deps.installFromPath(installPath);
-      entry.devMode = true;
+      const devEntry = await deps.installDevOverride(installPath);
       const entries = deps.list();
-      deps.sendDevReload({ instrumentId, entries });
-      console.log(`[dev-reload] ${verb} '${instrumentId}' successfully`);
+      // Send devId so the frontend knows which entry to activate
+      deps.sendDevReload({ instrumentId: devEntry.id, entries });
+      console.log(`[dev-reload] ${verb} '${devId}' (dev override, marketplace untouched)`);
       return { ok: true, message: `${verb} ${instrumentId}`, entries };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

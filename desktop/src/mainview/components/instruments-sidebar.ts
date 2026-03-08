@@ -57,7 +57,7 @@ export class InstrumentsSidebar {
       }, ["+"]),
     ]);
 
-    this.#listEl = h("div", { class: "tasks-sidebar-list" });
+    this.#listEl = h("div", { class: "tasks-sidebar-list instruments-list" });
 
     this.#el = h("div", { class: "tasks-sidebar" }, [
       header,
@@ -112,11 +112,17 @@ export class InstrumentsSidebar {
   #renderEntry(entry: InstrumentRegistryEntry): HTMLElement {
     const active = entry.id === this.#activeId;
 
-    const statusLabel = entry.status === "blocked"
-      ? "Blocked"
-      : entry.enabled
-        ? "Enabled"
-        : "Disabled";
+    const displayName = entry.devMode ? `${entry.name} [dev]` : entry.name;
+    const sourceLabel = entry.devMode
+      ? "Local"
+      : entry.isBundled
+        ? "Core"
+        : "Community";
+    const badgeClass = entry.devMode
+      ? "instrument-badge instrument-badge-local"
+      : entry.isBundled
+        ? "instrument-badge instrument-badge-core"
+        : "instrument-badge instrument-badge-community";
 
     const row = h("div", {
       class: `task-group${active ? " active" : ""}`,
@@ -126,27 +132,12 @@ export class InstrumentsSidebar {
         title: `${entry.name} (${entry.id})`,
         onclick: () => this.#callbacks.onActivate(entry.id),
       }, [
-        h("span", { class: "task-row-title" }, [`${entry.name}`]),
+        h("span", { class: "task-row-title" }, [displayName]),
         h("div", { class: "task-row-meta" }, [
-          h("span", { class: "task-row-time" }, [entry.group]),
-          h("span", { class: "task-row-status" }, [statusLabel]),
+          h("span", { class: badgeClass }, [sourceLabel]),
         ]),
       ]),
       h("div", { class: "task-group-list" }, [
-        h("div", { class: "plugins-content-toolbar" }, [
-          h("button", {
-            class: "plugins-content-btn",
-            type: "button",
-            onclick: () => this.#callbacks.onToggleEnabled(entry.id, !entry.enabled),
-          }, [entry.enabled ? "Disable" : "Enable"]),
-          !entry.isBundled
-            ? h("button", {
-                class: "plugins-content-btn",
-                type: "button",
-                onclick: () => this.#callbacks.onRemoveLocal(entry.id),
-              }, ["Uninstall"])
-            : h("span", { class: "task-group-empty" }, ["Bundled"]),
-        ]),
         entry.lastError
           ? h("div", { class: "tasks-banner tasks-banner-error" }, [entry.lastError])
           : h("div", { hidden: true }),

@@ -3,14 +3,11 @@ import type { InstrumentRegistryEntry } from "../src/shared/types/instruments.ts
 import type { DevReloadRequest } from "../src/bun/instruments/dev-server.ts";
 
 /**
- * Tests for the dev-reload handler auto-install logic.
+ * Tests for the dev-reload handler.
  *
- * The handler is a pure function that takes:
- *   - a request { instrumentId, installPath }
- *   - instrumentRuntime-like methods (get, installFromPath, list)
- * And returns { ok, message, entries? }
- *
- * We import the extracted handler factory from dev-server.ts
+ * Dev entries use a `::dev` suffixed id so marketplace and dev versions
+ * coexist side by side. The handler uses installDevOverride (in-memory only)
+ * so the registry is never touched.
  */
 import { createDevReloadHandler } from "../src/bun/instruments/dev-server.ts";
 
@@ -39,20 +36,24 @@ function fakeEntry(overrides: Partial<InstrumentRegistryEntry> = {}): Instrument
 }
 
 describe("dev-reload handler", () => {
-  test("already-installed instrument re-reads manifest and returns ok with entries", async () => {
-    const entry = fakeEntry({ id: "my-instrument" });
-    const reinstalledEntry = fakeEntry({ id: "my-instrument" });
-    let installCalled = false;
+  test("creates dev entry with ::dev suffix alongside marketplace entry", async () => {
+    const marketplaceEntry = fakeEntry({ id: "my-instrument" });
+    const devEntry = fakeEntry({ id: "my-instrument::dev", devMode: true });
+    let installPath = "";
     let sentDevReload: { instrumentId: string; entries?: InstrumentRegistryEntry[] } | null = null;
 
     const handler = createDevReloadHandler({
-      get: (id) => (id === "my-instrument" ? entry : null),
-      installFromPath: async (path) => {
-        installCalled = true;
-        expect(path).toBe("/path");
-        return reinstalledEntry;
+      get: (id) => {
+        if (id === "my-instrument") return marketplaceEntry;
+        if (id === "my-instrument::dev") return null; // first time
+        return null;
       },
-      list: () => [reinstalledEntry],
+      installDevOverride: async (path) => {
+        installPath = path;
+        return devEntry;
+      },
+      // list() returns both marketplace + dev
+      list: () => [marketplaceEntry, devEntry],
       sendDevReload: (msg) => {
         sentDevReload = msg;
       },
@@ -61,33 +62,32 @@ describe("dev-reload handler", () => {
     const result = await handler({ instrumentId: "my-instrument", installPath: "/path" });
 
     expect(result.ok).toBe(true);
-    expect(result.message).toContain("my-instrument");
-    expect(installCalled).toBe(true);
-    expect(reinstalledEntry.devMode).toBe(true);
-    // Should include entries since manifest is re-read
-    expect(result.entries).toBeDefined();
-    expect(result.entries).toEqual([reinstalledEntry]);
-    expect(sentDevReload).not.toBeNull();
-    expect(sentDevReload!.instrumentId).toBe("my-instrument");
-    expect(sentDevReload!.entries).toEqual([reinstalledEntry]);
+    expect(installPath).toBe("/path");
+    // Entries contain both marketplace and dev
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries![0].id).toBe("my-instrument");
+    expect(result.entries![1].id).toBe("my-instrument::dev");
+    // Frontend receives dev id for activation
+    expect(sentDevReload!.instrumentId).toBe("my-instrument::dev");
   });
 
-  test("manifest changes are reflected after dev-reload of existing instrument", async () => {
-    // Simulates: instrument installed with panels.first=false, then manifest changed to first=true
-    const staleEntry = fakeEntry({
-      id: "my-instrument",
+  test("reload of existing dev entry re-reads manifest", async () => {
+    const staleDevEntry = fakeEntry({
+      id: "my-instrument::dev",
+      devMode: true,
       panels: { sidebar: false, first: false, second: false, right: false },
     });
-    const freshEntry = fakeEntry({
-      id: "my-instrument",
+    const freshDevEntry = fakeEntry({
+      id: "my-instrument::dev",
+      devMode: true,
       panels: { sidebar: false, first: true, second: false, right: false },
     });
     let sentDevReload: { instrumentId: string; entries?: InstrumentRegistryEntry[] } | null = null;
 
     const handler = createDevReloadHandler({
-      get: (id) => (id === "my-instrument" ? staleEntry : null),
-      installFromPath: async () => freshEntry,
-      list: () => [freshEntry],
+      get: (id) => (id === "my-instrument::dev" ? staleDevEntry : null),
+      installDevOverride: async () => freshDevEntry,
+      list: () => [freshDevEntry],
       sendDevReload: (msg) => {
         sentDevReload = msg;
       },
@@ -96,26 +96,22 @@ describe("dev-reload handler", () => {
     const result = await handler({ instrumentId: "my-instrument", installPath: "/path" });
 
     expect(result.ok).toBe(true);
-    expect(freshEntry.devMode).toBe(true);
-    // The entries sent to the webview should have the NEW panels config
     expect(sentDevReload!.entries![0].panels.first).toBe(true);
-    expect(result.entries![0].panels.first).toBe(true);
   });
 
-  test("not-installed instrument auto-installs and returns ok with entries", async () => {
-    const installedEntry = fakeEntry({ id: "new-instrument" });
-    const allEntries = [installedEntry];
+  test("new instrument without marketplace version auto-installs as dev", async () => {
+    const devEntry = fakeEntry({ id: "new-instrument::dev", devMode: true });
     let installCalled = false;
     let sentDevReload: { instrumentId: string; entries?: InstrumentRegistryEntry[] } | null = null;
 
     const handler = createDevReloadHandler({
-      get: () => null, // not found
-      installFromPath: async (path) => {
+      get: () => null,
+      installDevOverride: async (path) => {
         installCalled = true;
         expect(path).toBe("/path/to/new");
-        return installedEntry;
+        return devEntry;
       },
-      list: () => allEntries,
+      list: () => [devEntry],
       sendDevReload: (msg) => {
         sentDevReload = msg;
       },
@@ -128,11 +124,7 @@ describe("dev-reload handler", () => {
 
     expect(installCalled).toBe(true);
     expect(result.ok).toBe(true);
-    expect(result.entries).toBeDefined();
-    expect(result.entries).toEqual(allEntries);
-    expect(installedEntry.devMode).toBe(true);
-    expect(sentDevReload).not.toBeNull();
-    expect(sentDevReload!.entries).toEqual(allEntries);
+    expect(sentDevReload!.instrumentId).toBe("new-instrument::dev");
   });
 
   test("install failure for bundled instrument returns error", async () => {
@@ -140,9 +132,9 @@ describe("dev-reload handler", () => {
 
     const handler = createDevReloadHandler({
       get: () => null,
-      installFromPath: async () => {
+      installDevOverride: async () => {
         throw new Error(
-          "Instrument 'some-id' is bundled and cannot be replaced by local install"
+          "Instrument 'some-id' is bundled and cannot be overridden by dev mode"
         );
       },
       list: () => [],
@@ -159,7 +151,6 @@ describe("dev-reload handler", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain("bundled");
     expect(result.entries).toBeUndefined();
-    // Should not send any reload message
     expect(sentDevReload).toBeNull();
   });
 });

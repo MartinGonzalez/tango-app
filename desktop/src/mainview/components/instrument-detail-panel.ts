@@ -75,29 +75,24 @@ export class InstrumentDetailPanel {
       return;
     }
 
-    if (this.#target.kind === "installed") {
-      this.#renderInstalled(this.#target.entry);
-    } else {
-      this.#renderCatalog(this.#target.entry);
-    }
-  }
+    const t = this.#target;
+    const isInstalled = t.kind === "installed";
+    const entry = t.entry;
 
-  #renderInstalled(entry: InstrumentRegistryEntry): void {
-    const icon = entry.launcher?.sidebarShortcut?.icon ?? "puzzle";
+    // Common fields
+    const icon = isInstalled
+      ? (entry as InstrumentRegistryEntry).launcher?.sidebarShortcut?.icon ?? "puzzle"
+      : (entry as InstrumentCatalogEntry).icon ?? "puzzle";
     const category = entry.category
       ? CATEGORY_LABELS[entry.category] ?? entry.category
       : null;
+    const author = !isInstalled ? (entry as InstrumentCatalogEntry).author : null;
 
-    // Header with action button top-right
-    const actionBtn = entry.isBundled
-      ? h("span", { class: "instrument-detail-badge" }, ["Bundled"])
-      : h("button", {
-          class: "instrument-detail-btn instrument-detail-btn-danger",
-          onclick: () => this.#callbacks.onUninstall(entry.id),
-        }, ["Uninstall"]);
+    // Action button
+    const actionBtn = this.#buildActionButton(t);
 
     this.#contentEl.append(
-      // Top row: icon + title + action button
+      // Top row: icon + title + action
       h("div", { class: "instrument-detail-top" }, [
         h("div", { class: "instrument-detail-header" }, [
           h("div", { class: "instrument-detail-icon" }, [this.#iconEl(icon)]),
@@ -116,73 +111,49 @@ export class InstrumentDetailPanel {
       h("div", { class: "instrument-detail-meta" }, [
         ...(category ? [h("span", { class: "instrument-detail-badge" }, [category])] : []),
         h("span", { class: "instrument-detail-badge" }, [`v${entry.version}`]),
-        h("span", { class: "instrument-detail-badge" }, [entry.group]),
+        ...(author ? [h("span", { class: "instrument-detail-badge" }, [`by ${author}`])] : []),
       ]),
       // Sections
       this.#renderSection("Panels", this.#panelsList(entry.panels)),
       this.#renderSection("Permissions", this.#permissionsList(entry.permissions)),
-      // Open button
-      entry.enabled && entry.status === "active"
-        ? h("div", { class: "instrument-detail-actions" }, [
-            h("button", {
-              class: "instrument-detail-btn instrument-detail-btn-primary",
-              onclick: () => this.#callbacks.onActivate(entry.id),
-            }, ["Open Instrument"]),
-          ])
-        : h("div", { hidden: true }),
     );
   }
 
-  #renderCatalog(entry: InstrumentCatalogEntry): void {
-    const icon = entry.icon ?? "puzzle";
-    const category = entry.category
-      ? CATEGORY_LABELS[entry.category] ?? entry.category
-      : null;
+  #buildActionButton(target: NonNullable<DetailTarget>): HTMLElement {
+    if (target.kind === "installed") {
+      const entry = target.entry;
+      if (entry.isBundled) {
+        return h("span", { class: "instrument-detail-badge" }, ["Bundled"]);
+      }
+      if (entry.devMode) {
+        return h("div", { class: "instrument-detail-action-group" }, [
+          h("span", { class: "instrument-detail-badge instrument-badge-local" }, ["Dev"]),
+          h("button", {
+            class: "instrument-detail-btn instrument-detail-btn-danger",
+            onclick: () => this.#callbacks.onUninstall(entry.id),
+          }, ["Uninstall"]),
+        ]);
+      }
+      return h("button", {
+        class: "instrument-detail-btn instrument-detail-btn-danger",
+        onclick: () => this.#callbacks.onUninstall(entry.id),
+      }, ["Uninstall"]);
+    }
 
-    // Action button: Install / Installing... / Already Installed
-    let actionBtn: HTMLElement;
+    const entry = target.entry;
     if (entry.installed) {
-      actionBtn = h("span", { class: "instrument-detail-badge instrument-detail-installed-badge" }, ["Installed"]);
-    } else if (this.#installing) {
-      actionBtn = h("button", {
+      return h("span", { class: "instrument-detail-badge instrument-detail-installed-badge" }, ["Installed"]);
+    }
+    if (this.#installing) {
+      return h("button", {
         class: "instrument-detail-btn instrument-detail-btn-install",
         disabled: true,
       }, ["Installing..."]);
-    } else {
-      actionBtn = h("button", {
-        class: "instrument-detail-btn instrument-detail-btn-install",
-        onclick: () => this.#callbacks.onInstall(entry),
-      }, ["Install"]);
     }
-
-    this.#contentEl.append(
-      // Top row: icon + title + action button
-      h("div", { class: "instrument-detail-top" }, [
-        h("div", { class: "instrument-detail-header" }, [
-          h("div", { class: "instrument-detail-icon" }, [this.#iconEl(icon)]),
-          h("div", { class: "instrument-detail-title-group" }, [
-            h("h2", { class: "instrument-detail-name" }, [entry.name]),
-            h("span", { class: "instrument-detail-id" }, [entry.id]),
-          ]),
-        ]),
-        actionBtn,
-      ]),
-      // Description
-      entry.description
-        ? h("div", { class: "instrument-detail-description" }, [entry.description])
-        : h("div", { hidden: true }),
-      // Meta badges
-      h("div", { class: "instrument-detail-meta" }, [
-        ...(category ? [h("span", { class: "instrument-detail-badge" }, [category])] : []),
-        h("span", { class: "instrument-detail-badge" }, [`v${entry.version}`]),
-        entry.author
-          ? h("span", { class: "instrument-detail-badge" }, [`by ${entry.author}`])
-          : h("span", { hidden: true }),
-      ]),
-      // Sections
-      this.#renderSection("Panels", this.#panelsList(entry.panels)),
-      this.#renderSection("Permissions", this.#permissionsList(entry.permissions)),
-    );
+    return h("button", {
+      class: "instrument-detail-btn instrument-detail-btn-install",
+      onclick: () => this.#callbacks.onInstall(entry),
+    }, ["Install"]);
   }
 
   #renderSection(title: string, content: HTMLElement): HTMLElement {

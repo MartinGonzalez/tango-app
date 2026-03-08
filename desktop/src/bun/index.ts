@@ -1723,7 +1723,7 @@ await connectors.start();
 await initializeInstrumentRuntime();
 setDevReloadHandler(createDevReloadHandler({
   get: (id) => instrumentRuntime.get(id),
-  installFromPath: (path) => instrumentRuntime.installFromPath(path),
+  installDevOverride: (path) => instrumentRuntime.installDevOverride(path),
   list: () => instrumentRuntime.list(),
   sendDevReload: (msg) => mainRPC?.send.instrumentDevReload(msg),
 }));
