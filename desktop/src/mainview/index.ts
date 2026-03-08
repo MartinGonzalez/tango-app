@@ -555,16 +555,15 @@ const frontendHostEventSubscribers = new Map<
   keyof HostEventMap,
   Set<(payload: any) => void | Promise<void>>
 >();
-const FRONTEND_EVENT_PERMISSION_MAP: Record<
+const FRONTEND_EVENT_PERMISSION_MAP: Partial<Record<
   keyof HostEventMap,
   "sessions" | "stages.observe" | "connectors.read"
-> = {
+>> = {
   "snapshot.update": "stages.observe",
   "session.stream": "sessions",
   "session.idResolved": "sessions",
   "session.ended": "sessions",
   "tool.approval": "sessions",
-  "instrument.event": "stages.observe",
   "stage.added": "stages.observe",
   "stage.removed": "stages.observe",
   "connector.auth.changed": "connectors.read",
@@ -598,7 +597,7 @@ function subscribeFrontendHostEvent<E extends keyof HostEventMap>(
   handler: (payload: HostEventMap[E]) => void | Promise<void>
 ): () => void {
   const requiredPermission = FRONTEND_EVENT_PERMISSION_MAP[event];
-  if (!entry.permissions.includes(requiredPermission)) {
+  if (requiredPermission && !entry.permissions.includes(requiredPermission)) {
     throw new Error(
       `Instrument '${entry.id}' does not declare required permission: ${requiredPermission}`
     );

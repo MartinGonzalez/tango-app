@@ -229,8 +229,10 @@ export class InstrumentRuntime {
 
     const saved = await this.#registry.upsert(entry);
     this.#backendModuleCache.delete(saved.id);
+    console.log(`[backend] installFromPath '${saved.id}' — cache cleared, activating backend...`);
     await this.#activateBackend(saved).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
+      console.error(`[backend] activateBackend '${saved.id}' FAILED: ${message}`);
       void this.markBlocked(saved.id, message);
     });
     return this.#requireEntry(saved.id);
@@ -855,18 +857,28 @@ export class InstrumentRuntime {
   }
 
   async #activateBackend(entry: InstrumentRegistryEntry): Promise<void> {
-    if (!entry.enabled || entry.status === "disabled" || entry.status === "blocked") return;
+    console.log(`[backend] activateBackend '${entry.id}' — enabled=${entry.enabled} status=${entry.status} hasBackendEntrypoint=${!!entry.backendEntrypoint}`);
+    if (!entry.enabled || entry.status === "disabled" || entry.status === "blocked") {
+      console.log(`[backend] activateBackend '${entry.id}' — skipped (disabled/blocked)`);
+      return;
+    }
     const module = await this.#loadBackendModule(entry);
-    if (module.activated) return;
+    if (module.activated) {
+      console.log(`[backend] activateBackend '${entry.id}' — skipped (already activated)`);
+      return;
+    }
     if (!module.definition) {
+      console.log(`[backend] activateBackend '${entry.id}' — no backend definition, frontend-only`);
       module.activated = true;
       return;
     }
+    console.log(`[backend] activateBackend '${entry.id}' — loading backend, hasOnStart=${!!module.definition.onStart}`);
     if (module.definition.onStart) {
       const ctx = this.#buildContext(entry);
       await module.definition.onStart(ctx);
     }
     module.activated = true;
+    console.log(`[backend] activateBackend '${entry.id}' — backend activated successfully`);
   }
 
   async #deactivateBackend(instrumentId: string): Promise<void> {

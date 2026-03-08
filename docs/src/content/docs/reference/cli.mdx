@@ -15,7 +15,8 @@ The scaffolder sets up npm scripts that invoke the CLI:
     "dev": "bun node_modules/tango-api/src/cli.ts dev",
     "build": "bun node_modules/tango-api/src/cli.ts build",
     "sync": "bun node_modules/tango-api/src/cli.ts sync",
-    "validate": "bun node_modules/tango-api/src/cli.ts validate"
+    "validate": "bun node_modules/tango-api/src/cli.ts validate",
+    "publish": "bun node_modules/tango-api/src/cli.ts publish"
   }
 }
 ```
@@ -128,6 +129,48 @@ Validation found 2 error(s):
 ```
 
 **Exit code**: `1` if any errors found.
+
+---
+
+### `publish`
+
+Publishes your instrument to the official Tango marketplace by creating a pull request.
+
+```bash
+tango-sdk publish
+# or
+bun run publish
+```
+
+**Prerequisites**:
+- [GitHub CLI (`gh`)](https://cli.github.com) installed and authenticated (`gh auth login`)
+
+**What it does**:
+1. Validates your instrument manifest
+2. Forks the central marketplace repo (`MartinGonzalez/tango-instruments`)
+3. Copies your instrument source files into the fork
+4. Updates the marketplace index (`tango.json`)
+5. Creates a pull request for review
+
+**Excluded files** (not copied to marketplace):
+`node_modules/`, `.git/`, `dist/`, `.claude/`, `.env`, `.DS_Store`, `bun.lock`, `bun.lockb`
+
+**Output**:
+```
+[publish] Checking prerequisites...
+[publish] Validating instrument...
+[publish] Instrument: My Instrument (my-instrument)
+[publish] Forking MartinGonzalez/tango-instruments...
+[publish] Cloning fork...
+[publish] Copying instrument files...
+[publish] Pushing to fork...
+
+[publish] PR created: https://github.com/MartinGonzalez/tango-instruments/pull/42
+```
+
+**Updating an existing instrument**: Run `publish` again — it force-pushes the branch and reports the existing PR URL.
+
+---
 
 ### Valid permissions
 

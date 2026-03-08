@@ -56,6 +56,12 @@ export class TerminalPanel {
   #resizeObserver: ResizeObserver;
   #mounted = false;
   #wasHidden = false;
+  /** True when the user has manually scrolled up from the bottom. */
+  #userScrolledUp = false;
+  /** Cached reference to xterm's .xterm-viewport element for direct DOM scroll sync. */
+  #viewportEl: HTMLElement | null = null;
+  /** Animation frame ID for the scroll guard loop. */
+  #scrollGuardRaf = 0;
 
   /** sessionId → ptyId — tracks which session owns which PTY */
   #sessionPtyMap = new Map<string, string>();
@@ -207,6 +213,18 @@ export class TerminalPanel {
       }
     });
 
+    // Track whether user has manually scrolled away from the bottom.
+    // We use wheel events (definitively user-initiated) instead of xterm's
+    // onScroll, which also fires during programmatic scrolling (fit reflow,
+    // scrollToBottom, write auto-scroll) and creates race conditions.
+    this.#container.addEventListener("wheel", () => {
+      // Check after xterm processes the wheel event
+      requestAnimationFrame(() => {
+        const buf = this.#term.buffer.active;
+        this.#userScrolledUp = buf.viewportY < buf.baseY;
+      });
+    }, { passive: true });
+
     // Auto-fit when container resizes (debounced to avoid rapid resize storms).
     // Skip fit() when the container is hidden (0 dimensions).
     // When the panel comes back from hidden, re-create the WebGL addon to fix
@@ -225,21 +243,11 @@ export class TerminalPanel {
         try { this.#fitAddon.fit(); } catch { /* ignore during transitions */ }
         if (this.#wasHidden) {
           this.#wasHidden = false;
-          // The slot manager removes/re-adds our DOM element when switching
-          // views. The browser resets .xterm-viewport scrollTop to 0 on
-          // re-insertion, but xterm's internal viewportY stays correct.
-          // Fix the native scroll BEFORE recreating WebGL so the renderer
-          // picks up the correct viewport position.
-          const viewport = this.#container.querySelector(".xterm-viewport") as HTMLElement | null;
-          if (viewport) viewport.scrollTop = viewport.scrollHeight;
-          this.#term.scrollToBottom();
           this.#recreateWebgl();
-          // Re-sync after xterm settles (DOM re-insertion can be async)
-          setTimeout(() => {
-            if (viewport) viewport.scrollTop = viewport.scrollHeight;
-            this.#term.scrollToBottom();
-          }, 150);
         }
+        // The scroll guard loop (requestAnimationFrame) will fix any
+        // DOM scrollTop desync caused by fit() or DOM re-insertion.
+        // No manual scroll correction needed here.
       }, 50);
     });
   }
@@ -249,6 +257,7 @@ export class TerminalPanel {
     if (this.#mounted) return;
     this.#mounted = true;
     this.#term.open(this.#container);
+    this.#viewportEl = this.#container.querySelector(".xterm-viewport") as HTMLElement | null;
     this.#resizeObserver.observe(this.#container);
 
     // Try WebGL renderer for better performance with rapid TUI updates
@@ -258,11 +267,33 @@ export class TerminalPanel {
     requestAnimationFrame(() => {
       try { this.#fitAddon.fit(); } catch { /* ignore */ }
     });
+
+    // Scroll guard: detects and corrects DOM scrollTop desync.
+    // xterm's internal ydisp can be correct while the browser resets
+    // .xterm-viewport.scrollTop to 0 (e.g. after fit() reflow, CSS
+    // transitions, or DOM re-insertion). When that happens,
+    // scrollToBottom() is a no-op because xterm thinks it's already
+    // at the bottom — but the DOM shows the top. This loop directly
+    // syncs the DOM scrollTop with xterm's state every frame.
+    const guardScroll = () => {
+      if (!this.#mounted) return;
+      if (!this.#userScrolledUp && this.#viewportEl && this.#activePtyId) {
+        const vp = this.#viewportEl;
+        const maxScroll = vp.scrollHeight - vp.clientHeight;
+        // If the DOM is more than a few pixels off from the bottom, fix it
+        if (maxScroll > 0 && vp.scrollTop < maxScroll - 5) {
+          vp.scrollTop = maxScroll;
+        }
+      }
+      this.#scrollGuardRaf = requestAnimationFrame(guardScroll);
+    };
+    this.#scrollGuardRaf = requestAnimationFrame(guardScroll);
   }
 
   unmount(): void {
     this.#mounted = false;
     this.#resizeObserver.disconnect();
+    cancelAnimationFrame(this.#scrollGuardRaf);
   }
 
   /** Spawn `claude --resume <sessionId>` in a PTY at the given cwd.
@@ -281,6 +312,7 @@ export class TerminalPanel {
     this.#ptyBufferSizes.set(id, 0);
     this.#activePtyId = id;
     this.#term.reset();
+    this.#userScrolledUp = false;
     const { cols, rows } = this.#term;
     console.log(`[pty] spawn session cols=${cols} rows=${rows}`);
     await this.#rpc.request.ptySpawn({ id, cwd, cols, rows, sessionId });
@@ -297,6 +329,7 @@ export class TerminalPanel {
     this.#ptyBufferSizes.set(id, 0);
     this.#activePtyId = id;
     this.#term.reset();
+    this.#userScrolledUp = false;
     const { cols, rows } = this.#term;
     console.log(`[pty] spawn new session=${newSessionId} cols=${cols} rows=${rows}`);
     await this.#rpc.request.ptySpawn({ id, cwd, cols, rows, newSessionId });
@@ -541,7 +574,11 @@ export class TerminalPanel {
       for (const chunk of chunks) this.#term.write(chunk);
     }
     // xterm writes are async internally — scroll to bottom after they flush
-    requestAnimationFrame(() => this.#term.scrollToBottom());
+    this.#userScrolledUp = false;
+    requestAnimationFrame(() => {
+      this.#term.scrollToBottom();
+      this.#userScrolledUp = false;
+    });
   }
 
   /** Buffer a chunk for a PTY, enforcing the 2 MB cap. */
