@@ -1,0 +1,54 @@
+---
+title: UITreeView
+description: File-tree style hierarchical view with expand/collapse, built from flat item arrays.
+---
+
+import { TreeViewDemo } from "../../../components/demos/TreeViewDemo.tsx";
+
+## Preview
+
+<TreeViewDemo client:load />
+
+## How It Works
+
+`UITreeView` renders a tree built from flat data using `buildTree()`:
+
+```tsx
+import { buildTree, UITreeView } from "tango-api";
+
+const files = [
+  { path: "src/index.ts" },
+  { path: "src/utils/helpers.ts" },
+];
+
+const tree = buildTree(files, (f) => f.path);
+// Creates: root → src/ → [index.ts, utils/ → helpers.ts]
+```
+
+## UITreeView Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `node` | `TreeNode<T>` | required | Root tree node from `buildTree()` |
+| `activeItem` | `string \| null` | — | Path of the currently active item |
+| `itemPath` | `(item: T) => string` | required | Extracts the path from an item |
+| `onItemClick` | `(path: string) => void` | — | Called when an item is clicked |
+| `renderItemMeta` | `(item: T) => ReactNode` | — | Custom metadata for each item |
+| `renderItemIcon` | `(item: T) => ReactNode` | — | Custom icon for each item |
+| `renderDirMeta` | `(dir: TreeNode<T>) => ReactNode` | — | Custom metadata for directories |
+
+## Usage
+
+```tsx
+import { UITreeView, buildTree, UIBadge } from "tango-api";
+
+const tree = buildTree(changedFiles, (f) => f.path);
+
+<UITreeView
+  node={tree}
+  itemPath={(f) => f.path}
+  activeItem={selectedFile}
+  onItemClick={setSelectedFile}
+  renderItemMeta={(f) => <UIBadge label={f.status} tone="info" />}
+/>
+```

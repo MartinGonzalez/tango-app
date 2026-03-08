@@ -1,5 +1,6 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
+import react from "@astrojs/react";
 
 export default defineConfig({
   integrations: [
@@ -32,6 +33,10 @@ export default defineConfig({
               label: "Events & Hooks",
               slug: "tutorials/06-events-and-hooks",
             },
+            {
+              label: "Testing Your Instrument",
+              slug: "tutorials/07-testing-your-instrument",
+            },
           ],
         },
         {
@@ -45,9 +50,47 @@ export default defineConfig({
             { label: "Permissions", slug: "reference/permissions" },
             { label: "Background Refresh", slug: "reference/background-refresh" },
             { label: "CLI", slug: "reference/cli" },
+            { label: "tango-create", slug: "reference/tango-create" },
+          ],
+        },
+        {
+          label: "Components",
+          items: [
+            { label: "Overview", slug: "components" },
+            { label: "UIBadge", slug: "components/badge" },
+            { label: "UIButton", slug: "components/button" },
+            { label: "UICard", slug: "components/card" },
+            { label: "UICheckbox", slug: "components/checkbox" },
+            { label: "UIContainer", slug: "components/container" },
+            { label: "UIDiffRenderer", slug: "components/diff-renderer" },
+            { label: "UIDropdown", slug: "components/dropdown" },
+            { label: "UIEmptyState", slug: "components/empty-state" },
+            { label: "UIFooter", slug: "components/footer" },
+            { label: "UIGroup", slug: "components/group" },
+            { label: "UIIcon", slug: "components/icon" },
+            { label: "UIIconButton", slug: "components/icon-button" },
+            { label: "UIInlineCode", slug: "components/inline-code" },
+            { label: "UIInput", slug: "components/input" },
+            { label: "UIKeyValue", slug: "components/key-value" },
+            { label: "UILink", slug: "components/link" },
+            { label: "UIList", slug: "components/list" },
+            { label: "UIMarkdownRenderer", slug: "components/markdown-renderer" },
+            { label: "UIPanelHeader", slug: "components/panel-header" },
+            { label: "UIRadioGroup", slug: "components/radio-group" },
+            { label: "UIRoot", slug: "components/root" },
+            { label: "UIScrollArea", slug: "components/scroll-area" },
+            { label: "UISection", slug: "components/section" },
+            { label: "UISegmentedControl", slug: "components/segmented-control" },
+            { label: "UISelect", slug: "components/select" },
+            { label: "UISelectionList", slug: "components/selection-list" },
+            { label: "UITabs", slug: "components/tabs" },
+            { label: "UITextarea", slug: "components/textarea" },
+            { label: "UIToggle", slug: "components/toggle" },
+            { label: "UITreeView", slug: "components/tree-view" },
           ],
         },
       ],
     }),
+    react(),
   ],
 });

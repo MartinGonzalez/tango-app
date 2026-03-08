@@ -1,0 +1,29 @@
+---
+title: UIInlineCode
+description: Inline code snippet with monospace styling.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIInlineCode } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Default">
+  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+    Run <UIInlineCode code="bun install" /> to install dependencies, then <UIInlineCode code="bun dev" /> to start.
+  </div>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `code` | `string` | required | The code text to display |
+
+## Usage
+
+```tsx
+import { UIInlineCode } from "tango-api";
+
+<p>Use <UIInlineCode code="api.storage.getProperty(key)" /> to read a value.</p>
+```

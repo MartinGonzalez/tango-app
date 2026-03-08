@@ -1,0 +1,34 @@
+---
+title: UIFooter
+description: Footer wrapper for panel bottom content like action buttons or status text.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIFooter, UIButton } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Footer with actions">
+  <UIFooter>
+    <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+      <UIButton label="Cancel" variant="ghost" />
+      <UIButton label="Save" variant="primary" />
+    </div>
+  </UIFooter>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `children` | `ReactNode` | — | Footer content |
+
+## Usage
+
+```tsx
+import { UIFooter, UIButton } from "tango-api";
+
+<UIFooter>
+  <UIButton label="Apply Changes" variant="primary" onClick={handleApply} />
+</UIFooter>
+```

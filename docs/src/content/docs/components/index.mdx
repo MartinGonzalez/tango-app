@@ -1,0 +1,70 @@
+---
+title: Components
+description: Complete catalog of tango-api UI components with live interactive previews.
+---
+
+All components are imported from `tango-api` and rendered inside a `UIRoot` wrapper. They use the `tui-` CSS prefix and are fully self-contained — no external theme required.
+
+```tsx
+import { UIRoot, UIButton, UICard, UISection } from "tango-api";
+```
+
+## Layout
+
+| Component | Description | Page |
+|-----------|-------------|------|
+| [UIRoot](/components/root/) | Required wrapper — injects Tango UI stylesheet and CSS variables | [View](/components/root/) |
+| [UIPanelHeader](/components/panel-header/) | Header bar with title, subtitle, back button, and right-side actions | [View](/components/panel-header/) |
+| [UISection](/components/section/) | Groups content with optional title and description | [View](/components/section/) |
+| [UICard](/components/card/) | Bordered container for grouping content | [View](/components/card/) |
+| [UIContainer](/components/container/) | Generic wrapper container with optional class name | [View](/components/container/) |
+| [UIScrollArea](/components/scroll-area/) | Scrollable content container | [View](/components/scroll-area/) |
+| [UIFooter](/components/footer/) | Footer wrapper for bottom-of-panel actions | [View](/components/footer/) |
+
+## Actions
+
+| Component | Description | Page |
+|-----------|-------------|------|
+| [UIButton](/components/button/) | Action button with variants: primary, secondary, ghost, danger, success | [View](/components/button/) |
+| [UIIconButton](/components/icon-button/) | Icon-only button for toolbars and compact actions | [View](/components/icon-button/) |
+| [UITabs](/components/tabs/) | Tab navigation with content panels | [View](/components/tabs/) |
+
+## Inputs
+
+| Component | Description | Page |
+|-----------|-------------|------|
+| [UIInput](/components/input/) | Single-line text input | [View](/components/input/) |
+| [UITextarea](/components/textarea/) | Multi-line text input | [View](/components/textarea/) |
+| [UISelect](/components/select/) | Native HTML select dropdown | [View](/components/select/) |
+| [UIDropdown](/components/dropdown/) | Custom dropdown with React-managed state | [View](/components/dropdown/) |
+| [UIToggle](/components/toggle/) | Toggle switch for boolean settings | [View](/components/toggle/) |
+| [UICheckbox](/components/checkbox/) | Checkbox for boolean options | [View](/components/checkbox/) |
+| [UIRadioGroup](/components/radio-group/) | Radio button group for single selection | [View](/components/radio-group/) |
+| [UISegmentedControl](/components/segmented-control/) | Button group for toggling between options | [View](/components/segmented-control/) |
+
+## Data Display
+
+| Component | Description | Page |
+|-----------|-------------|------|
+| [UIBadge](/components/badge/) | Label badge with tones: neutral, info, success, warning, danger | [View](/components/badge/) |
+| [UIIcon](/components/icon/) | SVG icon component with built-in icon set | [View](/components/icon/) |
+| [UIInlineCode](/components/inline-code/) | Inline code snippet | [View](/components/inline-code/) |
+| [UIKeyValue](/components/key-value/) | Key-value pair display | [View](/components/key-value/) |
+| [UILink](/components/link/) | Styled hyperlink | [View](/components/link/) |
+| [UIEmptyState](/components/empty-state/) | Placeholder for empty content areas | [View](/components/empty-state/) |
+
+## Lists & Groups
+
+| Component | Description | Page |
+|-----------|-------------|------|
+| [UIList](/components/list/) | Simple list with UIListItem children | [View](/components/list/) |
+| [UISelectionList](/components/selection-list/) | Single or multi-select item list | [View](/components/selection-list/) |
+| [UIGroup](/components/group/) | Expandable/collapsible group with header, items, and actions | [View](/components/group/) |
+
+## Advanced
+
+| Component | Description | Page |
+|-----------|-------------|------|
+| [UITreeView](/components/tree-view/) | File-tree style hierarchical view | [View](/components/tree-view/) |
+| [UIDiffRenderer](/components/diff-renderer/) | Unified/split diff viewer with syntax highlighting | [View](/components/diff-renderer/) |
+| [UIMarkdownRenderer](/components/markdown-renderer/) | Markdown renderer with preview/raw toggle and code copy | [View](/components/markdown-renderer/) |

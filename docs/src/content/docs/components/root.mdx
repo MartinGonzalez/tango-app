@@ -1,0 +1,54 @@
+---
+title: UIRoot
+description: Required wrapper for every panel. Injects the Tango UI stylesheet and sets up CSS variables.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIRoot, UIButton, UIBadge } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="UIRoot wrapping content">
+  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+    <UIButton label="Inside UIRoot" variant="primary" />
+    <UIBadge label="Styled" tone="success" />
+  </div>
+</ComponentPreview>
+
+## About
+
+`UIRoot` is the **required top-level wrapper** for all instrument panels. When it mounts, it calls `ensureInstrumentUI()` which injects the full Tango UI stylesheet (`tui-*` classes) into the document head.
+
+Every component in this library expects to be rendered inside a `UIRoot`. Without it, components will have no styles.
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `className` | `string` | — | Additional CSS class on the root `div` |
+| `fixed` | `boolean` | `false` | Adds `tui-root-fixed` class for fixed-position layouts |
+| `children` | `ReactNode` | — | Panel content |
+
+## CSS Classes
+
+| Class | Description |
+|-------|-------------|
+| `tui-root` | Always applied — sets background, color, font, and all CSS variables |
+| `tui-root-fixed` | Applied when `fixed={true}` |
+
+## Usage
+
+```tsx
+import { UIRoot, UIPanelHeader, UISection } from "tango-api";
+
+function MyPanel() {
+  return (
+    <UIRoot>
+      <UIPanelHeader title="My Instrument" />
+      <UISection title="Content">
+        {/* Your panel content */}
+      </UISection>
+    </UIRoot>
+  );
+}
+```

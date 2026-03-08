@@ -1,0 +1,44 @@
+---
+title: UIMarkdownRenderer
+description: Markdown renderer with preview/raw toggle, code block copy buttons, and image lightbox.
+---
+
+import { MarkdownPreviewDemo, MarkdownRawDemo } from "../../../components/demos/MarkdownRendererDemo.tsx";
+
+## Preview
+
+<MarkdownPreviewDemo client:load />
+
+<MarkdownRawDemo client:load />
+
+## Note
+
+The convenience `UIMarkdownRenderer` (without `Base`) auto-injects `renderMarkdown` from the instrument API context. Use `UIMarkdownRendererBase` when you need to provide your own renderer.
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `content` | `string` | required | Markdown source text |
+| `renderMarkdown` | `(text: string) => string` | required | Function that converts markdown to HTML |
+| `rawViewEnabled` | `boolean` | `false` | Shows preview/raw toggle buttons |
+| `className` | `string` | — | Additional CSS class |
+| `openUrl` | `(url: string) => void` | — | Custom handler for link clicks |
+| `proxyImage` | `(src: string) => Promise<string>` | — | Image proxy for broken images |
+
+## Usage
+
+```tsx
+import { UIMarkdownRendererBase } from "tango-api";
+
+<UIMarkdownRendererBase
+  content={markdownText}
+  renderMarkdown={myMarkdownToHtml}
+  rawViewEnabled
+/>
+
+// Or inside an instrument (with API context):
+import { UIMarkdownRenderer } from "tango-api";
+
+<UIMarkdownRenderer content={markdownText} rawViewEnabled />
+```

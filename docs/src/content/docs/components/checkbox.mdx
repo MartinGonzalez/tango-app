@@ -1,0 +1,33 @@
+---
+title: UICheckbox
+description: Checkbox for boolean options.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UICheckbox } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="States">
+  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+    <UICheckbox label="Accept terms" checked={false} />
+    <UICheckbox label="Remember me" checked={true} />
+  </div>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `label` | `string` | required | Label text shown next to the checkbox |
+| `checked` | `boolean` | `false` | Whether the checkbox is checked |
+| `onChange` | `(checked: boolean) => void` | — | Called when toggled |
+
+## Usage
+
+```tsx
+import { UICheckbox } from "tango-api";
+
+const [agreed, setAgreed] = useState(false);
+<UICheckbox label="I agree to the terms" checked={agreed} onChange={setAgreed} />
+```

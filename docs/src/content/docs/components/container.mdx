@@ -1,0 +1,33 @@
+---
+title: UIContainer
+description: Generic wrapper container with optional custom class name.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIContainer, UIButton } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Default">
+  <UIContainer>
+    <p>Content inside a UIContainer.</p>
+    <UIButton label="Action" variant="primary" />
+  </UIContainer>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `children` | `ReactNode` | — | Container content |
+| `className` | `string` | — | Additional CSS class |
+
+## Usage
+
+```tsx
+import { UIContainer } from "tango-api";
+
+<UIContainer className="my-custom-section">
+  {/* content */}
+</UIContainer>
+```

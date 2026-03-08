@@ -1,0 +1,54 @@
+---
+title: UISegmentedControl
+description: Button group for toggling between a set of options.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UISegmentedControl } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Default">
+  <UISegmentedControl
+    options={[
+      { value: "unified", label: "Unified" },
+      { value: "split", label: "Split" },
+    ]}
+    value="unified"
+  />
+</ComponentPreview>
+
+<ComponentPreview client:load label="Multiple options">
+  <UISegmentedControl
+    options={[
+      { value: "day", label: "Day" },
+      { value: "week", label: "Week" },
+      { value: "month", label: "Month" },
+      { value: "year", label: "Year" },
+    ]}
+    value="week"
+  />
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `options` | `Array<{ value: string; label: string }>` | required | Available segments |
+| `value` | `string` | — | Currently active segment |
+| `onChange` | `(value: string) => void` | — | Called when selection changes |
+
+## Usage
+
+```tsx
+import { UISegmentedControl } from "tango-api";
+
+<UISegmentedControl
+  options={[
+    { value: "list", label: "List" },
+    { value: "grid", label: "Grid" },
+  ]}
+  value={viewMode}
+  onChange={setViewMode}
+/>
+```

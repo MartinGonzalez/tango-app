@@ -13,15 +13,18 @@ description: Set up your environment and scaffold your first instrument.
 The fastest way to start is with the scaffolder:
 
 ```bash
-bunx create-tango-instrument my-instrument
+bunx tango-create
 ```
 
 The interactive prompt asks for:
 
 | Option | Description |
 |--------|-------------|
-| **Name** | Human-readable name shown in Tango (e.g. "My Instrument") |
-| **Panels** | Which slots to enable: `sidebar`, `first`, `second`, `right` |
+| **Directory name** | The folder name for your instrument (e.g. `my-instrument`) |
+| **Display name** | Human-readable name shown in Tango (e.g. "My Instrument") |
+| **Sidebar label** | Text shown in the sidebar shortcut |
+| **Icon** | Sidebar icon (branch, play, puzzle, gear, etc.) |
+| **Category** | Marketplace category (developer-tools, productivity, media, etc.) |
 | **Backend** | Whether to include a backend entry point for server-side actions |
 
 ## Install dependencies

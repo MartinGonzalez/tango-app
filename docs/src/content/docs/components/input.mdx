@@ -1,0 +1,34 @@
+---
+title: UIInput
+description: Single-line text input field.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIInput } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Default">
+  <UIInput placeholder="Type something..." />
+</ComponentPreview>
+
+<ComponentPreview client:load label="With value">
+  <UIInput value="Hello world" />
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `value` | `string` | `""` | Current input value |
+| `placeholder` | `string` | `""` | Placeholder text |
+| `onInput` | `(value: string) => void` | — | Called on every keystroke with the new value |
+
+## Usage
+
+```tsx
+import { UIInput } from "tango-api";
+
+const [query, setQuery] = useState("");
+<UIInput value={query} placeholder="Search..." onInput={setQuery} />
+```

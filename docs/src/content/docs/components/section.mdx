@@ -1,0 +1,42 @@
+---
+title: UISection
+description: Groups related content with optional title and description.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UISection, UIButton } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="With title and description">
+  <UISection title="General" description="Basic instrument settings.">
+    <UIButton label="Save Changes" variant="primary" />
+  </UISection>
+</ComponentPreview>
+
+<ComponentPreview client:load label="Title only">
+  <UISection title="Actions">
+    <div style={{ display: "flex", gap: "8px" }}>
+      <UIButton label="Run" variant="primary" />
+      <UIButton label="Cancel" variant="ghost" />
+    </div>
+  </UISection>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `title` | `string` | — | Section heading |
+| `description` | `string` | — | Smaller text below the title |
+| `children` | `ReactNode` | — | Section content |
+
+## Usage
+
+```tsx
+import { UISection } from "tango-api";
+
+<UISection title="Preferences" description="Customize your experience.">
+  {/* content */}
+</UISection>
+```

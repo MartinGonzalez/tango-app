@@ -1,0 +1,36 @@
+---
+title: UIDiffRenderer
+description: Unified/split diff viewer with syntax highlighting, file tree, and expandable hunks.
+---
+
+import { DiffUnifiedDemo, DiffSplitDemo } from "../../../components/demos/DiffRendererDemo.tsx";
+
+## Preview
+
+<DiffUnifiedDemo client:load />
+
+<DiffSplitDemo client:load />
+
+## Key Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `files` | `DiffFile[]` | required | Parsed diff files (use `parseDiff()`) |
+| `viewMode` | `"unified" \| "split"` | `"unified"` | Display mode |
+| `activeFile` | `string` | — | Currently focused file path |
+| `expandedFiles` | `Set<string>` | all expanded | Which files are expanded |
+| `onToggleFile` | `(path: string) => void` | — | Called when a file header is toggled |
+| `onViewModeChange` | `(mode: DiffViewMode) => void` | — | Called when view mode toggles |
+| `syntaxHighlighter` | `DiffSyntaxHighlighter` | fallback | Custom syntax highlighting function |
+| `showToolbar` | `boolean` | `true` | Shows the unified/split toggle toolbar |
+| `compact` | `boolean` | `false` | Compact mode with smaller fonts |
+
+## Usage
+
+```tsx
+import { UIDiffRenderer, parseDiff } from "tango-api";
+
+const files = parseDiff(unifiedDiffString);
+
+<UIDiffRenderer files={files} viewMode="unified" />
+```

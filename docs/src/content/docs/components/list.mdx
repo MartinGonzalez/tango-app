@@ -1,0 +1,58 @@
+---
+title: UIList
+description: Simple list component with UIListItem children. Supports active state and click handlers.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIList, UIListItem } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Static list">
+  <UIList>
+    <UIListItem title="index.ts" subtitle="Main entry point" />
+    <UIListItem title="server.ts" subtitle="Backend server" />
+    <UIListItem title="types.ts" subtitle="Type definitions" />
+  </UIList>
+</ComponentPreview>
+
+<ComponentPreview client:load label="Clickable with active state">
+  <UIList>
+    <UIListItem title="Dashboard" active onClick={() => {}} />
+    <UIListItem title="Settings" onClick={() => {}} />
+    <UIListItem title="Profile" onClick={() => {}} />
+  </UIList>
+</ComponentPreview>
+
+## UIList Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `children` | `ReactNode` | — | UIListItem elements |
+
+## UIListItem Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `title` | `string` | required | Item title |
+| `subtitle` | `string` | — | Secondary text |
+| `active` | `boolean` | `false` | Highlights the item |
+| `onClick` | `() => void` | — | Makes item clickable (renders as button) |
+
+## Usage
+
+```tsx
+import { UIList, UIListItem } from "tango-api";
+
+<UIList>
+  {files.map((file) => (
+    <UIListItem
+      key={file.path}
+      title={file.name}
+      subtitle={file.path}
+      active={file.path === selected}
+      onClick={() => setSelected(file.path)}
+    />
+  ))}
+</UIList>
+```

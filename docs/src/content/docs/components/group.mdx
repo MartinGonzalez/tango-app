@@ -1,0 +1,73 @@
+---
+title: UIGroup
+description: Expandable/collapsible group with header, metadata, actions, and nested items.
+---
+
+import { GroupExpandedDemo, GroupCollapsedDemo, GroupMetaDemo, GroupEmptyDemo } from "../../../components/demos/GroupDemo.tsx";
+
+## Preview
+
+<GroupExpandedDemo client:load />
+
+<GroupCollapsedDemo client:load />
+
+<GroupMetaDemo client:load />
+
+<GroupEmptyDemo client:load />
+
+## UIGroup Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `title` | `ReactNode` | required | Group header title |
+| `subtitle` | `ReactNode` | — | Secondary text below title |
+| `expanded` | `boolean` | `true` | Whether the group body is visible |
+| `active` | `boolean` | `false` | Highlights the group |
+| `animate` | `boolean` | — | Enables collapse animation |
+| `meta` | `ReactNode` | — | Metadata next to the title (badges, counts) |
+| `actions` | `ReactNode` | — | Action buttons in the header (won't trigger toggle) |
+| `showCaret` | `boolean` | `true` | Shows the expand/collapse caret |
+| `onToggle` | `(nextExpanded: boolean) => void` | — | Makes header clickable for expand/collapse |
+| `children` | `ReactNode` | — | Group body content |
+
+## UIGroupItem Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `title` | `string` | required | Item title |
+| `subtitle` | `string` | — | Secondary text |
+| `meta` | `ReactNode` | — | Right-side metadata |
+| `active` | `boolean` | `false` | Highlights the item |
+| `onClick` | `() => void` | — | Makes item clickable |
+
+## UIGroupEmpty Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `text` | `string` | required | Empty state message |
+
+## Usage
+
+```tsx
+import { UIGroup, UIGroupList, UIGroupItem, UIGroupEmpty, UIBadge } from "tango-api";
+
+const [expanded, setExpanded] = useState(true);
+
+<UIGroup title="Files" subtitle={`${files.length} items`} expanded={expanded} onToggle={setExpanded}>
+  <UIGroupList>
+    {files.length === 0 ? (
+      <UIGroupEmpty text="No files found" />
+    ) : (
+      files.map((file) => (
+        <UIGroupItem
+          key={file.path}
+          title={file.name}
+          subtitle={file.path}
+          meta={<UIBadge label={file.status} tone="info" />}
+          onClick={() => selectFile(file)}
+        />
+      ))
+    )}
+  </UIGroupList>
+</UIGroup>
+```

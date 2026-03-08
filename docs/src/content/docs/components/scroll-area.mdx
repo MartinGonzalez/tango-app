@@ -1,0 +1,42 @@
+---
+title: UIScrollArea
+description: Scrollable content container for panels with overflow.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIScrollArea, UIList, UIListItem } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Scrollable list">
+  <div style={{ height: "200px" }}>
+    <UIScrollArea>
+      <UIList>
+        <UIListItem title="Item 1" subtitle="First item" />
+        <UIListItem title="Item 2" subtitle="Second item" />
+        <UIListItem title="Item 3" subtitle="Third item" />
+        <UIListItem title="Item 4" subtitle="Fourth item" />
+        <UIListItem title="Item 5" subtitle="Fifth item" />
+        <UIListItem title="Item 6" subtitle="Sixth item" />
+        <UIListItem title="Item 7" subtitle="Seventh item" />
+        <UIListItem title="Item 8" subtitle="Eighth item" />
+      </UIList>
+    </UIScrollArea>
+  </div>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `children` | `ReactNode` | — | Scrollable content |
+
+## Usage
+
+```tsx
+import { UIScrollArea } from "tango-api";
+
+<UIScrollArea>
+  {/* Long content that may overflow */}
+</UIScrollArea>
+```

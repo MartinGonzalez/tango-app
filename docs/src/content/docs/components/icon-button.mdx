@@ -1,0 +1,48 @@
+---
+title: UIIconButton
+description: Icon-only button for toolbars and compact actions.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UIIconButton, Icon } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Variants">
+  <div style={{ display: "flex", gap: "8px" }}>
+    <UIIconButton icon={Icon.Play} label="Play" variant="ghost" />
+    <UIIconButton icon={Icon.Pause} label="Pause" variant="ghost" />
+    <UIIconButton icon={Icon.Send} label="Send" variant="primary" />
+    <UIIconButton icon={Icon.Pencil} label="Edit" variant="ghost" />
+    <UIIconButton icon={Icon.ExternalLink} label="Open" variant="ghost" />
+  </div>
+</ComponentPreview>
+
+<ComponentPreview client:load label="Active & disabled">
+  <div style={{ display: "flex", gap: "8px" }}>
+    <UIIconButton icon={Icon.Check} label="Active" variant="ghost" active />
+    <UIIconButton icon={Icon.Play} label="Disabled" variant="ghost" disabled />
+  </div>
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `icon` | `UIIconName \| ReactNode` | required | The icon to display |
+| `label` | `string` | required | Accessible label (used as `aria-label`) |
+| `title` | `string` | — | Tooltip text (falls back to `label`) |
+| `href` | `string` | — | URL to open when clicked (requires instrument API) |
+| `variant` | `"ghost" \| "secondary" \| "primary"` | `"ghost"` | Visual style |
+| `size` | `"sm" \| "md"` | `"sm"` | Button size |
+| `active` | `boolean` | `false` | Active/pressed state |
+| `disabled` | `boolean` | `false` | Disables the button |
+| `onClick` | `() => void` | — | Click handler |
+
+## Usage
+
+```tsx
+import { UIIconButton, Icon } from "tango-api";
+
+<UIIconButton icon={Icon.Play} label="Run" onClick={handleRun} />
+```

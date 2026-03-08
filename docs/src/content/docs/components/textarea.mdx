@@ -1,0 +1,35 @@
+---
+title: UITextarea
+description: Multi-line text input field.
+---
+
+import { ComponentPreview } from "../../../components/ComponentPreview.tsx";
+import { UITextarea } from "tango-api";
+
+## Preview
+
+<ComponentPreview client:load label="Default (6 rows)">
+  <UITextarea placeholder="Write your notes here..." />
+</ComponentPreview>
+
+<ComponentPreview client:load label="Custom rows">
+  <UITextarea placeholder="Short input..." rows={3} />
+</ComponentPreview>
+
+## Props
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `value` | `string` | `""` | Current textarea value |
+| `placeholder` | `string` | `""` | Placeholder text |
+| `rows` | `number` | `6` | Visible row count |
+| `onInput` | `(value: string) => void` | — | Called on every keystroke with the new value |
+
+## Usage
+
+```tsx
+import { UITextarea } from "tango-api";
+
+const [notes, setNotes] = useState("");
+<UITextarea value={notes} placeholder="Write something..." rows={4} onInput={setNotes} />
+```
