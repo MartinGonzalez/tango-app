@@ -26,9 +26,6 @@ jobs:
           npm ci
           npm run build
 
-      - name: Add .nojekyll
-        run: touch docs/dist/.nojekyll
-
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
