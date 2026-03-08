@@ -3,6 +3,8 @@ import starlight from "@astrojs/starlight";
 import react from "@astrojs/react";
 
 export default defineConfig({
+  site: "https://martingonzalez.github.io",
+  base: "/tango-app",
   integrations: [
     starlight({
       title: "Tango Instruments",
