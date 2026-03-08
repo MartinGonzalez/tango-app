@@ -2,11 +2,11 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import react from "@astrojs/react";
 
+const isCI = !!process.env.GITHUB_ACTIONS;
+
 export default defineConfig({
-  ...(process.env.GITHUB_ACTIONS && {
-    site: "https://martingonzalez.github.io",
-    base: "/tango-app",
-  }),
+  site: isCI ? "https://martingonzalez.github.io" : undefined,
+  base: isCI ? "/tango-app" : undefined,
   integrations: [
     starlight({
       title: "Tango Instruments",
