@@ -15,6 +15,6 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sharp": "^0.33.0",
-    "tango-api": "file:../../tango-api"
+    "tango-api": "github:MartinGonzalez/tango-api#v0.0.2-rc63"
   }
 }
