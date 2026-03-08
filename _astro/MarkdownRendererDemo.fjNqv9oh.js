@@ -1,4 +1,4 @@
-import{j as e,C as r,k as n}from"./ComponentPreview.Dp77vx_l.js";import"./client.DQNo7nBM.js";function o(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`(.+?)`/g,"<code>$1</code>").replace(/\n/g,"<br />")}const a=`## Hello World
+import{j as e,C as r,k as n}from"./ComponentPreview.CYqAsK5c.js";import"./client.DQNo7nBM.js";function o(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`(.+?)`/g,"<code>$1</code>").replace(/\n/g,"<br />")}const a=`## Hello World
 
 This is a **markdown** preview with \`inline code\` and formatting.
 
