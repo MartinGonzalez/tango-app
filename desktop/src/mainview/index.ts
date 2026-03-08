@@ -297,6 +297,9 @@ const rpc = Electroview.defineRPC<any>({
           const wsData = buildStageData(state);
           sidebar.render(wsData);
         }
+        if (activity === "stopped") {
+          sidebar.notifySessionStopped(sessionId);
+        }
       },
       ptyData: ({ id, data }: { id: string; data: string }) => {
         if (terminalPanel) {
@@ -895,8 +898,15 @@ function init(): void {
   instrumentsSidebar = new InstrumentsSidebar(instrumentsSidebarHost, {
     onActivate: (instrumentId) => {
       instrumentsSidebar!.setActive(instrumentId);
-      const entry = appState.get().instrumentEntries.find((e) => e.id === instrumentId);
-      if (entry) instrumentDetailPanel.showInstalled(entry);
+      const state = appState.get();
+      // Prefer catalog view when available — it has version comparison for updates
+      const catalogEntry = state.catalogEntries.find((e) => e.id === instrumentId);
+      if (catalogEntry) {
+        instrumentDetailPanel.showCatalog(catalogEntry);
+      } else {
+        const entry = state.instrumentEntries.find((e) => e.id === instrumentId);
+        if (entry) instrumentDetailPanel.showInstalled(entry);
+      }
     },
     onBack: () => {
       appState.update((s) => ({ ...s, viewMode: "stages" }));
@@ -937,6 +947,9 @@ function init(): void {
     onInstall: (entry) => {
       void installFromCatalog(entry);
     },
+    onUpdate: (entry) => {
+      void updateFromCatalog(entry);
+    },
     onUninstall: (instrumentId) => {
       void removeLocalInstrument(instrumentId);
     },
@@ -944,13 +957,7 @@ function init(): void {
 
   instrumentBrowsePanel = new InstrumentBrowsePanel({
     onSelect: (catalogEntry) => {
-      // If already installed, show as installed entry (with Uninstall button)
-      const installed = appState.get().instrumentEntries.find((e) => e.id === catalogEntry.id);
-      if (installed) {
-        instrumentDetailPanel.showInstalled(installed);
-      } else {
-        instrumentDetailPanel.showCatalog(catalogEntry);
-      }
+      instrumentDetailPanel.showCatalog(catalogEntry);
     },
     onRefresh: () => {
       void loadInstrumentCatalog();
@@ -2922,14 +2929,54 @@ async function installFromCatalog(entry: InstrumentCatalogEntry): Promise<void> 
     });
     await loadInstruments(true);
     await loadInstrumentCatalog();
-    // Show the newly installed entry in the detail panel
-    const installed = appState.get().instrumentEntries.find((e) => e.id === entry.id);
-    if (installed) instrumentDetailPanel.showInstalled(installed);
+    // Show the freshly installed entry via catalog view (has version info)
+    const catalog = appState.get().catalogEntries.find((e) => e.id === entry.id);
+    if (catalog) {
+      instrumentDetailPanel.showCatalog(catalog);
+    } else {
+      const installed = appState.get().instrumentEntries.find((e) => e.id === entry.id);
+      if (installed) instrumentDetailPanel.showInstalled(installed);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Failed to install instrument:", err);
     appState.update((s) => ({ ...s, catalogError: message }));
     instrumentDetailPanel.setInstalling(false);
+  }
+}
+
+async function updateFromCatalog(entry: InstrumentCatalogEntry): Promise<void> {
+  instrumentDetailPanel.setUpdating(true);
+  try {
+    // Deactivate if currently active
+    if (activeRuntimeInstrumentId === entry.id) {
+      await deactivateRuntimeInstrument();
+    }
+    // Remove old version
+    await (rpc as any).request.removeInstrument({
+      instrumentId: entry.id,
+      deleteData: false,
+    });
+    // Install new version from catalog
+    await (rpc as any).request.installInstrumentFromCatalog({
+      source: entry.source,
+      path: entry.path,
+      instrumentId: entry.id,
+    });
+    await loadInstruments(true);
+    await loadInstrumentCatalog();
+    // Show success confirmation, then settle to normal state after 3s
+    const catalog = appState.get().catalogEntries?.find((e) => e.id === entry.id);
+    if (catalog) {
+      instrumentDetailPanel.showUpdated(catalog);
+    } else {
+      instrumentDetailPanel.setUpdating(false);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Failed to update instrument:", err);
+    appState.update((s) => ({ ...s, catalogError: message }));
+    instrumentDetailPanel.setUpdating(false);
   }
 }
 

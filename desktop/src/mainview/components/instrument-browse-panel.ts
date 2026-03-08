@@ -1,5 +1,6 @@
 import { clearChildren, h } from "../lib/dom.ts";
 import { instrumentIcon } from "../lib/icons.ts";
+import { compareSemver } from "../../shared/version.ts";
 import type {
   InstrumentCatalogEntry,
   InstrumentCategory,
@@ -199,7 +200,11 @@ export class InstrumentBrowsePanel {
         h("div", { class: "instrument-browse-item-meta" }, [
           category ? h("span", { class: "instrument-detail-tag" }, [category]) : h("span", { hidden: true }),
           entry.author ? h("span", { class: "instrument-browse-item-author" }, [entry.author]) : h("span", { hidden: true }),
-          entry.installed ? h("span", { class: "instrument-browse-item-installed" }, ["Installed"]) : h("span", { hidden: true }),
+          entry.installed
+            ? (entry.installedVersion && compareSemver(entry.version, entry.installedVersion) > 0
+              ? h("span", { class: "instrument-browse-item-update" }, ["Update"])
+              : h("span", { class: "instrument-browse-item-installed" }, ["Installed"]))
+            : h("span", { hidden: true }),
         ]),
       ]),
     ]);

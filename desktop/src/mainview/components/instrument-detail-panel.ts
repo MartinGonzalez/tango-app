@@ -1,5 +1,6 @@
 import { clearChildren, h } from "../lib/dom.ts";
 import { instrumentIcon } from "../lib/icons.ts";
+import { compareSemver } from "../../shared/version.ts";
 import type {
   InstrumentRegistryEntry,
   InstrumentCatalogEntry,
@@ -14,6 +15,7 @@ type DetailTarget =
 export type InstrumentDetailCallbacks = {
   onActivate: (instrumentId: string) => void;
   onInstall: (entry: InstrumentCatalogEntry) => void;
+  onUpdate: (entry: InstrumentCatalogEntry) => void;
   onUninstall: (instrumentId: string) => void;
 };
 
@@ -32,6 +34,8 @@ export class InstrumentDetailPanel {
   #callbacks: InstrumentDetailCallbacks;
   #target: DetailTarget = null;
   #installing = false;
+  #updating = false;
+  #justUpdated = false;
 
   constructor(callbacks: InstrumentDetailCallbacks) {
     this.#callbacks = callbacks;
@@ -44,17 +48,36 @@ export class InstrumentDetailPanel {
   showInstalled(entry: InstrumentRegistryEntry): void {
     this.#target = { kind: "installed", entry };
     this.#installing = false;
+    this.#updating = false;
     this.#render();
   }
 
   showCatalog(entry: InstrumentCatalogEntry): void {
     this.#target = { kind: "catalog", entry };
     this.#installing = false;
+    this.#updating = false;
     this.#render();
+  }
+
+  showUpdated(entry: InstrumentCatalogEntry): void {
+    this.#target = { kind: "catalog", entry };
+    this.#installing = false;
+    this.#updating = false;
+    this.#justUpdated = true;
+    this.#render();
+    setTimeout(() => {
+      this.#justUpdated = false;
+      this.#render();
+    }, 3000);
   }
 
   setInstalling(installing: boolean): void {
     this.#installing = installing;
+    this.#render();
+  }
+
+  setUpdating(updating: boolean): void {
+    this.#updating = updating;
     this.#render();
   }
 
@@ -142,9 +165,54 @@ export class InstrumentDetailPanel {
     }
 
     const entry = target.entry;
+
     if (entry.installed) {
-      return h("span", { class: "instrument-detail-badge instrument-detail-installed-badge" }, ["Installed"]);
+      const hasUpdate = entry.installedVersion
+        ? compareSemver(entry.version, entry.installedVersion) > 0
+        : false;
+
+      if (this.#updating) {
+        return h("div", { class: "instrument-detail-action-group" }, [
+          h("button", {
+            class: "instrument-detail-btn instrument-detail-btn-install",
+            disabled: true,
+          }, ["Updating..."]),
+          h("button", {
+            class: "instrument-detail-btn instrument-detail-btn-danger",
+            disabled: true,
+          }, ["Uninstall"]),
+        ]);
+      }
+
+      if (this.#justUpdated) {
+        return h("div", { class: "instrument-detail-action-group" }, [
+          h("span", { class: "instrument-detail-badge instrument-detail-updated-badge" }, ["Updated!"]),
+          h("button", {
+            class: "instrument-detail-btn instrument-detail-btn-danger",
+            onclick: () => this.#callbacks.onUninstall(entry.id),
+          }, ["Uninstall"]),
+        ]);
+      }
+
+      if (hasUpdate) {
+        return h("div", { class: "instrument-detail-action-group" }, [
+          h("button", {
+            class: "instrument-detail-btn instrument-detail-btn-install",
+            onclick: () => this.#callbacks.onUpdate(entry),
+          }, ["Update"]),
+          h("button", {
+            class: "instrument-detail-btn instrument-detail-btn-danger",
+            onclick: () => this.#callbacks.onUninstall(entry.id),
+          }, ["Uninstall"]),
+        ]);
+      }
+
+      return h("button", {
+        class: "instrument-detail-btn instrument-detail-btn-danger",
+        onclick: () => this.#callbacks.onUninstall(entry.id),
+      }, ["Uninstall"]);
     }
+
     if (this.#installing) {
       return h("button", {
         class: "instrument-detail-btn instrument-detail-btn-install",

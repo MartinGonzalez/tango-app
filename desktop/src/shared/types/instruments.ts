@@ -162,4 +162,5 @@ export type InstrumentCatalogEntry = {
   panels: InstrumentPanelConfig;
   runtime: InstrumentRuntime;
   installed: boolean;
+  installedVersion?: string;
 };

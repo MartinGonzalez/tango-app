@@ -1119,6 +1119,15 @@ button {
   50% { opacity: 0.35; }
 }
 
+@keyframes sessionBlink {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(250, 204, 21, 0.18); }
+}
+
+.ws-session-item.blink-attention {
+  animation: sessionBlink 400ms ease-in-out 3;
+}
+
 .ws-session-info {
   min-width: 0;
   flex: 1;
@@ -6996,6 +7005,13 @@ img.open-split-icon {
   white-space: nowrap;
 }
 
+.instrument-detail-updated-badge {
+  background: rgba(76, 175, 80, 0.25);
+  color: #66bb6a;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
 /* ── Instrument Browse Panel ── */
 
 .instrument-browse-panel {
@@ -7147,5 +7163,11 @@ img.open-split-icon {
 .instrument-browse-item-installed {
   font-size: 10px;
   color: #66bb6a;
+  font-weight: 500;
+}
+
+.instrument-browse-item-update {
+  font-size: 10px;
+  color: #e67e22;
   font-weight: 500;
 }

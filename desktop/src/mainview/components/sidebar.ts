@@ -399,6 +399,17 @@ export class Sidebar {
     input.select();
   }
 
+  notifySessionStopped(sessionId: string): void {
+    const item = this.#el.querySelector<HTMLElement>(
+      `.ws-session-item[data-session-id="${sessionId}"]`
+    );
+    if (!item || item.classList.contains("blink-attention")) return;
+    item.classList.add("blink-attention");
+    item.addEventListener("animationend", () => {
+      item.classList.remove("blink-attention");
+    }, { once: true });
+  }
+
   get element(): HTMLElement {
     return this.#el;
   }
@@ -574,16 +585,20 @@ function paletteColor(index: number, total: number): string {
 }
 
 function lerpColor(a: string, b: string, t: number): string {
-  const [ar, ag, ab] = hexToRgb(a);
-  const [br, bg, bb] = hexToRgb(b);
+  const [ar, ag, ab] = parseColor(a);
+  const [br, bg, bb] = parseColor(b);
   const r = Math.round(ar + (br - ar) * t);
   const g = Math.round(ag + (bg - ag) * t);
   const bl = Math.round(ab + (bb - ab) * t);
   return `rgb(${r},${g},${bl})`;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const v = parseInt(hex.slice(1), 16);
+function parseColor(color: string): [number, number, number] {
+  const rgbMatch = color.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/);
+  if (rgbMatch) {
+    return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
+  }
+  const v = parseInt(color.slice(1), 16);
   return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
 }
 
@@ -649,7 +664,7 @@ function startShimmerFade(el: HTMLElement, finalText: string): void {
         // Inside shimmer band — brighten to white
         const brightness = 1 - (dist / highlightWidth);
         const baseColor = paletteColor(spanIdx, total);
-        span.style.color = lerpColor(baseColor.startsWith("rgb") ? baseColor : baseColor, "#ffffff", brightness * 0.7);
+        span.style.color = lerpColor(baseColor, "#ffffff", brightness * 0.7);
       } else if (highlightCenter > charPos + highlightWidth) {
         // Shimmer has passed — start fading to default
         span.style.transition = `color ${FADE_DURATION_MS}ms ease`;

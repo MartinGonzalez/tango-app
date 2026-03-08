@@ -857,8 +857,8 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 
       browseInstrumentCatalog: async () => {
         const installed = instrumentRuntime.list();
-        const installedIds = new Set(installed.map((e) => e.id));
-        return resolveAllSources(installedIds);
+        const installedVersions = new Map(installed.map((e) => [e.id, e.version]));
+        return resolveAllSources(installedVersions);
       },
 
       getInstrumentSources: async () => {

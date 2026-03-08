@@ -104,7 +104,7 @@ async function fetchGitHubFile(ref: GitHubRef, path: string): Promise<string | n
 export async function resolveGitHubSource(
   source: string,
   ref: GitHubRef,
-  installedIds: Set<string>,
+  installedVersions: Map<string, string>,
 ): Promise<InstrumentCatalogEntry[]> {
   const tangoJson = await fetchGitHubFile(ref, "tango.json");
   if (!tangoJson) return [];
@@ -160,7 +160,8 @@ export async function resolveGitHubSource(
           right: Boolean(inst.panels?.right),
         } as InstrumentPanelConfig,
         runtime: (inst.runtime === "react" ? "react" : "vanilla") as InstrumentRuntime,
-        installed: installedIds.has(inst.id),
+        installed: installedVersions.has(inst.id),
+        installedVersion: installedVersions.get(inst.id),
       });
     }),
   );
@@ -169,7 +170,7 @@ export async function resolveGitHubSource(
 }
 
 export async function resolveAllSources(
-  installedIds: Set<string>,
+  installedVersions: Map<string, string>,
 ): Promise<InstrumentCatalogEntry[]> {
   const config = await loadSourceConfig();
   const results: InstrumentCatalogEntry[] = [];
@@ -178,7 +179,7 @@ export async function resolveAllSources(
     config.sources.map(async (source) => {
       const ref = parseGitHubSource(source);
       if (!ref) return;
-      const entries = await resolveGitHubSource(source, ref, installedIds);
+      const entries = await resolveGitHubSource(source, ref, installedVersions);
       results.push(...entries);
     }),
   );
