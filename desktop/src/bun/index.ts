@@ -1743,9 +1743,9 @@ if (process.env.TANGO_DISABLE_WATCHER_AUTOSTART === "1") {
   }
 }
 
-// Install the PreToolUse hook for tool approval
+// Install all Tango hooks globally (approval + event forwarder)
 installApprovalHook().catch((err) => {
-  console.warn("Failed to install approval hook:", err);
+  console.warn("Failed to install Tango hooks:", err);
 });
 
 console.log("Tango initialized");
