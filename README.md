@@ -1,5 +1,7 @@
 # Tango
 
+![Tango Preview](.readme/tango-preview.png)
+
 Tango is a desktop app for managing Claude Code sessions. It lets you spawn, monitor, and interact with Claude across multiple projects from a single native interface.
 
 Built with [Electrobun](https://electrobun.dev) (Bun + native WebKit).
