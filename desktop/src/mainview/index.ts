@@ -515,7 +515,7 @@ let activeRuntimeInstrumentId: string | null = null;
 let activeRuntimeDefinition: TangoInstrumentDefinition | null = null;
 let activeRuntimeDefinitionStop: (() => void | Promise<void>) | null = null;
 const activeRuntimePanelUnmounts = new Map<TangoPanelSlot, () => void | Promise<void>>();
-let runtimeInstrumentDeactivating = false;
+let runtimeInstrumentDeactivating: Promise<void> | null = null;
 let sidebarShell: HTMLElement;
 let diffRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let branchHistoryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -952,6 +952,24 @@ function init(): void {
     },
     onUninstall: (instrumentId) => {
       void removeLocalInstrument(instrumentId);
+    },
+    onLoadSettings: async (instrumentId) => {
+      const [schema, valuesResponse] = await Promise.all([
+        (rpc as any).request.getInstrumentSettingsSchema({ instrumentId }),
+        (rpc as any).request.getInstrumentSettingsValues({ instrumentId }),
+      ]);
+      return {
+        schema,
+        values: valuesResponse.values ?? {},
+      };
+    },
+    onSetSettingValue: async (instrumentId, key, value) => {
+      const response: { values: Record<string, unknown> } = await (rpc as any).request.setInstrumentSettingValue({
+        instrumentId,
+        key,
+        value,
+      });
+      return response.values ?? {};
     },
   });
 
@@ -1743,42 +1761,51 @@ function resolveRuntimeSlotDefaultVisibility(
 }
 
 async function deactivateRuntimeInstrument(): Promise<void> {
-  if (runtimeInstrumentDeactivating) return;
-  runtimeInstrumentDeactivating = true;
-  const prevId = activeRuntimeInstrumentId;
-  const unmounters = Array.from(activeRuntimePanelUnmounts.values());
-  activeRuntimePanelUnmounts.clear();
-  const onStop = activeRuntimeDefinitionStop;
-  activeRuntimeInstrumentId = null;
-  activeRuntimeDefinition = null;
-  activeRuntimeDefinitionStop = null;
-  try {
-    for (const unmount of unmounters) {
-      await Promise.resolve(unmount());
-    }
-    if (onStop) {
-      await Promise.resolve(onStop());
-    }
-    // Unmount all slots owned by this instrument consumer
-    if (prevId) {
-      await slotManager.unmountConsumer(`instrument:${prevId}`);
-    }
-  } catch (err) {
-    console.error("Failed to deactivate runtime instrument:", err);
-  } finally {
-    // Clean up right panel (out of slot manager scope)
-    if (instrumentRightPanelHost) {
-      instrumentRightPanelHost.replaceChildren();
-      instrumentRightPanelHost.hidden = true;
-    }
-    // Suspend backend lifecycle (fire-and-forget, don't block UI)
-    if (prevId) {
-      (rpc as any).request.suspendInstrumentBackend({ instrumentId: prevId }).catch((err: unknown) => {
-        console.warn(`Failed to suspend backend for '${prevId}':`, err);
-      });
-    }
-    runtimeInstrumentDeactivating = false;
+  // If a deactivation is already in progress, wait for it instead of skipping.
+  // This prevents activateRuntimeInstrument from mounting new React roots
+  // while old ones haven't been unmounted yet (leaking intervals/subscriptions).
+  if (runtimeInstrumentDeactivating) {
+    await runtimeInstrumentDeactivating;
+    return;
   }
+  const deactivation = (async () => {
+    const prevId = activeRuntimeInstrumentId;
+    const unmounters = Array.from(activeRuntimePanelUnmounts.values());
+    activeRuntimePanelUnmounts.clear();
+    const onStop = activeRuntimeDefinitionStop;
+    activeRuntimeInstrumentId = null;
+    activeRuntimeDefinition = null;
+    activeRuntimeDefinitionStop = null;
+    try {
+      for (const unmount of unmounters) {
+        await Promise.resolve(unmount());
+      }
+      if (onStop) {
+        await Promise.resolve(onStop());
+      }
+      // Unmount all slots owned by this instrument consumer
+      if (prevId) {
+        await slotManager.unmountConsumer(`instrument:${prevId}`);
+      }
+    } catch (err) {
+      console.error("Failed to deactivate runtime instrument:", err);
+    } finally {
+      // Clean up right panel (out of slot manager scope)
+      if (instrumentRightPanelHost) {
+        instrumentRightPanelHost.replaceChildren();
+        instrumentRightPanelHost.hidden = true;
+      }
+      // Suspend backend lifecycle (fire-and-forget, don't block UI)
+      if (prevId) {
+        (rpc as any).request.suspendInstrumentBackend({ instrumentId: prevId }).catch((err: unknown) => {
+          console.warn(`Failed to suspend backend for '${prevId}':`, err);
+        });
+      }
+      runtimeInstrumentDeactivating = null;
+    }
+  })();
+  runtimeInstrumentDeactivating = deactivation;
+  await deactivation;
 }
 
 function argsPreview(args: unknown[]): string {
@@ -2128,7 +2155,14 @@ async function mountRuntimeSlot(
   if (!(node instanceof HTMLElement)) {
     throw new Error(`Instrument '${entry.id}' returned an invalid node for panel '${slot}'`);
   }
-  const unmountFn = rendered instanceof HTMLElement ? undefined : rendered.onUnmount;
+  const rawUnmountFn = rendered instanceof HTMLElement ? undefined : rendered.onUnmount;
+
+  // Wrap unmount in a once-guard so it's safe to call from multiple paths
+  // (slot manager replacement AND deactivateRuntimeInstrument).
+  let unmountCalled = false;
+  const unmountFn = rawUnmountFn
+    ? () => { if (unmountCalled) return; unmountCalled = true; rawUnmountFn(); }
+    : undefined;
 
   // Handle the "right" panel separately (absolute-positioned overlay, not slot-managed)
   if (slot === "right") {
@@ -2146,17 +2180,21 @@ async function mountRuntimeSlot(
     instrumentRuntimeSidebarHost.hidden = false;
     if (instrumentRuntimeSidebarShell) {
       instrumentRuntimeSidebarShell.hidden = false;
-      await slotManager.mount("sidebar", consumerId, { node: instrumentRuntimeSidebarShell });
+      await slotManager.mount("sidebar", consumerId, {
+        node: instrumentRuntimeSidebarShell,
+        onUnmount: unmountFn,
+      });
     }
     if (unmountFn) activeRuntimePanelUnmounts.set(slot, unmountFn);
     return;
   }
 
-  // For first/second, mount directly via slot manager.
-  // Don't pass onUnmount to slot manager — deactivateRuntimeInstrument handles it
-  // via activeRuntimePanelUnmounts to avoid double-calling.
+  // For first/second, pass onUnmount to the slot manager so that
+  // slotManager.unmountAll() (fired by mode switches like activateStagesMode)
+  // properly calls root.unmount() and cleans up React effects/intervals.
+  // The once-guard above prevents double-calling from deactivateRuntimeInstrument.
   const slotName = slot as SlotName;
-  await slotManager.mount(slotName, consumerId, { node });
+  await slotManager.mount(slotName, consumerId, { node, onUnmount: unmountFn });
   if (unmountFn) activeRuntimePanelUnmounts.set(slot, unmountFn);
 }
 

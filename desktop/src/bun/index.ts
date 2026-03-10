@@ -71,6 +71,24 @@ import type {
 
 console.log("Tango starting...");
 
+// Enrich PATH early so instrument backends (gh, acli, etc.) can find
+// CLI tools installed via Homebrew or user-local directories.
+// Desktop apps launched from the OS get a minimal PATH that excludes these.
+{
+  const pathEntries = new Set(
+    (process.env.PATH ?? "").split(":").filter(Boolean),
+  );
+  for (const dir of [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    join(homedir(), ".local", "bin"),
+    join(homedir(), "bin"),
+  ]) {
+    pathEntries.add(dir);
+  }
+  process.env.PATH = [...pathEntries].join(":");
+}
+
 import pkg from "../../package.json";
 const APP_VERSION: string = pkg.version;
 

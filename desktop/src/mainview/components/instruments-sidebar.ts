@@ -143,9 +143,6 @@ export class InstrumentsSidebar {
         entry.lastError
           ? h("div", { class: "tasks-banner tasks-banner-error" }, [entry.lastError])
           : h("div", { hidden: true }),
-        active
-          ? this.#renderSettings(entry)
-          : h("div", { hidden: true }),
       ]),
     ]);
 

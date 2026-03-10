@@ -86,6 +86,15 @@ type InstrumentBackendContext = {
   permissions: InstrumentPermission[];
   emit: (event: Omit<InstrumentEvent, "instrumentId">) => void;
   host: InstrumentBackendHostAPI;
+  task: {
+    (label: string): TaskHandle;
+    <T>(label: string, fn: () => Promise<T> | T): Promise<T>;
+  };
+};
+
+type TaskHandle = {
+  done(): void;
+  fail(error?: string): void;
 };
 ```
 
@@ -124,6 +133,46 @@ type InstrumentBackendHostAPI = {
 ```
 
 All methods work identically to the frontend versions. See [Frontend API Reference](/reference/frontend-api/) for details on each.
+
+### `task(label)` / `task(label, fn)`
+
+Registers a long-running task that prevents backend suspension while it runs. When the user navigates away, suspension is deferred until all active tasks complete.
+
+**Handle-based** — for fire-and-forget or streaming flows:
+
+```ts
+const handle = ctx.task("Reviewing PR #42");
+try {
+  const review = await runAgentReview(prUrl);
+  await ctx.host.storage.setProperty("review", review);
+  ctx.emit({ event: "review.done", payload: { review } });
+  handle.done();
+} catch (err) {
+  handle.fail(err.message);
+}
+```
+
+**Callback-based** (recommended) — auto-completes on success, auto-fails on error:
+
+```ts
+const result = await ctx.task("Reviewing PR #42", async () => {
+  const review = await runAgentReview(prUrl);
+  await ctx.host.storage.setProperty("review", review);
+  ctx.emit({ event: "review.done", payload: { review } });
+  return review;
+});
+```
+
+**Behavior:**
+- Multiple tasks can run concurrently. Suspension is deferred until **all** complete.
+- Tasks have a **5-minute hard timeout**. Exceeding it auto-completes with a warning log.
+- `done()` and `fail()` are **idempotent** — safe to call multiple times.
+- If the user navigates back while tasks run, the deferred suspension is cancelled.
+- When an instrument is disabled or removed, all tasks are force-completed.
+
+**When to use:** Agent reviews, content generation, session queries — any operation taking more than a few seconds that should survive navigation.
+
+**When NOT to use:** For backends that need to stay alive permanently, use `backgroundRefresh: { mode: "keep-alive" }` instead.
 
 ---
 

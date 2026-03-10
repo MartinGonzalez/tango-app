@@ -6911,6 +6911,12 @@ img.open-split-icon {
   color: var(--text-secondary, #ccc);
 }
 
+.instrument-detail-divider {
+  border: none;
+  border-top: 1px solid var(--border-primary, #333);
+  margin: 8px 0;
+}
+
 .instrument-detail-section {
   display: flex;
   flex-direction: column;

@@ -5,6 +5,7 @@ import type {
   InstrumentRegistryEntry,
   InstrumentCatalogEntry,
   InstrumentCategory,
+  InstrumentSettingField,
 } from "../../shared/types.ts";
 
 type DetailTarget =
@@ -17,6 +18,15 @@ export type InstrumentDetailCallbacks = {
   onInstall: (entry: InstrumentCatalogEntry) => void;
   onUpdate: (entry: InstrumentCatalogEntry) => void;
   onUninstall: (instrumentId: string) => void;
+  onLoadSettings: (instrumentId: string) => Promise<{
+    schema: InstrumentSettingField[];
+    values: Record<string, unknown>;
+  }>;
+  onSetSettingValue: (
+    instrumentId: string,
+    key: string,
+    value: unknown,
+  ) => Promise<Record<string, unknown>>;
 };
 
 const CATEGORY_LABELS: Record<InstrumentCategory, string> = {
@@ -28,6 +38,14 @@ const CATEGORY_LABELS: Record<InstrumentCategory, string> = {
   "utilities": "Utilities",
 };
 
+type SettingsState = {
+  loading: boolean;
+  schema: InstrumentSettingField[];
+  values: Record<string, unknown>;
+  savingKeys: Set<string>;
+  error: string | null;
+};
+
 export class InstrumentDetailPanel {
   #el: HTMLElement;
   #contentEl: HTMLElement;
@@ -36,6 +54,13 @@ export class InstrumentDetailPanel {
   #installing = false;
   #updating = false;
   #justUpdated = false;
+  #settings: SettingsState = {
+    loading: false,
+    schema: [],
+    values: {},
+    savingKeys: new Set(),
+    error: null,
+  };
 
   constructor(callbacks: InstrumentDetailCallbacks) {
     this.#callbacks = callbacks;
@@ -49,7 +74,11 @@ export class InstrumentDetailPanel {
     this.#target = { kind: "installed", entry };
     this.#installing = false;
     this.#updating = false;
+    this.#settings = { loading: false, schema: [], values: {}, savingKeys: new Set(), error: null };
     this.#render();
+    if (entry.settings.length > 0) {
+      void this.#loadSettings(entry.id);
+    }
   }
 
   showCatalog(entry: InstrumentCatalogEntry): void {
@@ -140,6 +169,13 @@ export class InstrumentDetailPanel {
       // Sections
       this.#renderSection("Panels", this.#panelsList(entry.panels)),
       this.#renderSection("Permissions", this.#permissionsList(entry.permissions)),
+      // Settings (only for installed instruments with settings)
+      ...(isInstalled && (entry as InstrumentRegistryEntry).settings.length > 0
+        ? [
+            h("hr", { class: "instrument-detail-divider" }),
+            this.#renderSettingsSection(entry as InstrumentRegistryEntry),
+          ]
+        : []),
     );
   }
 
@@ -255,6 +291,153 @@ export class InstrumentDetailPanel {
 
   #iconEl(icon: string): HTMLElement {
     return instrumentIcon(icon, 32);
+  }
+
+  async #loadSettings(instrumentId: string): Promise<void> {
+    this.#settings.loading = true;
+    this.#render();
+    try {
+      const result = await this.#callbacks.onLoadSettings(instrumentId);
+      this.#settings.schema = result.schema;
+      this.#settings.values = result.values;
+      this.#settings.error = null;
+    } catch (err) {
+      this.#settings.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.#settings.loading = false;
+      this.#render();
+    }
+  }
+
+  async #saveSetting(instrumentId: string, key: string, value: unknown): Promise<void> {
+    this.#settings.savingKeys.add(key);
+    this.#settings.error = null;
+    this.#render();
+    try {
+      const values = await this.#callbacks.onSetSettingValue(instrumentId, key, value);
+      this.#settings.values = values;
+    } catch (err) {
+      this.#settings.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.#settings.savingKeys.delete(key);
+      this.#render();
+    }
+  }
+
+  #renderSettingsSection(entry: InstrumentRegistryEntry): HTMLElement {
+    const schema = this.#settings.schema.length > 0 ? this.#settings.schema : entry.settings;
+    if (!schema.length) return h("div", { hidden: true });
+
+    const container = h("div", { class: "instrument-detail-section" }, [
+      h("h3", { class: "instrument-detail-section-title" }, ["Preferences"]),
+    ]);
+
+    if (this.#settings.loading) {
+      container.appendChild(h("span", { class: "instrument-detail-muted" }, ["Loading..."]));
+      return container;
+    }
+
+    if (this.#settings.error) {
+      container.appendChild(h("div", { class: "tasks-banner tasks-banner-error" }, [this.#settings.error]));
+    }
+
+    for (const field of schema) {
+      const value = this.#settings.values[field.key];
+      const saving = this.#settings.savingKeys.has(field.key);
+      container.appendChild(this.#renderSettingField(entry.id, field, value, saving));
+    }
+
+    return container;
+  }
+
+  #renderSettingField(
+    instrumentId: string,
+    field: InstrumentSettingField,
+    value: unknown,
+    saving: boolean,
+  ): HTMLElement {
+    const row = h("div", { class: "instrument-setting-row" });
+
+    const head = h("div", { class: "instrument-setting-head" }, [
+      h("span", { class: "instrument-setting-title" }, [field.title]),
+      field.required
+        ? h("span", { class: "instrument-setting-required" }, ["Required"])
+        : h("span", { hidden: true }),
+    ]);
+
+    const description = field.description
+      ? h("div", { class: "instrument-setting-description" }, [field.description])
+      : h("div", { hidden: true });
+
+    const control = this.#renderSettingControl(instrumentId, field, value, saving);
+    row.append(head, description, control);
+    return row;
+  }
+
+  #renderSettingControl(
+    instrumentId: string,
+    field: InstrumentSettingField,
+    value: unknown,
+    saving: boolean,
+  ): HTMLElement {
+    if (field.type === "boolean") {
+      const checkbox = h("input", {
+        type: "checkbox",
+        checked: Boolean(value),
+        onchange: (event: Event) => {
+          const target = event.currentTarget as HTMLInputElement | null;
+          void this.#saveSetting(instrumentId, field.key, Boolean(target?.checked));
+        },
+      }) as HTMLInputElement;
+      checkbox.disabled = saving;
+      return h("label", { class: "instrument-setting-checkbox" }, [
+        checkbox,
+        h("span", {}, [field.title]),
+      ]);
+    }
+
+    if (field.type === "select") {
+      const select = h("select", { class: "tasks-input" }) as HTMLSelectElement;
+      for (const option of field.options) {
+        select.appendChild(h("option", { value: option.value }, [option.label]));
+      }
+      select.value = String(value ?? field.default ?? field.options[0]?.value ?? "");
+      select.disabled = saving;
+      select.addEventListener("change", () => {
+        void this.#saveSetting(instrumentId, field.key, select.value);
+      });
+      return select;
+    }
+
+    const inputType = field.secret ? "password" : field.type === "number" ? "number" : "text";
+    const input = h("input", {
+      class: "tasks-input",
+      type: inputType,
+      placeholder: field.type === "string" ? (field.placeholder ?? "") : "",
+      value: value == null
+        ? (field.default == null ? "" : String(field.default))
+        : String(value),
+    }) as HTMLInputElement;
+    input.disabled = saving;
+
+    const saveButton = h("button", {
+      class: "plugins-content-btn",
+      type: "button",
+      disabled: saving,
+      onclick: () => {
+        const raw = input.value.trim();
+        const nextValue = field.type === "number"
+          ? (raw === "" ? null : Number(raw))
+          : raw;
+        void this.#saveSetting(instrumentId, field.key, nextValue);
+      },
+    }, [saving ? "Saving..." : "Save"]) as HTMLButtonElement;
+    saveButton.disabled = saving;
+
+    return h("div", { class: "instrument-setting-input-row" }, [
+      input,
+      saveButton,
+    ]);
   }
 
   get element(): HTMLElement {

@@ -1,6 +1,5 @@
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type {
   ActionSchema,
   ConnectorCredential,
@@ -117,6 +116,8 @@ export class InstrumentRuntime {
   #backendSubscriptions = new Map<string, Map<keyof HostEventMap, Set<BackendEventHandler>>>();
   #backgroundSchedulers = new Map<string, BackgroundSchedulerState>();
   #devOverrides = new Map<string, InstrumentRegistryEntry>();
+  #activeTasks = new Map<string, Map<string, { label: string; timer: ReturnType<typeof setTimeout>; settled: boolean }>>();
+  #pendingSuspend = new Set<string>();
 
   constructor(opts?: {
     registry?: InstrumentRegistry;
@@ -571,6 +572,70 @@ export class InstrumentRuntime {
     }
   }
 
+  static #TASK_HARD_TIMEOUT_MS = 5 * 60 * 1000;
+
+  #registerTask(instrumentId: string, label: string): { done(): void; fail(error?: string): void } {
+    const taskId = crypto.randomUUID();
+    const taskMap = this.#activeTasks.get(instrumentId) ?? new Map();
+
+    const timer = setTimeout(() => {
+      this.#completeTask(instrumentId, taskId, `Task "${label}" timed out after 5 minutes`);
+    }, InstrumentRuntime.#TASK_HARD_TIMEOUT_MS);
+
+    const taskEntry = { label, timer, settled: false };
+    taskMap.set(taskId, taskEntry);
+    this.#activeTasks.set(instrumentId, taskMap);
+
+    this.#onLog?.({ instrumentId, level: "info", message: `Task started: "${label}"` });
+
+    return {
+      done: () => this.#completeTask(instrumentId, taskId),
+      fail: (error?: string) => this.#completeTask(instrumentId, taskId, error),
+    };
+  }
+
+  #completeTask(instrumentId: string, taskId: string, error?: string): void {
+    const taskMap = this.#activeTasks.get(instrumentId);
+    if (!taskMap) return;
+
+    const task = taskMap.get(taskId);
+    if (!task || task.settled) return;
+
+    task.settled = true;
+    clearTimeout(task.timer);
+    taskMap.delete(taskId);
+
+    if (error) {
+      this.#onLog?.({ instrumentId, level: "warn", message: `Task failed: "${task.label}" — ${error}` });
+    } else {
+      this.#onLog?.({ instrumentId, level: "info", message: `Task completed: "${task.label}"` });
+    }
+
+    if (taskMap.size === 0) {
+      this.#activeTasks.delete(instrumentId);
+    }
+
+    if (!this.#activeTasks.has(instrumentId) && this.#pendingSuspend.has(instrumentId)) {
+      this.#pendingSuspend.delete(instrumentId);
+      void this.suspendBackend(instrumentId);
+    }
+  }
+
+  #forceCompleteAllTasks(instrumentId: string): void {
+    const taskMap = this.#activeTasks.get(instrumentId);
+    if (!taskMap) return;
+
+    for (const [, task] of taskMap) {
+      if (!task.settled) {
+        task.settled = true;
+        clearTimeout(task.timer);
+        this.#onLog?.({ instrumentId, level: "warn", message: `Task force-completed: "${task.label}"` });
+      }
+    }
+    this.#activeTasks.delete(instrumentId);
+    this.#pendingSuspend.delete(instrumentId);
+  }
+
   #buildContext(entry: InstrumentRegistryEntry): InstrumentBackendContext {
     const subscribe = <E extends keyof HostEventMap>(
       event: E,
@@ -623,6 +688,14 @@ export class InstrumentRuntime {
           this.#onLog?.({ instrumentId: entry.id, level: "debug", message, detail: args.length > 0 ? args : undefined });
         },
       },
+      task: ((label: string, fn?: () => unknown) => {
+        const handle = this.#registerTask(entry.id, label);
+        if (!fn) return handle;
+        return Promise.resolve()
+          .then(() => fn())
+          .then((result) => { handle.done(); return result; })
+          .catch((err) => { handle.fail(err instanceof Error ? err.message : String(err)); throw err; });
+      }) as InstrumentBackendContext["task"],
       host: {
         storage: {
           getProperty: async (key) => this.getProperty(entry.id, key),
@@ -715,6 +788,12 @@ export class InstrumentRuntime {
 
     if (entry.backgroundRefresh?.mode === "keep-alive") return;
 
+    if (this.#activeTasks.has(instrumentId)) {
+      this.#pendingSuspend.add(instrumentId);
+      this.#onLog?.({ instrumentId, level: "info", message: `Suspension deferred: ${this.#activeTasks.get(instrumentId)!.size} active task(s)` });
+      return;
+    }
+
     const module = this.#backendModuleCache.get(instrumentId);
     if (!module || module.suspended) return;
     if (!module.activated) return;
@@ -739,6 +818,7 @@ export class InstrumentRuntime {
     if (!entry || !entry.enabled || entry.status !== "active") return;
 
     this.#stopBackgroundScheduler(instrumentId);
+    this.#pendingSuspend.delete(instrumentId);
 
     const module = this.#backendModuleCache.get(instrumentId);
     if (!module || !module.suspended) return;
@@ -962,6 +1042,7 @@ export class InstrumentRuntime {
   }
 
   async #deactivateBackend(instrumentId: string): Promise<void> {
+    this.#forceCompleteAllTasks(instrumentId);
     this.#stopBackgroundScheduler(instrumentId);
     const module = this.#backendModuleCache.get(instrumentId);
     if (module?.activated && module.definition?.onStop) {
@@ -1000,8 +1081,17 @@ export class InstrumentRuntime {
       return loaded;
     }
 
-    const href = pathToFileURL(backendPath).href;
-    const imported = await import(`${href}?t=${Date.now()}`);
+    // Bun caches import() by file path, ignoring query strings.
+    // Read file contents and import via blob URL to bypass the cache.
+    const code = await readFile(backendPath, "utf8");
+    const blob = new Blob([code], { type: "application/javascript" });
+    const blobUrl = URL.createObjectURL(blob);
+    let imported: Record<string, unknown>;
+    try {
+      imported = await import(blobUrl);
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
     const moduleLike = (imported.default ?? imported) as Partial<InstrumentBackendDefinition>;
     if (!moduleLike || moduleLike.kind !== "tango.instrument.backend.v2") {
       throw new Error(
